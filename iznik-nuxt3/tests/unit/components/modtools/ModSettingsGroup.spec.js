@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import ModSettingsGroup from '~/modtools/components/ModSettingsGroup.vue'
 import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
@@ -46,6 +47,16 @@ vi.mock('~/composables/useMe', () => ({
     fetchMe: vi.fn(),
     myid: { value: 123 },
     supportOrAdmin: { value: false },
+  }),
+}))
+
+// The system-wide repost settings (the same for every community).
+const mockRepostSettings = ref({ offer: 3, wanted: 7, max: 3, chaseups: 5 })
+const mockLoadRepostSettings = vi.fn()
+vi.mock('~/composables/useRepostSettings', () => ({
+  useRepostSettings: () => ({
+    settings: mockRepostSettings,
+    load: mockLoadRepostSettings,
   }),
 }))
 
@@ -99,11 +110,12 @@ describe('ModSettingsGroup', () => {
         wanted: 'WANTED',
         received: 'RECEIVED',
       },
+      // Ignored: reposting is the same for every community.
       reposts: {
-        offer: 3,
-        wanted: 7,
-        max: 5,
-        chaseups: 14,
+        offer: 30,
+        wanted: 70,
+        max: 50,
+        chaseups: 140,
       },
       duplicates: {
         check: true,
@@ -344,6 +356,49 @@ describe('ModSettingsGroup', () => {
     ])('renders %s accordion', (accordionName) => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain(accordionName)
+    })
+  })
+
+  describe('reposting', () => {
+    it('shows the system-wide values as text, with no inputs', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      const text = wrapper.find('[data-testid="repost-settings-text"]').text()
+      expect(text).toContain('the same for every community')
+      expect(text).toContain('OFFERs are reposted after 3 days')
+      expect(text).toContain('WANTEDs after 7 days')
+      expect(text).toContain('up to 3 times')
+      expect(text).toContain('every 5 days')
+
+      const names = wrapper
+        .findAll('.mod-group-setting')
+        .map((e) => e.attributes('data-name'))
+      expect(names.filter((n) => n.startsWith('settings.reposts'))).toEqual([])
+    })
+
+    it('follows the config values, and handles one and zero', async () => {
+      mockRepostSettings.value = { offer: 1, wanted: 14, max: 1, chaseups: 1 }
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      let text = wrapper.find('[data-testid="repost-settings-text"]').text()
+      expect(text).toContain('OFFERs are reposted after 1 day,')
+      expect(text).toContain('WANTEDs after 14 days')
+      expect(text).toContain('once')
+      expect(text).toContain('every 1 day')
+
+      mockRepostSettings.value = { offer: 3, wanted: 7, max: 0, chaseups: 5 }
+      await wrapper.vm.$nextTick()
+      text = wrapper.find('[data-testid="repost-settings-text"]').text()
+      expect(text).toContain('not reposted automatically')
+
+      mockRepostSettings.value = { offer: 3, wanted: 7, max: 3, chaseups: 5 }
+    })
+
+    it('asks for the settings when it mounts', () => {
+      mountComponent()
+      expect(mockLoadRepostSettings).toHaveBeenCalled()
     })
   })
 

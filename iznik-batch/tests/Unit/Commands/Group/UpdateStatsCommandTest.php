@@ -15,7 +15,6 @@ class UpdateStatsCommandTest extends TestCase
             ->method('updateGroupStats')
             ->with(true)
             ->willReturn([
-                'reposts_fixed' => 0,
                 'polyindex_fixed' => 0,
                 'activity_updated' => 0,
                 'last_moderated_updated' => 0,

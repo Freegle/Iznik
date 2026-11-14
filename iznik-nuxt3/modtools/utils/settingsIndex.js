@@ -159,40 +159,13 @@ export const SETTINGS_INDEX = [
       'Posts will be considered as expired (i.e. no longer available) after the greater of this number of days and the maximum duration of autoreposts (i.e. max * repost time). Set to 0 to use the default of 30 days. Max 90 days.',
   },
   {
-    id: 'settings.reposts.chaseups',
+    id: 'community-reposts',
     tab: 'community',
     section: 'accordion-features-members',
     sectionLabel: 'Features for Members',
-    label: 'Chaseup',
+    label: 'Reposting',
     description:
-      "Ask what's happening with the item this number of days after the last reply (0 to disable)",
-  },
-  {
-    id: 'settings.reposts.max',
-    tab: 'community',
-    section: 'accordion-features-members',
-    sectionLabel: 'Features for Members',
-    label: 'Max auto-reposts',
-    description:
-      'Auto-reposting is proven to help more posts get replies. We mail the member before auto-reposting so that they can choose what happens. 0 to disable.',
-  },
-  {
-    id: 'settings.reposts.offer',
-    tab: 'community',
-    section: 'accordion-features-members',
-    sectionLabel: 'Features for Members',
-    label: 'OFFER repost time',
-    description:
-      'Controls when the member can manually repost, and when auto-repost kicks in. 0 = always show manual Repost button.',
-  },
-  {
-    id: 'settings.reposts.wanted',
-    tab: 'community',
-    section: 'accordion-features-members',
-    sectionLabel: 'Features for Members',
-    label: 'WANTED repost time',
-    description:
-      'Controls when the member can manually repost, and when auto-repost kicks in. 0 = always show manual Repost button.',
+      'Reposting is the same for every community, so it is shown here and not edited: how many days an OFFER or a WANTED waits before it is auto-reposted, how many times, and when we chase up.',
   },
   {
     id: 'settings.showjoin',

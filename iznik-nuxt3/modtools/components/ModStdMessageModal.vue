@@ -257,6 +257,7 @@ import { useStdmsgStore } from '~/stores/stdmsg'
 import { useOurModal } from '~/composables/useOurModal'
 import { SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
+import { useRepostSettings } from '~/composables/useRepostSettings'
 import { useModMe } from '~/composables/useModMe'
 import {
   parseEditThis,
@@ -317,6 +318,11 @@ const props = defineProps({
 })
 
 const { modal, show, hide } = useOurModal()
+
+// $repostoffer and $repostwanted are the system-wide repost settings, the same for every community.
+const { settings: repostSettings, load: loadRepostSettings } =
+  useRepostSettings()
+loadRepostSettings()
 const modGroupStore = useModGroupStore()
 const messageStore = useMessageStore()
 const memberStore = useMemberStore()
@@ -872,6 +878,10 @@ async function fillin() {
 }
 
 async function substitutionStrings(text) {
+  // The system-wide repost settings, so $repostoffer and friends never use the fallback by mistake.
+  // The config store keeps them, so after the first time this costs nothing.
+  await loadRepostSettings()
+
   await modGroupStore.fetchIfNeedBeMT(groupid.value)
   const group = modGroupStore.get(groupid.value)
   if (!group) return text
@@ -898,21 +908,17 @@ async function substitutionStrings(text) {
     // Link the member to where they can edit/repost their own posts. TrashNothing
     // members are sent to TN's own posts page (see editLink).
     text = text.replace(/\$editlink/g, editLink.value)
-    if (group.settings && group.settings.reposts) {
-      text = text.replace(/\$repostoffer/g, group.settings.reposts.offer)
-      text = text.replace(/\$repostwanted/g, group.settings.reposts.wanted)
-      // Human-readable repost interval — replaces the old hand-typed
-      // "*insert repeat wanted time*" placeholder.
-      const days = (n) => `${n} ${Number(n) === 1 ? 'day' : 'days'}`
-      text = text.replace(
-        /\$repeatoffertime/g,
-        days(group.settings.reposts.offer)
-      )
-      text = text.replace(
-        /\$repeatwantedtime/g,
-        days(group.settings.reposts.wanted)
-      )
-    }
+    // A community's own settings.reposts is ignored.
+    text = text.replace(/\$repostoffer/g, repostSettings.value.offer)
+    text = text.replace(/\$repostwanted/g, repostSettings.value.wanted)
+    // Human-readable repost interval — replaces the old hand-typed
+    // "*insert repeat wanted time*" placeholder.
+    const days = (n) => `${n} ${Number(n) === 1 ? 'day' : 'days'}`
+    text = text.replace(/\$repeatoffertime/g, days(repostSettings.value.offer))
+    text = text.replace(
+      /\$repeatwantedtime/g,
+      days(repostSettings.value.wanted)
+    )
 
     text = text.replace(
       /\$origsubj/g,

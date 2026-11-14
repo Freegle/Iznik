@@ -375,8 +375,8 @@ type MessageEdit struct {
 	Timestamp      *time.Time `json:"timestamp"`
 }
 
-// computeExpiresat calculates when a message expires based on group settings.
-// It checks maxagetoshow and repost settings for each group the message is on,
+// computeExpiresat calculates when a message expires.
+// It checks each group's maxagetoshow and the system-wide repost settings for each group the message is on,
 // and returns the latest (most generous) expiry time.
 func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup) *time.Time {
 	if len(messageGroups) == 0 {
@@ -402,6 +402,7 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 	db.Table("groups").Select("id, settings").Where("id IN ?", groupIDs).Scan(&groups)
 
 	var latest *time.Time
+	repost := group.SystemRepostSettings()
 
 	for _, g := range groups {
 		arrival, ok := arrivalByGroup[g.ID]
@@ -409,19 +410,17 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Mirror the legacy V1 PHP Message::getPublic() behaviour:
-		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
-		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
-		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
-		//   $expiretime   = max($repost * ($reposts['max'] + 1), $maxagetoshow);
-		// V1 getSetting honours explicit 0, so we mustn't fall back to the default
-		// when maxagetoshow is set to 0 — Hertford and others use 0 deliberately.
+		// The expiry age is max(repost days * (max reposts + 1), maxagetoshow). maxagetoshow is
+		// the community's own and honours an explicit 0 (Hertford and others use 0 deliberately,
+		// so we mustn't fall back to the default when it is set to 0). The repost values are the
+		// system-wide setting, the same for every community; a community's own settings.reposts
+		// is ignored.
 		maxAgeDays := 90
-		repostDays := 14
+		repostDays := repost.Wanted
 		if msgType == "Offer" {
-			repostDays = 3
+			repostDays = repost.Offer
 		}
-		maxRepost := 10
+		maxRepost := repost.Max
 
 		if g.Settings != "" {
 			var s map[string]interface{}
@@ -429,21 +428,6 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 				if v, exists := s["maxagetoshow"]; exists {
 					if fv, ok := v.(float64); ok {
 						maxAgeDays = int(fv)
-					}
-				}
-
-				if reposts, exists := s["reposts"]; exists {
-					if rMap, ok := reposts.(map[string]interface{}); ok {
-						typeKey := "wanted"
-						if msgType == "Offer" {
-							typeKey = "offer"
-						}
-						if rd, ok := rMap[typeKey].(float64); ok {
-							repostDays = int(rd)
-						}
-						if mx, ok := rMap["max"].(float64); ok {
-							maxRepost = int(mx)
-						}
 					}
 				}
 			}
@@ -986,35 +970,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				go func() {
 					defer wgExtra.Done()
 
-					// Reposting is per-group: each group has its own arrival and
-					// its own repost settings. Fetch the settings keyed by group
-					// so we can pair each group's interval with that group's
+					// The repost interval is the system-wide setting, the same for every
+					// community (a community's own settings.reposts is ignored). Each group
+					// still has its own arrival, so the interval is paired with each group's
 					// arrival rather than collapsing onto the first group.
-					type repostRow struct {
-						Groupid uint64
-						Reposts *string
-					}
-					var rows []repostRow
-					db.Table("`groups`").
-						Select("messages_groups.groupid AS groupid, JSON_EXTRACT(settings, '$.reposts') AS reposts").
-						Joins("INNER JOIN messages_groups ON messages_groups.groupid = groups.id").
-						Where("msgid = ? AND messages_groups.deleted = 0", message.ID).
-						Scan(&rows)
-
-					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
-					for _, r := range rows {
-						// A group with no `reposts` setting gets V1's defaults.
-						// Keeping the fallback in Go rather than in the SQL
-						// matters: the old CASE WHEN emitted a PHP hash literal
-						// that didn't parse as JSON, silently yielding interval 0
-						// (always eligible).
-						rs := group.DefaultRepostSettings()
-						if r.Reposts != nil {
-							if err := json.Unmarshal([]byte(*r.Reposts), &rs); err != nil {
-								rs = group.DefaultRepostSettings()
-							}
-						}
-						settingsByGroup[r.Groupid] = rs
+					rs := group.SystemRepostSettings()
+					interval := rs.Wanted
+					if message.Type == utils.OFFER {
+						interval = rs.Offer
 					}
 
 					// The message is repostable as soon as ANY group it's on has
@@ -1031,30 +994,42 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// widely-rippling post can stay un-repostable indefinitely
 					// even though its home group passed the interval days ago.
 					//
-					// repostAt is the EARLIEST per-group repost time: the point at
-					// which the message first becomes repostable, and the point at
-					// which auto-repost next fires on some group.
+					// repostAt is the EARLIEST per-group time at which auto-repost next
+					// fires, which the member sees as "Will auto-repost ...". A group
+					// only counts while it has auto-reposts left (autoreposts below
+					// max, and max above 0); after that nothing more will fire, so there
+					// is no time to show.
+					//
+					// canRepost is the Repost button, for a member's own repost by
+					// hand. It needs the interval to have passed and nothing else: the
+					// auto-repost count limits auto-reposts only (AutoRepostService
+					// skips a post at max; ChaseUpService.canRepost, like V1's
+					// canRepost, looks only at the interval).
+					//
+					// A poster who has turned auto-reposting off in their own settings
+					// (users.settings.autorepostsdisable, the JSON true AutoRepostService
+					// skips on) is never auto-reposted either, so repostAt is not set for
+					// them. Their Repost button still follows the interval.
+					// Looked up only when a group could otherwise give a time, so a post
+					// with no auto-reposts left costs no extra query.
+					autoRepostOff := false
+					autoRepostOffKnown := false
+
 					canRepost = false
 					for _, mg := range message.MessageGroups {
-						rs, ok := settingsByGroup[mg.Groupid]
-						if !ok {
-							rs = group.DefaultRepostSettings()
-						}
-
-						interval := rs.Wanted
-						if message.Type == utils.OFFER {
-							interval = rs.Offer
-						}
-
 						if interval >= 365 {
-							// Some groups set a very high value as a way of
-							// turning reposting off. That switches it off for
-							// this group only; it doesn't block the others.
+							// A very high value is a way of turning reposting off.
 							continue
 						}
 
 						ra := mg.Arrival.AddDate(0, 0, interval)
-						if repostAt == nil || ra.Before(*repostAt) {
+						if rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && !autoRepostOffKnown {
+							var autorepostsDisabled []string
+							db.Table("users").Select("JSON_EXTRACT(settings, '$.autorepostsdisable')").Where("id = ?", message.Fromuser).Scan(&autorepostsDisabled)
+							autoRepostOff = len(autorepostsDisabled) > 0 && autorepostsDisabled[0] == "true"
+							autoRepostOffKnown = true
+						}
+						if !autoRepostOff && rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && (repostAt == nil || ra.Before(*repostAt)) {
 							raCopy := ra
 							repostAt = &raCopy
 						}
@@ -1694,21 +1669,13 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 
 const (
 	defaultMaxAgeToShow = 90
-	defaultRepostOffer  = 3
-	defaultRepostWanted = 14
-	defaultRepostMax    = 10
 	ongoingChatWindow   = 6 * 24 * time.Hour
 )
 
-type groupReposts struct {
-	Offer  int `json:"offer"`
-	Wanted int `json:"wanted"`
-	Max    int `json:"max"`
-}
-
+// groupSettings is the part of a community's settings that expiry reads. The repost values are not
+// here: they are the system-wide setting (group.SystemRepostSettings), the same for every community.
 type groupSettings struct {
-	MaxAgeToShow *int          `json:"maxagetoshow"`
-	Reposts      *groupReposts `json:"reposts"`
+	MaxAgeToShow *int `json:"maxagetoshow"`
 }
 
 // applyExpiry computes per-group expiry and marks expired messages.
@@ -1755,6 +1722,10 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 
 	// First pass: identify candidates past expiry age.
 	now := time.Now()
+
+	// The system-wide repost settings, read lazily: a page of messages that all have outcomes never needs them.
+	var repost group.RepostSettings
+	repostLoaded := false
 	var candidateIDs []uint64
 	candidateIndices := map[uint64][]int{}
 
@@ -1764,6 +1735,11 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 			continue
 		}
 
+		if !repostLoaded {
+			repost = group.SystemRepostSettings()
+			repostLoaded = true
+		}
+
 		s := settingsMap[m.Groupid]
 
 		maxAgeToShow := defaultMaxAgeToShow
@@ -1771,20 +1747,12 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 			maxAgeToShow = *s.MaxAgeToShow
 		}
 
-		repostDays := defaultRepostOffer
-		repostMax := defaultRepostMax
-		if s.Reposts != nil {
-			if m.Type == utils.OFFER {
-				repostDays = s.Reposts.Offer
-			} else {
-				repostDays = s.Reposts.Wanted
-			}
-			repostMax = s.Reposts.Max
-		} else if m.Type == utils.WANTED {
-			repostDays = defaultRepostWanted
+		repostDays := repost.Wanted
+		if m.Type == utils.OFFER {
+			repostDays = repost.Offer
 		}
 
-		maxReposts := repostDays * (repostMax + 1)
+		maxReposts := repostDays * (repost.Max + 1)
 		expireTime := maxAgeToShow
 		if maxReposts > expireTime {
 			expireTime = maxReposts

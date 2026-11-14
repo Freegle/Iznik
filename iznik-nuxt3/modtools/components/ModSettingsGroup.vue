@@ -432,34 +432,15 @@
           description="Posts will be considered as expired (i.e. no longer available) after the greater of this number of days and the maximum duration of autoreposts (i.e. max * repost time).  Set to 0 to use the default of 30 days. Max 90 days."
           class="me-2"
         />
-        <ModGroupSetting
-          :groupid="groupid"
-          name="settings.reposts.chaseups"
-          label="Chaseup"
-          description="Ask what's happening with the item this number of days after the last reply (0 to disable)"
+        <b-form-group
+          label="Reposting"
+          data-setting-id="community-reposts"
           class="me-2"
-        />
-        <ModGroupSetting
-          :groupid="groupid"
-          name="settings.reposts.max"
-          label="Max auto-reposts"
-          description="Auto-reposting is proven to help more posts get replies. We mail the member before auto-reposting so that they can choose what happens.  0 to disable."
-          class="me-2"
-        />
-        <ModGroupSetting
-          :groupid="groupid"
-          name="settings.reposts.offer"
-          label="OFFER repost time"
-          description="Controls when the member can manually repost, and when auto-repost kicks in.  0 = always show manual Repost button."
-          class="me-2"
-        />
-        <ModGroupSetting
-          :groupid="groupid"
-          name="settings.reposts.wanted"
-          label="WANTED repost time"
-          description="Controls when the member can manually repost, and when auto-repost kicks in.  0 = always show manual Repost button."
-          class="me-2"
-        />
+        >
+          <p class="small" data-testid="repost-settings-text">
+            {{ repostText }}
+          </p>
+        </b-form-group>
         <ModGroupSetting
           :groupid="groupid"
           name="settings.showjoin"
@@ -792,6 +773,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { useRepostSettings } from '~/composables/useRepostSettings'
 import { ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
@@ -815,6 +797,23 @@ const modGroupStore = useModGroupStore()
 const modConfigStore = useModConfigStore()
 const shortlinkStore = useShortlinkStore()
 const { fetchMe, myid, supportOrAdmin } = useMe()
+
+// Reposting is the same for every community, set centrally, so it is shown here and not edited.
+const { settings: repostSettings, load: loadRepostSettings } =
+  useRepostSettings()
+
+const repostText = computed(() => {
+  const r = repostSettings.value
+  const days = (n) => (n === 1 ? '1 day' : `${n} days`)
+
+  if (!r.max) {
+    return 'Reposting is the same for every community: posts are not reposted automatically.'
+  }
+
+  const times = r.max === 1 ? 'once' : `up to ${r.max} times`
+
+  return `Reposting is the same for every community: OFFERs are reposted after ${days(r.offer)}, WANTEDs after ${days(r.wanted)}, ${times}. We mail the member before each repost so that they can choose what happens. After that we ask what is happening with the item every ${days(r.chaseups)}.`
+})
 
 const quillModules = {
   name: 'htmlEditButton',
@@ -1192,6 +1191,7 @@ watch(
 onMounted(() => {
   groupid.value = props.initialGroup
   fetchConfigs()
+  loadRepostSettings()
 })
 
 async function fetchGroup() {

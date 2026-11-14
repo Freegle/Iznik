@@ -25,17 +25,6 @@ class AutoRepostService
     public const LOOKBACK_DAYS = 90;
 
     /**
-     * Default repost settings per group.
-     * V1: $g->getSetting('reposts', ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5])
-     */
-    public const DEFAULT_REPOSTS = [
-        'offer' => 3,
-        'wanted' => 7,
-        'max' => 5,
-        'chaseups' => 5,
-    ];
-
-    /**
      * Process auto-reposts for all active Freegle groups.
      *
      * Matches V1 autorepost.php → Message::autoRepostGroup().
@@ -83,12 +72,14 @@ class AutoRepostService
         // V1: SELECT id FROM groups WHERE type = 'Freegle' AND onhere = 1 ORDER BY RAND()
         $groups = Group::freegle()->onHere()->inRandomOrder()->get();
 
+        // One setting for every community (config row `reposts`); a community's own
+        // settings.reposts is ignored. Read once per run.
+        $reposts = RepostSettings::get();
+
         foreach ($groups as $group) {
             if ($group->isClosed() || $group->getAttribute('autofunctionoverride')) {
                 continue;
             }
-
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
 
             try {
                 $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun, $warningEmailEnabled);
@@ -141,11 +132,11 @@ class AutoRepostService
             // Every community stores whole numbers today, so this changes nothing now -
             // it just stops the two halves being able to disagree.
             $interval = $msg->type === Message::TYPE_OFFER
-                ? (int) ($reposts['offer'] ?? 3)
-                : (int) ($reposts['wanted'] ?? 7);
+                ? (int) ($reposts['offer'] ?? RepostSettings::FALLBACK['offer'])
+                : (int) ($reposts['wanted'] ?? RepostSettings::FALLBACK['wanted']);
 
             // V1: max age check — messages older than interval * (max + 1) days.
-            $maxAge = $interval * ((int) ($reposts['max'] ?? 5) + 1);
+            $maxAge = $interval * ((int) ($reposts['max'] ?? RepostSettings::FALLBACK['max']) + 1);
             if ($msg->hoursago >= $maxAge * 24) {
                 $stats['skipped']++;
                 continue;
@@ -172,7 +163,7 @@ class AutoRepostService
             }
 
             // V1: reposts might be turned off.
-            if ($interval <= 0 || ($reposts['max'] ?? 5) <= 0) {
+            if ($interval <= 0 || ($reposts['max'] ?? RepostSettings::FALLBACK['max']) <= 0) {
                 $stats['skipped']++;
                 continue;
             }
@@ -249,7 +240,7 @@ class AutoRepostService
                 if ($dryRun) {
                     Log::info("Dry run: would auto-repost message #{$msg->msgid} on group #{$group->id}");
                 } else {
-                    $this->repost($msg, $group->id, $msg->autoreposts + 1, $reposts['max'] ?? 5);
+                    $this->repost($msg, $group->id, $msg->autoreposts + 1, $reposts['max'] ?? RepostSettings::FALLBACK['max']);
                 }
                 $stats['reposted']++;
             } else {
@@ -287,11 +278,11 @@ class AutoRepostService
      */
     protected function applyDueWindow($query, array $reposts)
     {
-        $max = (int) ($reposts['max'] ?? 5);
+        $max = (int) ($reposts['max'] ?? RepostSettings::FALLBACK['max']);
 
         $bands = [];
         foreach ([Message::TYPE_OFFER => 'offer', Message::TYPE_WANTED => 'wanted'] as $type => $key) {
-            $interval = (int) ($reposts[$key] ?? ($type === Message::TYPE_OFFER ? 3 : 7));
+            $interval = (int) ($reposts[$key] ?? RepostSettings::FALLBACK[$key]);
 
             // Reposting off for this type: PHP skips every one of them anyway.
             if ($interval <= 0 || $max <= 0) {

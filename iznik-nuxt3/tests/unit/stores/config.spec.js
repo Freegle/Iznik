@@ -53,6 +53,20 @@ describe('config store', () => {
       expect(mockFetchv2).not.toHaveBeenCalled()
     })
 
+    it('tries again after a failed fetch instead of re-awaiting the failure', async () => {
+      const store = useConfigStore()
+      store.init({ public: {} })
+      mockFetchv2.mockRejectedValueOnce(new Error('403'))
+      mockFetchv2.mockResolvedValueOnce([{ value: 'now allowed' }])
+
+      await expect(store.fetch('my_key')).rejects.toThrow('403')
+      expect(store.list.my_key).toBeUndefined()
+
+      const result = await store.fetch('my_key')
+      expect(result).toEqual([{ value: 'now allowed' }])
+      expect(mockFetchv2).toHaveBeenCalledTimes(2)
+    })
+
     it('refetches when force=true', async () => {
       const store = useConfigStore()
       store.init({ public: {} })

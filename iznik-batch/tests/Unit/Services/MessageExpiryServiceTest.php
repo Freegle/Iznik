@@ -498,7 +498,6 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 45,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -524,7 +523,6 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 90,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -541,11 +539,10 @@ class MessageExpiryServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        // Group with maxagetoshow=30 and reposts that yield 3*(5+1)=18 → expiretime = 30.
+        // Group with maxagetoshow=30 and reposts that yield 3*(3+1)=12 → expiretime = 30.
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -583,7 +580,9 @@ class MessageExpiryServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        // maxagetoshow=0 means reposts-based expiry alone: 4*(5+1) = 24 days for Offer.
+        // maxagetoshow=0 means reposts-based expiry alone. That is the system setting, 3 days
+        // for an OFFER and 3 reposts: 3*(3+1) = 12 days. The community's own reposts setting
+        // (4 days, 5 reposts, which would be 24) is ignored.
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 0,
@@ -594,11 +593,11 @@ class MessageExpiryServiceTest extends TestCase
 
         $youngMsg = $this->createTestMessage($user, $group, [
             'type' => Message::TYPE_OFFER,
-            'arrival' => now()->subDays(20),
+            'arrival' => now()->subDays(10),
         ]);
         $oldMsg = $this->createTestMessage($user, $group, [
             'type' => Message::TYPE_OFFER,
-            'arrival' => now()->subDays(25),
+            'arrival' => now()->subDays(14),
         ]);
 
         foreach ([$youngMsg, $oldMsg] as $m) {
@@ -620,6 +619,26 @@ class MessageExpiryServiceTest extends TestCase
         ]);
     }
 
+    public function test_the_system_row_sets_the_repost_lifetime(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup(['settings' => ['maxagetoshow' => 0]]);
+        $this->createMembership($user, $group);
+
+        $offer = $this->createTestMessage($user, $group, ['type' => Message::TYPE_OFFER, 'arrival' => now()->subDays(14)]);
+        $wanted = $this->createTestMessage($user, $group, ['type' => Message::TYPE_WANTED, 'arrival' => now()->subDays(14)]);
+
+        // 3 days and 3 reposts: an OFFER lasts 12 days, a WANTED (7 days) lasts 28. Only the OFFER is out.
+        $this->assertEquals(1, $this->service->processExpiredFromSpatialIndex());
+        $this->assertDatabaseHas('messages_outcomes', ['msgid' => $offer->id, 'comments' => 'Auto-expired']);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $wanted->id]);
+
+        // Change the row and the lifetime follows: a WANTED now lasts 4*(1+1) = 8 days, so at 14 it is out.
+        DB::table('config')->where('key', 'reposts')->update(['value' => json_encode(['offer' => 3, 'wanted' => 4, 'max' => 1, 'chaseups' => 5])]);
+        $this->assertEquals(1, $this->service->processExpiredFromSpatialIndex());
+        $this->assertDatabaseHas('messages_outcomes', ['msgid' => $wanted->id, 'comments' => 'Auto-expired']);
+    }
+
     public function test_process_expired_from_spatial_index_skips_when_recent_chat_reply(): void
     {
         $user = $this->createTestUser();
@@ -627,7 +646,6 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -670,7 +688,6 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -702,7 +719,6 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $group);
@@ -832,7 +848,6 @@ class MessageExpiryServiceTest extends TestCase
         $short = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 0,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $home);
@@ -887,13 +902,11 @@ class MessageExpiryServiceTest extends TestCase
         $home = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $other = $this->createTestGroup([
             'settings' => [
                 'maxagetoshow' => 30,
-                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
             ],
         ]);
         $this->createMembership($user, $home);

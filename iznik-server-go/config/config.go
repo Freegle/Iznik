@@ -86,7 +86,7 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 // GET /config/:key endpoint. The config store is admin-writable and holds
 // operational keys that must not be world-readable; anything else has to go through
 // the Support/Admin-gated /config/admin routes. Only client-facing values are
-// exposed: the ads_enabled feature flag plus the app
+// exposed: the ads_enabled feature flag, the repost settings, plus the app
 // version metadata under the app_fd_version_* / app_mt_version_* namespaces, which
 // the web and mobile clients poll to decide rollout and update prompts. The version
 // keys are matched by prefix so adding a new version field (a new platform, a new
@@ -99,6 +99,11 @@ func isPublicConfigKey(key string) bool {
 	case "ux_experiments":
 		// The running UX experiments' arm ranges, written by the batch (UxExperimentService)
 		// and read by every client at boot. Names and bucket ranges only, nothing per member.
+		return true
+	case "reposts":
+		// The repost delays and count, the same for every community: days an OFFER and a WANTED wait
+		// before a repost, how many reposts, days between chase-ups. ModTools shows them and fills them
+		// into standard messages. Four small numbers, nothing per member.
 		return true
 	}
 	return strings.HasPrefix(key, "app_fd_version_") || strings.HasPrefix(key, "app_mt_version_")

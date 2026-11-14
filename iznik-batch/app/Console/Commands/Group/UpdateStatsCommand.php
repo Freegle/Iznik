@@ -13,7 +13,7 @@ class UpdateStatsCommand extends Command
     protected $signature = 'groups:update-stats
                             {--dry-run : Show what would be updated without making changes}';
 
-    protected $description = 'Update group stats: repost settings, polyindex, activity/funding, moderation counts, and stats_outcomes';
+    protected $description = 'Update group stats: polyindex, activity/funding, moderation counts, and stats_outcomes';
 
     public function handle(GroupStatsService $service): int
     {
@@ -29,7 +29,6 @@ class UpdateStatsCommand extends Command
 
         $verb = $dryRun ? 'Would update' : 'Updated';
         $this->info("{$verb}:");
-        $this->line(sprintf('  reposts_fixed:            %d', $result['reposts_fixed']));
         $this->line(sprintf('  polyindex_fixed:          %d', $result['polyindex_fixed']));
         $this->line(sprintf('  activity_updated:         %d (groups)', $result['activity_updated']));
         $this->line(sprintf('  last_moderated_updated:   %d (groups)', $result['last_moderated_updated']));
