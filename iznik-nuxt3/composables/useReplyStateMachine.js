@@ -468,6 +468,16 @@ export function useReplyStateMachine(messageId, options = {}) {
     clearProcessingTimeout()
   }
 
+  // The login modal has gone. After a login the reply is sent as soon as the
+  // member's details arrive; if they left the modal another way (forgotten
+  // password, logout) nothing is coming, so the step is timed again and falls
+  // back to the reply form rather than showing a spinner for ever.
+  watch(forceLogin, (showing) => {
+    if (!showing && state.value === ReplyState.AUTHENTICATING) {
+      startProcessingTimeout()
+    }
+  })
+
   // Fallback to COMPOSING state - used when something unexpected happens
   // This ensures the user is never left stuck - they can always retry
   function fallbackToComposing(reason) {
