@@ -28,8 +28,9 @@ const BARE =
 // loadLeaflet() and the vue-leaflet plugin, both at run time, so one of these as a static import
 // runs before either and throws "L is not defined" ("Can't find variable: L" in Safari), which
 // takes the whole page to the error view. That broke the ModTools map in November 2026.
+// A deeper path into one of these packages counts too, unless it is a stylesheet.
 const NEEDS_GLOBAL_L =
-  /['"](@geoman-io\/leaflet-geoman-free|wicket\/wicket-leaflet|leaflet-draw|leaflet-gesture-handling)['"]/
+  /['"](?:@geoman-io\/leaflet-geoman-free|wicket\/wicket-leaflet|leaflet-draw|leaflet-gesture-handling|leaflet\.markercluster|leaflet\.heat)(?:\/(?![^'"]*\.css['"])[^'"]*|\.js)?['"]/
 const STATIC_IMPORT = new RegExp(
   '^\\s*import\\s+(?:[^\'"()]*\\sfrom\\s*)?' + NEEDS_GLOBAL_L.source,
   'm'
@@ -37,6 +38,15 @@ const STATIC_IMPORT = new RegExp(
 const DYNAMIC_IMPORT = new RegExp(
   'import\\s*\\(\\s*' + NEEDS_GLOBAL_L.source + '\\s*\\)'
 )
+
+// Source text with comments removed, so a commented-out import or a call named in a comment
+// neither trips a check nor satisfies one.
+function code(file) {
+  return readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
 
 function sources(dir) {
   const out = []
@@ -98,11 +108,18 @@ describe('single Leaflet instance', () => {
     expect(
       STATIC_IMPORT.test("  await import('@geoman-io/leaflet-geoman-free')")
     ).toBe(false)
+    expect(
+      STATIC_IMPORT.test(
+        'import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.min.js"'
+      )
+    ).toBe(true)
+    expect(STATIC_IMPORT.test("import 'wicket/wicket-leaflet.js'")).toBe(true)
+    expect(STATIC_IMPORT.test("import Wkt from 'wicket'")).toBe(false)
 
     const offenders = []
     for (const dir of SCAN) {
       for (const file of sources(join(ROOT, dir))) {
-        if (STATIC_IMPORT.test(readFileSync(file, 'utf8'))) {
+        if (STATIC_IMPORT.test(code(file))) {
           offenders.push(relative(ROOT, file))
         }
       }
@@ -118,7 +135,7 @@ describe('single Leaflet instance', () => {
       for (const file of sources(join(ROOT, dir))) {
         const name = relative(ROOT, file)
         if (name === join('composables', 'useMap.js')) continue
-        const text = readFileSync(file, 'utf8')
+        const text = code(file)
         const load = text.match(DYNAMIC_IMPORT)
         if (!load) continue
         const pinned = text.indexOf('await loadLeaflet()')
