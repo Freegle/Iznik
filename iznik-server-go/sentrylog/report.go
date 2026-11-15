@@ -46,6 +46,32 @@ func IsDeadlock(err error) bool {
 	return errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205)
 }
 
+type expectDuplicateKey struct{}
+
+// ExpectDuplicate returns a context whose statements may fail on a unique key on purpose: an
+// insert that tries first and treats a duplicate as an answer, such as signup with an address
+// that is already taken. Such a duplicate is logged and not reported to Sentry. Any other
+// error from the same statement still is.
+func ExpectDuplicate(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, expectDuplicateKey{}, true)
+}
+
+// duplicateExpected reports whether err is a MySQL duplicate key (1062) on a statement that
+// said one was expected.
+func duplicateExpected(ctx context.Context, err error) bool {
+	if ctx == nil {
+		return false
+	}
+	if expected, _ := ctx.Value(expectDuplicateKey{}).(bool); !expected {
+		return false
+	}
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && me.Number == 1062
+}
+
 var (
 	quotedRe  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
 	dquotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)

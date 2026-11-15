@@ -104,6 +104,9 @@ func (l logger) Trace(ctx context.Context, begin time.Time, fc func() (string, i
 			// code that hit it. It stays in the log, where its rate can be watched;
 			// Sentry gets the errors a person has to act on.
 			fmt.Println("DEADLOCK ", err.Error())
+		} else if duplicateExpected(ctx, err) {
+			// The statement tried first on purpose and the caller handles the duplicate.
+			fmt.Println("DUPLICATE (expected) ", ScrubMessage(err.Error()))
 		} else {
 			fmt.Println("TRACE ", err.Error())
 			capture(ctx, err, fc)

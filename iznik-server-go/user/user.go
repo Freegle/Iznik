@@ -28,6 +28,7 @@ import (
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
+	sentrylogpackage "github.com/freegle/iznik-server-go/sentrylog"
 	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/go-sql-driver/mysql"
@@ -2405,7 +2406,8 @@ func PutUser(c *fiber.Ctx) error {
 
 			// Insert first. Looking for an orphan to claim before inserting would take a gap
 			// lock on a row that is not there, and two racing signups would deadlock on it.
-			insertErr := tx.Table("users_emails").Create(map[string]interface{}{
+			// A duplicate here is an answer, not a fault: the address is taken, handled below.
+			insertErr := tx.WithContext(sentrylogpackage.ExpectDuplicate(tx.Statement.Context)).Table("users_emails").Create(map[string]interface{}{
 				"userid":    newUserID,
 				"email":     email,
 				"preferred": gorm.Expr("1"),

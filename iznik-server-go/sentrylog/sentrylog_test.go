@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"
 	logger2 "gorm.io/gorm/logger"
@@ -231,4 +232,44 @@ func TestTraceSilentBelowLogLevel(t *testing.T) {
 		}, nil)
 	})
 	assert.NotContains(t, out, "SELECT quiet")
+}
+
+func TestTraceExpectedDuplicateIsLoggedNotReported(t *testing.T) {
+	// Signup inserts an address first and answers a duplicate as an existing account, so that
+	// duplicate is logged as expected rather than going to Sentry as a TRACE.
+	l := newTestLogger(logger2.Error, 0, true)
+	dup := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'a@b.com' for key 'users_emails.email'"}
+	out := captureStdout(func() {
+		l.Trace(ExpectDuplicate(context.Background()), time.Now(), func() (string, int64) {
+			return "INSERT INTO users_emails", 0
+		}, dup)
+	})
+	assert.Contains(t, out, "DUPLICATE (expected)")
+	assert.NotContains(t, out, "TRACE")
+	// The member's address is not printed.
+	assert.NotContains(t, out, "a@b.com")
+}
+
+func TestTraceDuplicateWithoutTheMarkIsStillReported(t *testing.T) {
+	l := newTestLogger(logger2.Error, 0, true)
+	dup := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'x' for key 'PRIMARY'"}
+	out := captureStdout(func() {
+		l.Trace(context.Background(), time.Now(), func() (string, int64) {
+			return "INSERT INTO t", 0
+		}, dup)
+	})
+	assert.Contains(t, out, "TRACE")
+	assert.NotContains(t, out, "DUPLICATE (expected)")
+}
+
+func TestTraceOtherErrorUnderTheMarkIsStillReported(t *testing.T) {
+	// The mark covers a duplicate only; any other failure of the same statement is a fault.
+	l := newTestLogger(logger2.Error, 0, true)
+	out := captureStdout(func() {
+		l.Trace(ExpectDuplicate(context.Background()), time.Now(), func() (string, int64) {
+			return "INSERT INTO users_emails", 0
+		}, errors.New("Error 1146: Table doesn't exist"))
+	})
+	assert.Contains(t, out, "TRACE")
+	assert.NotContains(t, out, "DUPLICATE (expected)")
 }
