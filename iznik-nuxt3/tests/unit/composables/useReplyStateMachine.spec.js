@@ -1595,6 +1595,134 @@ describe('processing timeout', () => {
 
     expect(result.state.value).toBe(ReplyState.COMPOSING)
   })
+
+  // Logging in takes a person longer than 30 seconds (find the password, or
+  // wait for a sign-in email). The wait is not a stuck step, so it must not
+  // time out: the reply is sent as soon as the login completes.
+  it('does not time out while the member is logging in, and sends once they have', async () => {
+    mockMeValue = null
+    const mockUserAdd = vi.fn().mockResolvedValue({ password: null })
+    const chatButton = makeChatButtonRef()
+
+    const { result } = mountComposable(MSG_ID, mockUserAdd)
+    result.startTyping()
+    result.replyText.value = 'Is this still available?'
+    result.email.value = 'existing@example.com'
+    result.emailValid.value = true
+    result.setRefs({ form: makeFormRef(true), chatButton })
+
+    await result.submit()
+    await flushPromises()
+    expect(mockForceLogin.value).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    await result.onLoginSuccess()
+    await flushPromises()
+
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+
+  it('does not time out while the member logs in again after a session expiry', async () => {
+    mockMeValue = null
+    const authError = Object.assign(new Error('not logged in'), { status: 401 })
+    const mockUserAdd = vi.fn().mockRejectedValue(authError)
+
+    const { result } = mountComposable(MSG_ID, mockUserAdd)
+    result.startTyping()
+    result.replyText.value = 'Test'
+    result.email.value = 'test@example.com'
+    result.emailValid.value = true
+    result.setRefs({ form: makeFormRef(true) })
+
+    await result.submit()
+    await flushPromises()
+    expect(mockForceLogin.value).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+  })
+
+  it('returns to the reply form if the login modal goes away without a login', async () => {
+    mockMeValue = null
+    const mockUserAdd = vi.fn().mockResolvedValue({ password: null })
+
+    const { result } = mountComposable(MSG_ID, mockUserAdd)
+    result.startTyping()
+    result.replyText.value = 'Is this still available?'
+    result.email.value = 'existing@example.com'
+    result.emailValid.value = true
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+
+    await result.submit()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+
+    // e.g. "forgotten password", which closes the modal with nobody logged in
+    mockForceLogin.value = false
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(31000)
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyText.value).toBe('Is this still available?')
+    expect(mockReplyToPostFn).not.toHaveBeenCalled()
+  })
+
+  it('sends when the member details arrive shortly after the login modal closes', async () => {
+    mockMeValue = null
+    const mockUserAdd = vi.fn().mockResolvedValue({ password: null })
+
+    const { result } = mountComposable(MSG_ID, mockUserAdd)
+    result.startTyping()
+    result.replyText.value = 'Is this still available?'
+    result.email.value = 'existing@example.com'
+    result.emailValid.value = true
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+
+    await result.submit()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+    // Sign-up closes the modal first and fetches the member afterwards.
+    mockForceLogin.value = false
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    await result.onLoginSuccess()
+    await flushPromises()
+
+    expect(mockReplyToPostFn).toHaveBeenCalled()
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+
+  it('still times out if the registration call itself hangs', async () => {
+    mockMeValue = null
+    const mockUserAdd = vi.fn().mockImplementation(() => new Promise(() => {}))
+
+    const { result } = mountComposable(MSG_ID, mockUserAdd)
+    result.startTyping()
+    result.replyText.value = 'Test'
+    result.email.value = 'test@example.com'
+    result.emailValid.value = true
+    result.setRefs({ form: makeFormRef(true) })
+
+    result.submit() // intentionally not awaited — it's stuck
+    await flushPromises()
+    expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+
+    await vi.advanceTimersByTimeAsync(31000)
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+  })
 })
 
 // ============================================================
