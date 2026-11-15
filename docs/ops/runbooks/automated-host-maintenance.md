@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-15
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -49,9 +49,9 @@ outside its start window.
 | `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
 | `docker` | Wednesday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Wednesday has no 23:00 digest. |
 | `arbitrator` | Friday 04:40 | db1 | Three days clear of the data-node slot. |
-| `reach` | the 2nd of each month, 01:00 (start window 00:30–06:00) | every routing server | The night after `spatial:update-data` downloads the month's map. See [Road map refresh](#road-map-refresh-reach). |
+| `reach` | Thursday 01:00 (start window 00:30–06:00) | every routing server | The night after `spatial:update-data` downloads the week's map (Wednesday 03:00), and after the Docker host's Wednesday 23:35 slot. See [Road map refresh](#road-map-refresh-reach). |
 
-Nothing runs at the weekend, the busiest time, except a `reach` refresh that falls on one.
+Nothing runs at the weekend, the busiest time.
 Slots start at least 21 hours apart. A host run refuses when the last live host run
 finished less than 20 hours before, so a long run can
 push the next slot to the following week; the Cron Jobs tab then shows it failed.
@@ -223,7 +223,7 @@ failure, because it carries only the providers we pace.
 ## Road map refresh (reach)
 
 `spatial:update-data` downloads the map and rebuilds the deprivation file on the Docker
-host each month. The routing servers do not read the map: they load a saved road network
+host each week. The routing servers do not read the map: they load a saved road network
 and region layout (the reach artifacts), and every post's stored notes are tied to one
 layout by its fingerprint ([spatial servers](../../developers/reference/spatial-servers.md#the-artifacts-and-the-stored-notes-are-one-versioned-pair)).
 The `reach` profile carries a new map into all of them: the spatial container on the
@@ -237,7 +237,7 @@ same gates.
    for a second artifact set on every machine.
 2. **Housekeep the previous refresh.** Copy each staged note into the live column, delete
    the previous layout's leaf rows one post at a time, and drop the kept previous
-   artifacts. It refuses within 7 days of a switch (`MAINT_REACH_HOUSEKEEP_MIN_DAYS`),
+   artifacts. It refuses within 6 days of a switch (`MAINT_REACH_HOUSEKEEP_MIN_DAYS`; six because a weekly refresh comes back a few minutes short of seven whole days),
    which is how long a cheap rollback stays possible. It must run before the next
    staging, which overwrites the staged column. A run on an unchanged map does only this.
 3. **Build.** Rebuild the spatial image from the checkout, then in a throwaway container

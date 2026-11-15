@@ -3,7 +3,7 @@
 # Profile "reach": carry a refreshed road map into the routing servers that serve
 # members (db2, db3) and the one batch calls (the spatial container on this host).
 #
-# spatial:update-data (batch, monthly) downloads the map and rebuilds the
+# spatial:update-data (batch, weekly) downloads the map and rebuilds the
 # deprivation file on this host. Routing does not read the map directly: it loads
 # a saved road network and region layout (the reach artifacts), and every post's
 # stored notes are tied to one layout by its fingerprint. So a new map means, in
@@ -47,7 +47,8 @@ MAINT_REACH_INTERNAL_PORT="${MAINT_REACH_INTERNAL_PORT:-8197}"
 MAINT_REACH_BOOT_TIMEOUT="${MAINT_REACH_BOOT_TIMEOUT:-300}"
 MAINT_REACH_SLEEP_MS="${MAINT_REACH_SLEEP_MS:-20}"
 MAINT_REACH_EXPORT_WORKERS="${MAINT_REACH_EXPORT_WORKERS:-4}"
-MAINT_REACH_HOUSEKEEP_MIN_DAYS="${MAINT_REACH_HOUSEKEEP_MIN_DAYS:-7}"
+# Six, not seven: a weekly refresh comes back a few minutes short of seven whole days.
+MAINT_REACH_HOUSEKEEP_MIN_DAYS="${MAINT_REACH_HOUSEKEEP_MIN_DAYS:-6}"
 MAINT_REACH_MIN_FREE_GB_LOCAL="${MAINT_REACH_MIN_FREE_GB_LOCAL:-20}"
 MAINT_REACH_MIN_FREE_GB_NODE="${MAINT_REACH_MIN_FREE_GB_NODE:-10}"
 MAINT_REACH_BACKFILL="${MAINT_REACH_BACKFILL:-php artisan ripple:backfill-reach-labels --sleep-ms=100}"

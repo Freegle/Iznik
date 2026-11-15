@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-15
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -54,7 +54,7 @@ Channel Islands were dark. Build a replacement with
 `iznik-routing-go/scripts/build-osm-pbf.sh`, which fetches all four extracts we need and
 checks every named region has roads in it before it installs anything.
 
-Each month `spatial:update-data` downloads the same four extracts on the Docker host,
+Each week `spatial:update-data` downloads the same four extracts on the Docker host,
 merges them, and publishes the result only when every region has a road network.
 
 Putting the new file on a host is not enough on its own. When `REACH_DIR` is set the
