@@ -81,9 +81,47 @@ class ScamWaveDetectCommandTest extends TestCase
         $result = $this->service->detect(30);
 
         foreach ($result['clusters'] as $cluster) {
-            $this->assertNotSame('ok', mb_strtolower(trim($cluster['samples'][0]['text'])));
+            foreach ($cluster['samples'] as $sample) {
+                $this->assertNotSame('ok', mb_strtolower(trim($sample['text'])));
+            }
         }
         $this->assertGreaterThanOrEqual(10, $result['messages']);
+        $this->assertLessThan(ChatScamWaveService::MAX_CLUSTERS, count($result['clusters']), 'the list was not cut short, so an "ok" cluster would have been seen');
+    }
+
+    public function test_blank_messages_are_not_a_cluster(): void
+    {
+        $ids = $this->sendFromManySenders("  \n ", 8, ['added' => now()->subHours(2)]);
+
+        $result = $this->service->detect(30);
+
+        $sampled = [];
+        foreach ($result['clusters'] as $cluster) {
+            $sampled = array_merge($sampled, array_column($cluster['samples'], 'id'));
+        }
+        $this->assertEmpty(array_intersect($ids, $sampled));
+        $this->assertGreaterThanOrEqual(8, $result['messages']);
+    }
+
+    public function test_the_report_replaces_control_and_direction_characters(): void
+    {
+        $marker = 'ctl'.uniqid();
+        $ids = $this->sendFromManySenders("Send your details to\u{202E} the address {$marker}\u{200B} and I will\x1B reply quickly.", 8);
+
+        $result = $this->service->detect(30);
+        $result['clusters'] = [$this->clusterContaining($result, $marker)];
+        $report = $this->service->report($result);
+
+        $this->assertStringContainsString("  [{$ids[0]}] \"Send your details to the address {$marker} and I will reply quickly.\"", $report);
+    }
+
+    public function test_the_command_refuses_a_window_that_is_not_1_to_1440_minutes(): void
+    {
+        foreach (['abc', '0', '1441'] as $window) {
+            $this->artisan("chat:scam-wave-detect --no-mail --window={$window}")
+                ->expectsOutputToContain('--window must be a whole number of minutes from 1 to 1440.')
+                ->assertFailed();
+        }
     }
 
     public function test_a_short_text_is_still_a_cluster_when_new_accounts_dominate_it(): void

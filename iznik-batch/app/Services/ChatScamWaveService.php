@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
  *
  * A cluster is messages that share a signature: the first 60 characters of the text once
  * spacing, case and styled letters are folded away. Messages are also counted by any
- * domain they name, because a wave that varies its wording usually still names one site.
+ * domain they name, as extra detail for the reader; domains alone are not a cluster.
  */
 class ChatScamWaveService
 {
@@ -89,6 +89,10 @@ class ChatScamWaveService
             }
 
             $folded = $this->fold($row->message);
+            if ($folded === '') {
+                // Blank text, or text that is not valid UTF-8: nothing to compare or quote.
+                continue;
+            }
             $signature = mb_substr($folded, 0, self::SIGNATURE_LENGTH);
             $bySignature[$signature] ??= ['n' => 0, 'senders' => [], 'new' => 0, 'rooms' => [], 'samples' => []];
             $entry = &$bySignature[$signature];
@@ -225,10 +229,14 @@ class ChatScamWaveService
         ));
     }
 
-    /** One line, cut to a readable length, saying how long the whole message was. */
+    /**
+     * One line, cut to a readable length, saying how long the whole message was. Control
+     * and invisible formatting characters become spaces, so a sender cannot reorder or
+     * hide what the reader of the mail sees.
+     */
     private function forReport(string $text): string
     {
-        $oneLine = preg_replace('/\s+/u', ' ', trim($text)) ?? '';
+        $oneLine = trim(preg_replace('/[\s\p{Cc}\p{Cf}]+/u', ' ', $text) ?? '');
         $length = mb_strlen($oneLine);
         if ($length <= self::SAMPLE_REPORT_LENGTH) {
             return $oneLine;

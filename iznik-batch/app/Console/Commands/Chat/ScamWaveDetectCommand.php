@@ -19,11 +19,21 @@ class ScamWaveDetectCommand extends Command
         {--window=30 : How many minutes back to look}
         {--no-mail : Print the report without mailing it}';
 
-    protected $description = 'Report chat text sent by many senders in a short window, a possible scam wave';
+    /** A day. Every message in the window is read into memory, so it is kept bounded. */
+    public const MAX_WINDOW_MINUTES = 1440;
+
+    protected $description ='Report chat text sent by many senders in a short window, a possible scam wave';
 
     public function handle(ChatScamWaveService $service): int
     {
-        $result = $service->detect(max(1, (int) $this->option('window')));
+        $window = $this->option('window');
+        if (! ctype_digit((string) $window) || (int) $window < 1 || (int) $window > self::MAX_WINDOW_MINUTES) {
+            $this->error('--window must be a whole number of minutes from 1 to '.self::MAX_WINDOW_MINUTES.'.');
+
+            return self::FAILURE;
+        }
+
+        $result = $service->detect((int) $window);
         $report = $service->report($result);
         $this->line($report);
 
