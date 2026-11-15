@@ -145,6 +145,14 @@ batch host with `lockdown:on`. Nothing lifts on its own; lifting is a sequence o
 - Check the "Taking effect" list after pressing: every batch job should tick within
   seconds, and "Sent since the press" should stay at 0.
 
+## A "possible chat scam wave" mail arrives
+
+`chat:scam-wave-detect` runs every 15 minutes and mails geeks@ when the same chat text
+comes from many senders. The mail quotes the text, so read that first: it is often members
+saying the same ordinary thing.
+
+- How to read it and what to do: **[chat-scam-wave.md](chat-scam-wave.md)**.
+
 ## Claude broker on the docker host
 
 The AI support helper and Community News reach Freegle's Claude accounts through a broker
