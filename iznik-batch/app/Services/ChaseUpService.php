@@ -29,16 +29,6 @@ class ChaseUpService
     public const LOOKBACK_DAYS = 90;
 
     /**
-     * Default repost settings.
-     */
-    public const DEFAULT_REPOSTS = [
-        'offer' => 3,
-        'wanted' => 7,
-        'max' => 5,
-        'chaseups' => 5,
-    ];
-
-    /**
      * "Dull" outcome comments that should be NULLed out.
      *
      * V1: Message::dullComment() — these are auto-generated or meaningless
@@ -220,6 +210,7 @@ class ChaseUpService
         // NOW() is captured once, matching the single SELECT's one-NOW()-per-query
         // semantics.
         $now = now();
+        $reposts = RepostSettings::get();
 
         foreach ($groups as $group) {
             $groupModel = Group::find($group->groupid);
@@ -227,10 +218,9 @@ class ChaseUpService
                 continue;
             }
 
-            $reposts = $groupModel->getSetting('reposts', self::DEFAULT_REPOSTS);
             $interval = $message->type === Message::TYPE_OFFER
-                ? ($reposts['offer'] ?? 3)
-                : ($reposts['wanted'] ?? 7);
+                ? ($reposts['offer'] ?? RepostSettings::FALLBACK['offer'])
+                : ($reposts['wanted'] ?? RepostSettings::FALLBACK['wanted']);
 
             $hoursago = (int) \Illuminate\Support\Carbon::parse($group->arrival)->diffInHours($now);
 
@@ -295,6 +285,7 @@ class ChaseUpService
             ->get();
 
         $languishing = [];
+        $reposts = RepostSettings::get();
 
         foreach ($msgs as $msg) {
             // V1: filter in PHP for better index usage.
@@ -337,8 +328,7 @@ class ChaseUpService
                 continue;
             }
 
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
-            $maxReposts = $reposts['max'] ?? 5;
+            $maxReposts = $reposts['max'];
 
             if ($maxReposts > 0 && $msg->autoreposts <= $maxReposts) {
                 continue;
@@ -424,12 +414,14 @@ class ChaseUpService
         // Note: V1 doesn't filter onhere for chaseup (unlike autorepost).
         $groups = Group::freegle()->inRandomOrder()->get();
 
+        // One setting for every community (config row `reposts`); a community's own
+        // settings.reposts is ignored. Read once per run.
+        $reposts = RepostSettings::get();
+
         foreach ($groups as $group) {
             if ($group->isClosed()) {
                 continue;
             }
-
-            $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
 
             try {
                 $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun);
@@ -508,7 +500,7 @@ class ChaseUpService
             }
 
             $replyAgeHours = ($now - strtotime($lastReplyDate)) / 3600;
-            $chaseupInterval = $reposts['chaseups'] ?? 2;
+            $chaseupInterval = $reposts['chaseups'] ?? RepostSettings::FALLBACK['chaseups'];
 
             // V1: $age > $interval * 24
             if ($chaseupInterval <= 0 || $replyAgeHours <= $chaseupInterval * 24) {
@@ -584,7 +576,7 @@ class ChaseUpService
      * wrote, from subject distance between a TAKEN mail and the offer it
      * closed. Platform posts record their outcome through the app instead.)
      */
-    protected function getCandidates(int $groupid, string $mindate, array $reposts = self::DEFAULT_REPOSTS)
+    protected function getCandidates(int $groupid, string $mindate, array $reposts = RepostSettings::FALLBACK)
     {
         // Three of the things that disqualify a post can be asked of the database
         // directly, and they throw away almost everything. Measured against production
@@ -684,12 +676,12 @@ class ChaseUpService
      */
     protected function chaseupWindowHours(array $reposts): array
     {
-        $chaseupDays = $reposts['chaseups'] ?? 2;
-        $offerDays = (int) max($reposts['offer'] ?? 3, $chaseupDays);
-        $wantedDays = (int) max($reposts['wanted'] ?? 7, $chaseupDays);
+        $chaseupDays = $reposts['chaseups'] ?? RepostSettings::FALLBACK['chaseups'];
+        $offerDays = (int) max($reposts['offer'] ?? RepostSettings::FALLBACK['offer'], $chaseupDays);
+        $wantedDays = (int) max($reposts['wanted'] ?? RepostSettings::FALLBACK['wanted'], $chaseupDays);
 
         return [
-            'maxreposts' => (int) ($reposts['max'] ?? 5),
+            'maxreposts' => (int) ($reposts['max'] ?? RepostSettings::FALLBACK['max']),
             'offer_before' => now()->subHours(max(0, $offerDays * 24 - 24))->toDateTimeString(),
             'wanted_before' => now()->subHours(max(0, $wantedDays * 24 - 24))->toDateTimeString(),
         ];
@@ -707,7 +699,7 @@ class ChaseUpService
      */
     protected function canChaseup(object $msg, array $reposts): bool
     {
-        $maxreposts = $reposts['max'] ?? 5;
+        $maxreposts = $reposts['max'] ?? RepostSettings::FALLBACK['max'];
 
         // Must have reached max reposts (or reposts disabled).
         if ($maxreposts > 0 && $msg->autoreposts < $maxreposts) {
@@ -718,9 +710,9 @@ class ChaseUpService
         // to hours, making repeat chaseups fire after ~120 days instead of 5.
         // Fixed: both values are now in days.
         $typeIntervalDays = $msg->type === Message::TYPE_OFFER
-            ? ($reposts['offer'] ?? 3)
-            : ($reposts['wanted'] ?? 7);
-        $chaseupDays = $reposts['chaseups'] ?? 2;
+            ? ($reposts['offer'] ?? RepostSettings::FALLBACK['offer'])
+            : ($reposts['wanted'] ?? RepostSettings::FALLBACK['wanted']);
+        $chaseupDays = $reposts['chaseups'] ?? RepostSettings::FALLBACK['chaseups'];
         $intervalDays = max($typeIntervalDays, $chaseupDays);
 
         // If last chaseup exists, must be older than interval.
@@ -741,8 +733,8 @@ class ChaseUpService
     protected function canRepost(object $msg, array $reposts): bool
     {
         $interval = $msg->type === Message::TYPE_OFFER
-            ? ($reposts['offer'] ?? 3)
-            : ($reposts['wanted'] ?? 7);
+            ? ($reposts['offer'] ?? RepostSettings::FALLBACK['offer'])
+            : ($reposts['wanted'] ?? RepostSettings::FALLBACK['wanted']);
 
         // TIMESTAMPDIFF(HOUR, arrival, NOW()) truncates toward zero; (int)-casting
         // Carbon's diffInHours() gives the identical whole-hour count for the

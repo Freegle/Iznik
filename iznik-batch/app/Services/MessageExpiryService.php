@@ -236,12 +236,8 @@ class MessageExpiryService
      * V1 Message::getPublic() applies the same formula to both types; only the
      * parameter values differ (offer interval is shorter than wanted interval).
      *
-     * Fallback defaults match Group::defaultSettings (offer=3, wanted=7, max=5).
-     * V1 Message::getPublic() used different fallbacks (wanted=14, max=10) that
-     * caused groups without stored reposts settings to compute a 154-day WANTED
-     * threshold regardless of maxagetoshow — posts hidden from display for months
-     * before being auto-expired. Groups that have stored settings are unaffected
-     * (JSON_EXTRACT reads their actual values).
+     * The repost lifetime is the system-wide repost setting (RepostSettings), not a community's own,
+     * so every community gets the same offer or wanted lifetime; only maxagetoshow is per community.
      *
      * Expiry is judged across the message's LIVE postings only, and a message
      * expires when EVERY live Approved posting is past its group's threshold —
@@ -299,12 +295,7 @@ WHERE live.collection = 'Approved'
           AND mg.collection = 'Approved'
           AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) <= GREATEST(
             COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
-            CASE m.type
-              WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-              ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-            END
+            CASE m.type WHEN 'Offer' THEN ? ELSE ? END
           )
       )
       AND NOT EXISTS (
@@ -320,10 +311,16 @@ ORDER BY first_arrival
 LIMIT ?
 SQL;
 
-        // keep-raw: the per-group threshold is arithmetic over JSON_EXTRACT values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
+        // The repost lifetime is the same for every community (config row `reposts`), so it is
+        // worked out once here rather than read from each community's settings in the SQL.
+        $reposts = RepostSettings::get();
+
+        // keep-raw: the per-group threshold is arithmetic over a JSON_EXTRACT value inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
         return collect(DB::select($sql, [
             self::AGE_EXPIRY_LOOKBACK_DAYS,
             MessageOutcome::OUTCOME_EXPIRED,
+            $reposts['offer'] * ($reposts['max'] + 1),
+            $reposts['wanted'] * ($reposts['max'] + 1),
             self::AGE_EXPIRY_BATCH,
         ]))->pluck('msgid');
     }

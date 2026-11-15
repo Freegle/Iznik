@@ -109,6 +109,15 @@ vi.mock('~/composables/useMe', () => ({
   }),
 }))
 
+// The system-wide repost settings (the same for every community).
+const mockRepostSettings = ref({ offer: 3, wanted: 7, max: 3, chaseups: 5 })
+vi.mock('~/composables/useRepostSettings', () => ({
+  useRepostSettings: () => ({
+    settings: mockRepostSettings,
+    load: vi.fn().mockResolvedValue(undefined),
+  }),
+}))
+
 vi.mock('~/composables/useModMe', () => ({
   useModMe: () => ({
     checkWorkDeferGetMessages: vi.fn(),
@@ -307,6 +316,7 @@ describe('ModStdMessageModal', () => {
       url: 'https://test.ilovefreegle.org',
       membercount: 1000,
       modcount: 5,
+      // The community's own repost settings are ignored: the system-wide ones apply.
       settings: {
         reposts: { offer: 7, wanted: 14 },
       },
@@ -1124,6 +1134,38 @@ describe('ModStdMessageModal', () => {
         replybody: 'Hello $membername, we have added a note to your post.',
         ...overrides,
       })
+
+    it("fills in the system-wide repost settings, not the community's own", async () => {
+      mockRepostSettings.value = { offer: 3, wanted: 7, max: 3, chaseups: 5 }
+      const wrapper = mountComponent(
+        {},
+        {
+          stdmsgData: knivesStdmsg({
+            replybody:
+              'OFFERs repost after $repostoffer days (that is $repeatoffertime), WANTEDs after $repostwanted days ($repeatwantedtime).',
+          }),
+        }
+      )
+      await wrapper.vm.fillin()
+
+      expect(wrapper.vm.replyBody).toBe(
+        'OFFERs repost after 3 days (that is 3 days), WANTEDs after 7 days (7 days).'
+      )
+
+      mockRepostSettings.value = { offer: 1, wanted: 10, max: 2, chaseups: 4 }
+      const again = mountComponent(
+        {},
+        {
+          stdmsgData: knivesStdmsg({
+            replybody: '$repeatoffertime and $repeatwantedtime',
+          }),
+        }
+      )
+      await again.vm.fillin()
+
+      expect(again.vm.replyBody).toBe('1 day and 10 days')
+      mockRepostSettings.value = { offer: 3, wanted: 7, max: 3, chaseups: 5 }
+    })
 
     it('shows the post fields and the message to the poster', async () => {
       const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })

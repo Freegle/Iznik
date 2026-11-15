@@ -73,7 +73,9 @@ export const DISTANCE_TOOLTIP_ROAD =
 export const RECENT_MESSAGES = 31
 export const OWN_POSTS_AGE = 120
 export const MESSAGE_EXPIRE_TIME = 90
-export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
+// The system-wide repost settings used when the `reposts` config row cannot be read. See
+// composables/useRepostSettings.js; the Go API and the batch hold the same four values.
+export const GROUP_REPOSTS = { offer: 3, wanted: 7, max: 3, chaseups: 5 }
 
 // Sentinel for settings.browseMaxDistance meaning "no distance limit" - the default for
 // the Nearby browse distance slider. A MAXINT sentinel (rather than null) means every

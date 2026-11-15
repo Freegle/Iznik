@@ -13,6 +13,9 @@ covers:
   - iznik-nuxt3/components/PostItem.vue
   - iznik-nuxt3/components/PostItemWarning.vue
   - iznik-nuxt3/composables/useItemWarnings.js
+  - iznik-batch/app/Services/RepostSettings.php
+  - iznik-batch/app/Services/AutoRepostService.php
+  - iznik-server-go/group/repostsettings.go
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
@@ -113,10 +116,10 @@ From My Posts, or from the post itself, you can:
 - **Edit and resend** to freshen it up.
 - **Repost** to bump it back to the top.
 
-**Repost** appears once your post has been up for as long as your community's repost
-interval (often a few days). If your post has rippled out to other communities, you do not
-have to wait for the newest one to catch up: as soon as any community it is on has reached
-its interval, you can repost.
+**Repost** appears once your post has been up for the repost time: 3 days for an OFFER and
+7 days for a WANTED. This is the same for every community. If your post has rippled out to
+other communities, you do not have to wait for the newest one to catch up: as soon as any
+community it is on has reached that time, you can repost.
 
 Freegle is first come, not an auction. It is good manners to reply to everyone, even if
 just to say it has gone.
@@ -163,8 +166,8 @@ say who the item went to, so that person would be told it went to someone else.
 ## Reminders and auto-reposting
 
 If your item is still available after a while, Freegle reminds you before it
-automatically reposts it ("Will Repost: ..."), and later checks in to ask what happened
-("What happened to: ..."). You only ever get one reminder and one check-in per item, even
+automatically reposts it ("Will Repost: ..."), up to 3 times, and later checks in to ask
+what happened ("What happened to: ..."). You only ever get one reminder and one check-in per item, even
 if it has rippled out to several communities. Whatever you choose - taken, withdrawn, or
 promised - applies everywhere the post has reached.
 

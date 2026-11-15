@@ -135,20 +135,6 @@ type GroupEntry struct {
 	Dpa          *string `json:"dpa,omitempty" gorm:"-"`
 }
 
-type RepostSettings struct {
-	Offer    int `json:"offer"`
-	Wanted   int `json:"wanted"`
-	Max      int `json:"max"`
-	Chaseups int `json:"chaseups"`
-}
-
-// DefaultRepostSettings is what a group with no `reposts` entry in its settings
-// falls back to. Mirrors V1's Message::getPublic()/canRepost() default of
-// ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5].
-func DefaultRepostSettings() RepostSettings {
-	return RepostSettings{Offer: 3, Wanted: 7, Max: 5, Chaseups: 5}
-}
-
 func GetGroup(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 

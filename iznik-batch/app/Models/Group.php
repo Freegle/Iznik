@@ -56,12 +56,6 @@ class Group extends Model implements Auditable
             'WANTED' => 'WANTED',
             'RECEIVED' => 'RECEIVED',
         ],
-        'reposts' => [
-            'offer' => 3,
-            'wanted' => 7,
-            'max' => 5,
-            'chaseups' => 5,
-        ],
         'relevant' => 1,
         'newsfeed' => 1,
         'newsletter' => 1,

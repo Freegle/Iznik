@@ -27,7 +27,7 @@ func setupOwnExpiryGroup(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
 	db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?",
-		`{"maxagetoshow":20,"reposts":{"offer":1,"wanted":1,"max":1}}`, group)
+		`{"maxagetoshow":20}`, group)
 	return group
 }
 

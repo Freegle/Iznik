@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\AutoRepostService;
+use App\Services\RepostSettings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
@@ -400,9 +401,81 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals([
             'offer' => 3,
             'wanted' => 7,
-            'max' => 5,
+            'max' => 3,
             'chaseups' => 5,
-        ], AutoRepostService::DEFAULT_REPOSTS);
+        ], RepostSettings::FALLBACK);
+    }
+
+    private function setSystemReposts(array $values): void
+    {
+        DB::table('config')->updateOrInsert(['key' => 'reposts'], ['value' => json_encode($values)]);
+    }
+
+    public function test_a_community_own_repost_setting_is_ignored(): void
+    {
+        $group = $this->createTestGroup();
+
+        // This community asks for a 30 day gap, and for reposting to be off. Neither counts.
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['reposts' => ['offer' => 30, 'wanted' => 30, 'max' => 0, 'chaseups' => 5]]),
+        ]);
+
+        $data = $this->createRepostCandidate(group: $group, hoursOld: 80);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['reposted']);
+        $this->assertEquals(1, DB::table('messages_groups')->where('msgid', $data['message']->id)->value('autoreposts'));
+    }
+
+    public function test_the_system_row_sets_the_offer_interval(): void
+    {
+        $this->setSystemReposts(['offer' => 10, 'wanted' => 7, 'max' => 3, 'chaseups' => 5]);
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['reposted'], '80 hours is inside a 10 day gap');
+        $this->assertEquals(0, DB::table('messages_groups')->where('msgid', $data['message']->id)->value('autoreposts'));
+    }
+
+    public function test_the_system_row_sets_the_wanted_interval(): void
+    {
+        // 80 hours is past the 3 day OFFER gap but well inside the 7 day WANTED gap.
+        $data = $this->createRepostCandidate(hoursOld: 80, type: 'Wanted');
+
+        $this->assertEquals(0, $this->service->process()['reposted']);
+
+        DB::table('messages_groups')->where('msgid', $data['message']->id)->update(['arrival' => now()->subHours(180)]);
+
+        $this->assertEquals(1, $this->service->process()['reposted'], '180 hours is past the 7 day WANTED gap');
+    }
+
+    public function test_the_system_row_sets_the_number_of_reposts(): void
+    {
+        // The system value is 3 reposts: a post that has had 3 is done, where the old
+        // community default of 5 would have let it go on.
+        $data = $this->createRepostCandidate(hoursOld: 80, autoreposts: 3);
+
+        $this->assertEquals(0, $this->service->process()['reposted']);
+
+        $this->setSystemReposts(['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5]);
+
+        $this->assertEquals(1, $this->service->process()['reposted']);
+        $this->assertEquals(4, DB::table('messages_groups')->where('msgid', $data['message']->id)->value('autoreposts'));
+    }
+
+    public function test_a_missing_row_falls_back_to_the_built_in_values_and_warns(): void
+    {
+        DB::table('config')->where('key', 'reposts')->delete();
+        Log::spy();
+
+        $this->createRepostCandidate(hoursOld: 80);
+
+        $this->assertEquals(1, $this->service->process()['reposted']);
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, 'no `reposts` row'))->atLeast()->once();
     }
 
     public function test_reposts_eligible_message_in_90_day_window(): void

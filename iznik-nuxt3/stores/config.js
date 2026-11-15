@@ -23,7 +23,17 @@ export const useConfigStore = defineStore('config', {
           await nextTick()
         } else {
           this.fetching[key] = api(this.config).config.fetchv2(key, false)
-          const ret = await this.fetching[key]
+          let ret
+
+          try {
+            ret = await this.fetching[key]
+          } catch (e) {
+            // Forget the failed request so the next fetch tries again, rather than
+            // re-awaiting the same rejected promise for the rest of the session.
+            this.fetching[key] = null
+            throw e
+          }
+
           this.list[key] = {
             values: ret,
             addedToCache: Math.round(Date.now() / 1000),

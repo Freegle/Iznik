@@ -16,34 +16,19 @@ class GroupStatsServiceTest extends TestCase
         $this->service = new GroupStatsService();
     }
 
-    public function test_fixes_repost_string_values(): void
+    public function test_leaves_a_community_own_repost_settings_alone(): void
     {
         $group = $this->createTestGroup();
 
-        // Set reposts with string values.
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['reposts' => ['interval' => '7', 'max' => '3']]),
-        ]);
+        // Repost settings are system-wide now. A community's own value is ignored, and is not
+        // repaired or rewritten either: it stays as it was so the change can be reverted.
+        $stored = json_encode(['reposts' => ['interval' => '7', 'max' => '3']]);
+        DB::table('groups')->where('id', $group->id)->update(['settings' => $stored]);
 
         $result = $this->service->updateGroupStats();
 
-        $settings = json_decode(DB::table('groups')->where('id', $group->id)->value('settings'), true);
-        $this->assertIsInt($settings['reposts']['interval']);
-        $this->assertIsInt($settings['reposts']['max']);
-        $this->assertGreaterThanOrEqual(1, $result['reposts_fixed']);
-    }
-
-    public function test_skips_repost_already_int(): void
-    {
-        $group = $this->createTestGroup();
-
-        DB::table('groups')->where('id', $group->id)->update([
-            'settings' => json_encode(['reposts' => ['interval' => 7, 'max' => 3]]),
-        ]);
-
-        $result = $this->service->updateGroupStats();
-
-        $this->assertEquals(0, $result['reposts_fixed']);
+        $this->assertSame($stored, DB::table('groups')->where('id', $group->id)->value('settings'));
+        $this->assertArrayNotHasKey('reposts_fixed', $result);
     }
 
     public function test_updates_stats_outcomes(): void
@@ -75,6 +60,6 @@ class GroupStatsServiceTest extends TestCase
     {
         $result = $this->service->updateGroupStats();
 
-        $this->assertEquals(0, $result['reposts_fixed']);
+        $this->assertEquals(0, $result['polyindex_fixed']);
     }
 }
