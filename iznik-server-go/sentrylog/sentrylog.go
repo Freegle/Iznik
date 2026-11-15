@@ -106,7 +106,10 @@ func (l logger) Trace(ctx context.Context, begin time.Time, fc func() (string, i
 			fmt.Println("DEADLOCK ", err.Error())
 		} else if duplicateExpected(ctx, err) {
 			// The statement tried first on purpose and the caller handles the duplicate.
+			// Nothing more is printed: the error line below would carry the statement and
+			// the raw error, and with them the address that was already taken.
 			fmt.Println("DUPLICATE (expected) ", ScrubMessage(err.Error()))
+			return
 		} else {
 			fmt.Println("TRACE ", err.Error())
 			capture(ctx, err, fc)
