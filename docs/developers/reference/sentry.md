@@ -1,8 +1,10 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-15
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/plugins/sentry.client.ts
+  - iznik-server-go/sentrylog/sentrylog.go
+  - iznik-server-go/sentrylog/report.go
   - iznik-nuxt3/composables/useSuppressException.js
 ---
 
@@ -42,6 +44,12 @@ one grouped issue with an alert on how often it fires, not one issue per endpoin
   extensions, in-app browser bridges). It tests only the frame the error itself was thrown from,
   not any cause it wraps, so an error in our code that passes through or wraps a vendor error is
   still reported.
+
+On the Go API, `iznik-server-go/sentrylog` reports every failed database statement except two:
+a deadlock or lock wait timeout, which is routine on Galera, and a duplicate key on a statement
+whose context carries `ExpectDuplicate`. That mark is for an insert that tries first and treats
+a duplicate as its answer, such as sign-up's address insert. Both are printed to the API log,
+not reported. Any other error from a marked statement is still reported.
 
 Every rule carries the Sentry issue it answers and the evidence that it is not ours. A rule
 without that evidence is how a real fault gets hidden: do not add one on a hunch.
