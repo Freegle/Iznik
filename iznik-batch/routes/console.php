@@ -2214,6 +2214,16 @@ Schedule::command('lockdown:report')
     ->appendOutputTo(cronLog('lockdown:report'))
     ->runInBackground();
 
+// Chat scam-wave detector (docs/ops/runbooks/chat-scam-wave.md): looks at the last 30
+// minutes of delivered chat for the same text coming from many senders, and mails geeks@
+// the text when it finds a cluster. Read-only. Each run overlaps the one before, so a
+// wave is reported twice rather than missed at a boundary.
+Schedule::command('chat:scam-wave-detect')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('chat:scam-wave-detect'))
+    ->runInBackground();
+
 // =============================================================================
 // BACKUP DRAIN (see App\Console\BackupDrain)
 // =============================================================================
