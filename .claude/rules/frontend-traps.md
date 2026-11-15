@@ -159,6 +159,14 @@ Three things make this worse than it sounds:
   sends the bare specifier to the ES build; keep every import on `leaflet/dist/leaflet-src.esm`.
 - **`loadLeaflet()` must not skip the extensions when `window.L` is already set.** The vue-leaflet plugin
   sets it first, and wicket-leaflet then never loaded (`this.construct[this.type]`).
+- **Nothing sets `window.L` at import time, so a script that reads it must load after `loadLeaflet()`.**
+  The drawing tools (`@geoman-io/leaflet-geoman-free`), `wicket/wicket-leaflet` and `leaflet-draw` are
+  old-style scripts that read the global `L` as they load. With the alias above, `import 'leaflet'`
+  no longer sets it as a side effect, so one of them as a static import throws "L is not defined"
+  ("Can't find variable: L" in Safari) and the page falls to the error view. Import them
+  dynamically, after `await loadLeaflet()`. This took the ModTools map down for every moderator in
+  November 2026, and the component's unit test did not see it because it mounts a stand-in.
+  `leaflet-single-instance.spec.js` now checks the order from the source.
 - **Lockfiles are not interchangeable between npm 10 and npm 11.** A lockfile written by one
   fails a clean install under the other.
 - **Capacitor's plugin allowlist overrides dependency scanning**, so adding a dependency is not

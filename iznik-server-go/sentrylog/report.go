@@ -46,6 +46,41 @@ func IsDeadlock(err error) bool {
 	return errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205)
 }
 
+type expectDuplicateKey struct{}
+
+// expectedDuplicate names the one unique key a statement may fail on.
+type expectedDuplicate struct{ table, key string }
+
+// ExpectDuplicate returns a context whose statements may fail on one named unique key on
+// purpose: an insert that tries first and treats a duplicate as an answer, such as signup with
+// an address that is already taken. A duplicate on that key is logged and not reported to
+// Sentry. A duplicate on any other key, and any other error from the same statement, still is.
+func ExpectDuplicate(ctx context.Context, table, key string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, expectDuplicateKey{}, expectedDuplicate{table: table, key: key})
+}
+
+// duplicateExpected reports whether err is a MySQL duplicate key (1062) on the key a statement
+// said it expected one on. MySQL 8 names the key "table.key"; MySQL 5.7, Percona and MariaDB
+// name it just "key".
+func duplicateExpected(ctx context.Context, err error) bool {
+	if ctx == nil {
+		return false
+	}
+	expected, ok := ctx.Value(expectDuplicateKey{}).(expectedDuplicate)
+	if !ok || expected.key == "" {
+		return false
+	}
+	var me *mysql.MySQLError
+	if !errors.As(err, &me) || me.Number != 1062 {
+		return false
+	}
+	return strings.HasSuffix(me.Message, "for key '"+expected.key+"'") ||
+		strings.HasSuffix(me.Message, "for key '"+expected.table+"."+expected.key+"'")
+}
+
 var (
 	quotedRe  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
 	dquotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)

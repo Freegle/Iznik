@@ -276,7 +276,6 @@
 <script setup>
 import { nextTick } from 'vue'
 
-import 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import '~/assets/css/gesture-handling.css'
 import {
@@ -287,14 +286,12 @@ import {
   LFeatureGroup,
 } from '@vue-leaflet/vue-leaflet'
 
-import '@geoman-io/leaflet-geoman-free'
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'
 
 import turfpolygon from 'turf-polygon'
 import turfintersect from 'turf-intersect'
 import ClusterMarker from '~/components/ClusterMarker'
-import { attribution, osmtile } from '~/composables/useMap'
-import { registerGestureHandling } from '~/composables/gestureHandling'
+import { attribution, osmtile, loadLeaflet } from '~/composables/useMap'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useLocationStore } from '~/stores/location'
 import { POSTCODE_REGEX } from '~/constants'
@@ -302,11 +299,14 @@ import { POSTCODE_REGEX } from '~/constants'
 let Wkt = null
 
 if (import.meta.client) {
+  // The drawing tools and wicket-leaflet are old-style scripts that read the global L as they
+  // load, so window.L has to be in place first. loadLeaflet() pins it to the app's one Leaflet
+  // and adds gesture handling and wicket-leaflet; nothing else on this page sets it. The
+  // drawing tools are imported here, after the pin, and never as a static import at the top of
+  // the file, which would run before it.
+  await loadLeaflet()
+  await import('@geoman-io/leaflet-geoman-free')
   Wkt = await import('wicket')
-  await import('wicket/wicket-leaflet')
-  if (window.L && !window.L.Map.prototype.gestureHandling) {
-    registerGestureHandling(window.L)
-  }
 }
 
 const AREA_FILL_COLOUR = 'darkgreen'
