@@ -22,12 +22,14 @@
 import { computed } from 'vue'
 import { LCircleMarker, LGeoJson, LTooltip } from '@vue-leaflet/vue-leaflet'
 import { useLocationStore } from '~/stores/location'
+import { loadLeaflet } from '~/composables/useMap'
 
 let Wkt = null
 
 if (import.meta.client) {
+  // wicket-leaflet reads the global L as it loads; loadLeaflet() sets it and then adds it.
+  await loadLeaflet()
   Wkt = await import('wicket')
-  await import('wicket/wicket-leaflet')
 }
 
 const AREA_FILL_COLOUR = 'lightgreen'
