@@ -46,10 +46,12 @@ one grouped issue with an alert on how often it fires, not one issue per endpoin
   still reported.
 
 On the Go API, `iznik-server-go/sentrylog` reports every failed database statement except two:
-a deadlock or lock wait timeout, which is routine on Galera, and a duplicate key on a statement
-whose context carries `ExpectDuplicate`. That mark is for an insert that tries first and treats
-a duplicate as its answer, such as sign-up's address insert. Both are printed to the API log,
-not reported. Any other error from a marked statement is still reported.
+a deadlock or lock wait timeout, which is routine on Galera, and a duplicate on the one unique
+key that a statement's context names with `ExpectDuplicate`. That mark is for an insert that
+tries first and treats a duplicate as its answer, such as sign-up's address insert. Both are
+printed to the API log, not reported, and the expected duplicate is printed as one line with the
+value removed. A duplicate on any other key, and any other error from a marked statement, is
+still reported.
 
 Every rule carries the Sentry issue it answers and the evidence that it is not ours. A rule
 without that evidence is how a real fault gets hidden: do not add one on a hunch.

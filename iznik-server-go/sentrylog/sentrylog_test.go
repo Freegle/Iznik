@@ -240,14 +240,42 @@ func TestTraceExpectedDuplicateIsLoggedNotReported(t *testing.T) {
 	l := newTestLogger(logger2.Error, 0, true)
 	dup := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'a@b.com' for key 'users_emails.email'"}
 	out := captureStdout(func() {
-		l.Trace(ExpectDuplicate(context.Background()), time.Now(), func() (string, int64) {
+		l.Trace(ExpectDuplicate(context.Background(), "users_emails", "email"), time.Now(), func() (string, int64) {
+			return "INSERT INTO users_emails (email) VALUES ('a@b.com')", 0
+		}, dup)
+	})
+	assert.Contains(t, out, "DUPLICATE (expected)")
+	assert.NotContains(t, out, "TRACE")
+	// The member's address is not printed, from the error or from the statement.
+	assert.NotContains(t, out, "a@b.com")
+}
+
+func TestTraceExpectedDuplicateInTheOlderKeyNamingAndWithASQLState(t *testing.T) {
+	// MySQL 5.7, Percona and MariaDB name the key without its table, and a live server sends
+	// an SQLSTATE, which changes how the driver words the error.
+	l := newTestLogger(logger2.Error, 0, true)
+	dup := &mysql.MySQLError{Number: 1062, SQLState: [5]byte{'2', '3', '0', '0', '0'}, Message: "Duplicate entry 'a@b.com' for key 'email'"}
+	out := captureStdout(func() {
+		l.Trace(ExpectDuplicate(context.Background(), "users_emails", "email"), time.Now(), func() (string, int64) {
 			return "INSERT INTO users_emails", 0
 		}, dup)
 	})
 	assert.Contains(t, out, "DUPLICATE (expected)")
 	assert.NotContains(t, out, "TRACE")
-	// The member's address is not printed.
 	assert.NotContains(t, out, "a@b.com")
+}
+
+func TestTraceDuplicateOnAnotherKeyUnderTheMarkIsStillReported(t *testing.T) {
+	// The mark names one key. A duplicate on any other key of the same table is a fault.
+	l := newTestLogger(logger2.Error, 0, true)
+	dup := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'k' for key 'users_emails.validatekey'"}
+	out := captureStdout(func() {
+		l.Trace(ExpectDuplicate(context.Background(), "users_emails", "email"), time.Now(), func() (string, int64) {
+			return "INSERT INTO users_emails", 0
+		}, dup)
+	})
+	assert.Contains(t, out, "TRACE")
+	assert.NotContains(t, out, "DUPLICATE (expected)")
 }
 
 func TestTraceDuplicateWithoutTheMarkIsStillReported(t *testing.T) {
@@ -266,7 +294,7 @@ func TestTraceOtherErrorUnderTheMarkIsStillReported(t *testing.T) {
 	// The mark covers a duplicate only; any other failure of the same statement is a fault.
 	l := newTestLogger(logger2.Error, 0, true)
 	out := captureStdout(func() {
-		l.Trace(ExpectDuplicate(context.Background()), time.Now(), func() (string, int64) {
+		l.Trace(ExpectDuplicate(context.Background(), "users_emails", "email"), time.Now(), func() (string, int64) {
 			return "INSERT INTO users_emails", 0
 		}, errors.New("Error 1146: Table doesn't exist"))
 	})
