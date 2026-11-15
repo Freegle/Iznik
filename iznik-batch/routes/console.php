@@ -326,7 +326,7 @@ Schedule::command('ripple:proximity-notes')
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
 Schedule::command('spatial:update-data')
-    ->monthlyOn(1, '03:00')
+    ->weeklyOn(3, '03:00')
     ->withoutOverlapping(360)
     ->appendOutputTo(cronLog('spatial:update-data'))
     ->runInBackground();

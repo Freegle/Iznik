@@ -476,7 +476,7 @@ var cronJobs = []CronJob{
 	{Command: "logs:rotate", Name: "Log Rotation", Description: "Rotates application log files", Schedule: "Daily at 12:30am", IntervalMinutes: 1440, Category: "System", Active: true},
 	{Command: "monitor:scheduled-outcomes", Name: "Scheduled-Outcome Monitor", Description: "Outcome-based monitor: asserts each scheduled job's side effects happened within its freshness window", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Monitoring", Active: true},
 	{Command: "monitor:deprecated-endpoints", Name: "Deprecated Endpoint Monitor", Description: "Reports usage of deprecated API endpoints", Schedule: "Daily at 6:20am", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
-	{Command: "spatial:update-data", Name: "Spatial Data Update", Description: "Downloads UK OSM PBF + rebuilds deprivation quintiles and signals the spatial server to reload", Schedule: "Monthly (1st 3am)", IntervalMinutes: 43200, Category: "Data", Active: true},
+	{Command: "spatial:update-data", Name: "Spatial Data Update", Description: "Downloads the OSM extracts for the UK, Ireland and the Crown Dependencies, checks every region has roads, and rebuilds the deprivation quintiles", Schedule: "Weekly (Wed 3am UTC)", IntervalMinutes: 10080, Category: "Data", Active: true},
 	{Command: "spam:refresh-mobile-cidrs", Name: "Mobile CIDR Refresh", Description: "Refreshes UK mobile-carrier IP ranges into the spam IP whitelist", Schedule: "Monthly", IntervalMinutes: 43200, Category: "Spam / Abuse", Active: true},
 
 	// Rippling — only scheduled while the feature is switched on; Active:false so
@@ -494,7 +494,7 @@ var cronJobs = []CronJob{
 	{Command: "freegle-maint mail", Name: "OS Patching: Mail Relay", Description: "Patches and, when needed, reboots the mail relay (bulk2)", Schedule: "Weekly (Wed 2:15am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint docker", Name: "OS Patching: Docker Host", Description: "Patches and, when needed, reboots this Docker host; the run is recorded after the reboot", Schedule: "Weekly (Wed 11:35pm UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint arbitrator", Name: "OS Patching: Arbitrator", Description: "Patches and, when needed, reboots the Galera arbitrator (db1), stopping garbd first", Schedule: "Weekly (Fri 4:40am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
-	{Command: "freegle-maint reach", Name: "Road Map Refresh", Description: "Carries the month's new road map into every routing server: builds the road network and regions, stages every post's notes, switches one server at a time", Schedule: "Monthly (2nd, 1am UTC)", IntervalMinutes: 46080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint reach", Name: "Road Map Refresh", Description: "Carries the week's new road map into every routing server: builds the road network and regions, stages every post's notes, switches one server at a time", Schedule: "Weekly (Thu 1am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint rollout", Name: "OS Patching: Turn On Every Host", Description: "Which hosts are live and which still dry runs; overdue when no host has been made live for 14 days", Schedule: "When the live hosts change", IntervalMinutes: 20160, Category: "Host Maintenance", Active: true},
 
 	// Patch freshness - written by the batch host monitor (HostPatchTracker), not
