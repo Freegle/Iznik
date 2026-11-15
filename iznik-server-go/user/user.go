@@ -612,6 +612,11 @@ func ApplySettingsDefaultsToJSON(settings json.RawMessage, systemrole string) js
 	if err := json.Unmarshal(settings, &m); err != nil {
 		return settings
 	}
+	// The JSON literal null unmarshals without error and leaves the map nil. Writing a default into a nil
+	// map panics, so settings stored as null are returned as they are, like empty settings above.
+	if m == nil {
+		return settings
+	}
 
 	changed := false
 

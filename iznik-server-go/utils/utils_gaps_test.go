@@ -2,10 +2,10 @@ package utils
 
 // utils_gaps_test.go adds supplementary test cases for paths that the main
 // utils_test.go does not explicitly exercise.  Coverage was already at 95.8%
-// before this file; the remaining uncovered lines are either dead code or the
-// crypto/rand v==0 edge case documented below.
+// before this file; the remaining uncovered lines are dead code.
 
 import (
+	"bytes"
 	"math"
 	"testing"
 
@@ -25,24 +25,23 @@ func TestRandomHex_OneByte(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RandomUint64 — document the v==0 branch
+// RandomUint64 — the v==0 branch
 //
 // The function masks a 64-bit random value to 53 bits; if the result is zero
-// it substitutes 1.  With crypto/rand this event has probability ~1.1e-16 per
-// call and cannot be triggered deterministically in a pure unit test without
-// modifying the production code to accept an io.Reader.  We document the
-// branch here so future readers know it is intentional, not forgotten.
+// it substitutes 1.
 // ---------------------------------------------------------------------------
 
-// TestRandomUint64_ZeroMaskBranchUntestable skips unconditionally so that
-// the test suite still passes, but records that the `v = 1` substitution in
-// RandomUint64 cannot be reached without injecting a mocked crypto/rand reader.
-func TestRandomUint64_ZeroMaskBranchUntestable(t *testing.T) {
-	// TODO: latent coverage gap — the `if v == 0 { v = 1 }` branch in
-	// RandomUint64 is unreachable without a mock io.Reader replacing
-	// crypto/rand.  Refactor RandomUint64 to accept an io.Reader to enable
-	// deterministic testing of this path.
-	t.Skip("v==0 branch has probability ~1e-16 per call; not testable without mocking crypto/rand")
+// TestRandomUint64_NeverReturnsZero supplies the bytes that mask to zero. Zero would be stored as "no
+// series" in sessions.series, so it is replaced with 1.
+func TestRandomUint64_NeverReturnsZero(t *testing.T) {
+	// Only the low 53 bits are kept, so the top 11 bits set and the rest clear masks to zero.
+	onlyHighBits := []byte{0xff, 0xe0, 0, 0, 0, 0, 0, 0}
+	assert.Equal(t, uint64(1), randomUint64From(bytes.NewReader(onlyHighBits)))
+	assert.Equal(t, uint64(1), randomUint64From(bytes.NewReader(make([]byte, 8))))
+
+	// Any other value comes back as its low 53 bits.
+	assert.Equal(t, uint64(5), randomUint64From(bytes.NewReader([]byte{0xff, 0xe0, 0, 0, 0, 0, 0, 5})))
+	assert.Equal(t, uint64(1)<<53-1, randomUint64From(bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})))
 }
 
 // ---------------------------------------------------------------------------
