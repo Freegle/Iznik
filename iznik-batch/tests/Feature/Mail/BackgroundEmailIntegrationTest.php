@@ -94,9 +94,7 @@ class BackgroundEmailIntegrationTest extends TestCase
 
     public function test_forgot_password_end_to_end(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $user = $this->createTestUser();
         $email = $this->uniqueEmail('forgot');
@@ -137,9 +135,7 @@ class BackgroundEmailIntegrationTest extends TestCase
 
     public function test_unsubscribe_end_to_end(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $user = $this->createTestUser();
         $email = $this->uniqueEmail('unsub');
@@ -179,9 +175,7 @@ class BackgroundEmailIntegrationTest extends TestCase
 
     public function test_merge_end_to_end(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();

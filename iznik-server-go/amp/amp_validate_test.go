@@ -171,14 +171,6 @@ func TestValidateToken_WrongHMAC(t *testing.T) {
 	assert.Zero(t, rid)
 }
 
-// TestValidateToken_CorrectHMACRequiresDB documents that the only remaining
-// branch (user-existence DB query) cannot run without a live database
-// connection. The HMAC validation logic is verified by the WrongHMAC test
-// above (which confirms computeHMAC is called and used for comparison).
-func TestValidateToken_CorrectHMACRequiresDB(t *testing.T) {
-	t.Skip("user-existence check needs live DB — covered by integration tests")
-}
-
 // ---------------------------------------------------------------------------
 // recordAmpReplyTracking — nil ID is a guaranteed no-op (no DB call)
 // ---------------------------------------------------------------------------
@@ -418,21 +410,6 @@ func TestPostDigestReplyShared_WrongHMAC_Returns400(t *testing.T) {
 	status, result := postForm(t, app, form)
 	assert.Equal(t, 400, status)
 	assert.Equal(t, "Invalid token", result.Message)
-}
-
-// validateBodyToken with a correctly-computed HMAC reaches the user-existence
-// DB query, which can't run without a live DB. The wrong-HMAC test above
-// exercises the HMAC comparison itself (TokenMessage via computeHMAC).
-func TestValidateBodyToken_CorrectHMACRequiresDB(t *testing.T) {
-	t.Skip("user-existence check needs live DB — covered by integration tests")
-}
-
-// TestPostDigestReply_ZeroResourceIDFromValidToken verifies the messageID==0
-// guard: even if ValidateToken somehow returned a non-zero userID with a zero
-// resourceID, PostDigestReply must return 400.
-// This path requires a valid HMAC + live DB, so it is skipped here.
-func TestPostDigestReply_ZeroResourceID_RequiresDB(t *testing.T) {
-	t.Skip("zero-resourceID guard requires valid HMAC + live DB")
 }
 
 // ---------------------------------------------------------------------------

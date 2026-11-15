@@ -150,9 +150,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_spooled_amp_email_contains_amp_mime_part(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('amp_mime');
 
@@ -199,9 +197,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_amp_email_has_multipart_alternative_structure(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('amp_structure');
 
@@ -247,9 +243,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_amp_content_is_preserved_exactly(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('amp_exact');
 
@@ -278,9 +272,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_amp_email_preserves_all_envelope_addresses(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('amp_envelope');
         $fromEmail = $this->uniqueEmail('noreply');
@@ -325,9 +317,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_amp_email_preserves_cc_and_bcc(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('amp_cc_to');
         $ccEmail = $this->uniqueEmail('amp_cc_cc');
@@ -389,9 +379,7 @@ class AmpEmailSpoolIntegrationTest extends TestCase
      */
     public function test_non_amp_email_does_not_have_amp_mime_part(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('no_amp');
         $fromEmail = $this->uniqueEmail('noreply');
