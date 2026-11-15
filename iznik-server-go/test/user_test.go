@@ -1305,8 +1305,7 @@ func TestPutMessageUnauthenticatedPersistentSeriesMatchesSession(t *testing.T) {
 
 	persistent, ok := result["persistent"].(map[string]interface{})
 	if !ok {
-		t.Skip("PUT /message did not return a persistent token for this payload; handler shape changed")
-		return
+		t.Fatalf("PUT /message did not return a persistent token: %v", result)
 	}
 
 	returnedSeries, _ := persistent["series"].(float64)
@@ -1446,7 +1445,7 @@ func TestPatchUserSettingsPostcodeChange(t *testing.T) {
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_loc").Scan(&locID)
 	if locID == 0 {
-		t.Skip("Could not create test location")
+		t.Fatal("could not create the test location")
 	}
 	defer db.Exec("DELETE FROM locations WHERE id = ?", locID)
 

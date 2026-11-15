@@ -68,6 +68,7 @@
  *   Any State ──► ERROR ──► (user clicks retry) ──► COMPOSING
  *
  *   Any Processing State ──► (30s timeout) ──► COMPOSING (fallback)
+ *     (except AUTHENTICATING while the login modal is up: that waits for the member)
  *
  *   Any State ──► (auth error from server) ──► AUTHENTICATING (force re-login)
  *
@@ -458,6 +459,25 @@ export function useReplyStateMachine(messageId, options = {}) {
     }
   }
 
+  // Show the login modal and wait for the member. A person logging in takes
+  // as long as they take (finding a password, waiting for a sign-in email), so
+  // this is not a stuck step and the processing timeout does not apply: the
+  // state stays AUTHENTICATING and the reply is sent when the login completes.
+  function waitForLogin() {
+    forceLogin.value = true
+    clearProcessingTimeout()
+  }
+
+  // The login modal has gone. After a login the reply is sent as soon as the
+  // member's details arrive; if they left the modal another way (forgotten
+  // password, logout) nothing is coming, so the step is timed again and falls
+  // back to the reply form rather than showing a spinner for ever.
+  watch(forceLogin, (showing) => {
+    if (!showing && state.value === ReplyState.AUTHENTICATING) {
+      startProcessingTimeout()
+    }
+  })
+
   // Fallback to COMPOSING state - used when something unexpected happens
   // This ensures the user is never left stuck - they can always retry
   function fallbackToComposing(reason) {
@@ -475,14 +495,14 @@ export function useReplyStateMachine(messageId, options = {}) {
   function handleAuthError() {
     log('Auth error from server - user session may have expired')
 
-    // Force re-login
-    forceLogin.value = true
-
     // Go back to authenticating state
     transitionTo(ReplyState.AUTHENTICATING, {
       event: ReplyEvent.AUTH_ERROR,
       reason: 'server_session_expired',
     })
+
+    // Force re-login
+    waitForLogin()
   }
 
   // A 403 "not_in_reach" is the rippling-out reach gate, NOT an auth failure: the post has
@@ -1034,7 +1054,7 @@ export function useReplyStateMachine(messageId, options = {}) {
       } else {
         // User exists, need to log in
         log('User exists, forcing login')
-        forceLogin.value = true
+        waitForLogin()
 
         // The login modal will handle the rest
         // State is persisted - if social sign-in happens, we'll resume on return
@@ -1057,7 +1077,7 @@ export function useReplyStateMachine(messageId, options = {}) {
       }
 
       // Assume existing user and force login
-      forceLogin.value = true
+      waitForLogin()
       callback?.()
     }
   }

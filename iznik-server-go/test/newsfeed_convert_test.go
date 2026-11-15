@@ -231,6 +231,22 @@ func TestNewsfeedConvertInfo_NotFoundForMissingEntry(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+// convertTestPostcode makes a postcode location for one test and removes it afterwards, so the test does
+// not depend on what another test or a seed left in the table.
+func convertTestPostcode(t *testing.T, prefix string) (uint64, string) {
+	t.Helper()
+	db := database.DBConn
+	name := prefix + "_pc"
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 55.9533, -3.1883)", name)
+	var id uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", name).Scan(&id)
+	if id == 0 {
+		t.Fatal("could not create the test location")
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM locations WHERE id = ?", id) })
+	return id, name
+}
+
 func TestNewsfeedConvertInfo_UsesTheMembersChosenLocation(t *testing.T) {
 	// The postcode must be the one the MEMBER set in their settings, not one
 	// inferred from wherever they last happened to be, and not the moderator's.
@@ -241,16 +257,8 @@ func TestNewsfeedConvertInfo_UsesTheMembersChosenLocation(t *testing.T) {
 
 	db := database.DBConn
 
-	// Any real location row will do - we only care that the id and name we set
-	// are the ones handed back.
-	var locID uint64
-	var locName string
-	db.Raw("SELECT id, name FROM locations WHERE type = ? AND name IS NOT NULL AND name != '' LIMIT 1",
-		"Postcode").Row().Scan(&locID, &locName)
-
-	if locID == 0 {
-		t.Skip("no postcode locations seeded")
-	}
+	// Any location will do - we only care that the id and name we set are the ones handed back.
+	locID, locName := convertTestPostcode(t, prefix)
 
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(NULLIF(settings, ''), '{}'), "+
 		"'$.mylocation', JSON_OBJECT('id', ?, 'name', ?, 'lat', 55.9533, 'lng', -3.1883)) WHERE id = ?",
@@ -265,13 +273,11 @@ func TestNewsfeedConvertInfo_UsesTheMembersChosenLocation(t *testing.T) {
 	var result map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 
-	if result["canpost"] == true {
-		assert.Equal(t, locName, result["locationname"],
-			"the preview must show the postcode the member chose")
-	} else {
-		// Only legitimate reason left is that the test user is in no community.
-		assert.Contains(t, result["reason"], "community")
+	if result["canpost"] != true {
+		t.Fatalf("expected canpost true, got reason %v", result["reason"])
 	}
+	assert.Equal(t, locName, result["locationname"],
+		"the preview must show the postcode the member chose")
 }
 
 // --- After the convert: what the thread records ---
@@ -450,13 +456,7 @@ func TestNewsfeedConvertInfo_SaysWhenThePostWillAwaitApproval(t *testing.T) {
 
 	db := database.DBConn
 
-	var locID uint64
-	var locName string
-	db.Raw("SELECT id, name FROM locations WHERE type = ? AND name IS NOT NULL AND name != '' LIMIT 1",
-		"Postcode").Row().Scan(&locID, &locName)
-	if locID == 0 {
-		t.Skip("no postcode locations seeded")
-	}
+	locID, locName := convertTestPostcode(t, prefix)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(NULLIF(settings, ''), '{}'), "+
 		"'$.mylocation', JSON_OBJECT('id', ?, 'name', ?, 'lat', 55.9533, 'lng', -3.1883)) WHERE id = ?",
 		locID, locName, posterID)

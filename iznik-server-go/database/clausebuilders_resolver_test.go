@@ -28,7 +28,7 @@ import (
 func TestCustomClauseBuildersSurviveReadReplica(t *testing.T) {
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
-		t.Skip("MYSQL_HOST not set; skipping resolver integration test")
+		t.Fatal("MYSQL_HOST is not set: this test needs the test database")
 	}
 	t.Setenv("MYSQL_HOST_READ", host)
 
