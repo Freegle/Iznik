@@ -294,7 +294,7 @@ test('a member id given as text shares the number\'s read and kept result', asyn
     await Promise.all([mh.mailHistoryFor(42, deps), mh.mailHistoryFor('42', deps)])
     await mh.mailHistoryFor('42', deps)
     assert.strictEqual(fake.connections(), 1)
-    assert.strictEqual((await mh.mailHistoryFor('x', deps)).reason, mh.REASON_NO_MEMBER)
+    for (const bad of ['x', 1.5, Infinity, '1e21', true, -3]) assert.strictEqual((await mh.mailHistoryFor(bad, deps)).reason, mh.REASON_NO_MEMBER)
   } finally {
     await fake.close()
   }
@@ -305,6 +305,27 @@ test('a read stuck before any mailbox (the database) still ends, and the next ca
   const r = await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: stuck, totalTimeoutMs: 50, log: () => {} })
   assert.strictEqual(r.reason, mh.REASON_UNREADABLE)
   assert.strictEqual(mh._inflight.size, 0)
+})
+
+test('a read stopped at the overall bound closes its connection and keeps nothing', async () => {
+  const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL }, { hang: 'support@example.org' })
+  try {
+    let closed = false
+    const connect = () => {
+      const s = fake.connect()
+      s.on('close', () => (closed = true))
+      return s
+    }
+    const started = Date.now()
+    const r = await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect, now: () => NOW, log: () => {}, timeoutMs: 10000, totalTimeoutMs: 100 })
+    assert.strictEqual(r.reason, mh.REASON_UNREADABLE)
+    assert.ok(Date.now() - started < 2000)
+    await new Promise((res) => setTimeout(res, 50))
+    assert.strictEqual(closed, true)
+    assert.strictEqual(mh._cache.size, 0)
+  } finally {
+    await fake.close()
+  }
 })
 
 test('kept results past their six hours are dropped on the next call', async () => {
@@ -391,4 +412,8 @@ test('the excerpt is the new text only: quotes, reply lines, forwards and signat
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>New</p><blockquote>outer<blockquote>inner</blockquote>outer tail</blockquote><p>end</p>')), 'New end')
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>a < 5 deal</p>')), 'a < 5 deal')
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<header>kept</header>')), 'kept')
+  // Comments, Outlook's conditional blocks and a > inside an attribute leave no text behind.
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<!-- a > secret -->visible')), 'visible')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<!--[if gte mso 9]><xml>x>y</xml><![endif]-->Body')), 'Body')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<a title="x>y">link</a>')), 'link')
 })

@@ -261,7 +261,8 @@ function decodePart(raw, encoding, charset) {
  * or a tag with no end runs to the end of what was read and is dropped with it.
  */
 function htmlToText(html) {
-  let s = html.replace(/<(style|script|head)(?=[\s>])[\s\S]*?(<\/\1>|$)/gi, ' ')
+  // Comments first: Outlook hides whole blocks in conditional comments.
+  let s = html.replace(/<!--[\s\S]*?(-->|$)/g, ' ').replace(/<(style|script|head)(?=[\s>])[\s\S]*?(<\/\1>|$)/gi, ' ')
   // Quoted mail, innermost quote first so a quote inside a quote goes whole.
   const innermost = /<blockquote\b(?:(?!<blockquote\b)[\s\S])*?<\/blockquote>/gi
   for (let before = ''; before !== s; ) {
@@ -272,7 +273,7 @@ function htmlToText(html) {
     .replace(/<blockquote\b[\s\S]*$/i, '\n')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
     // Only something that starts like a tag is a tag: "a < 5 deal" keeps its text.
-    .replace(/<[a-z/!][^>]*(>|$)/gi, ' ')
+    .replace(/<[a-z/!](?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^>"'])*(>|$)/gi, ' ')
     .replace(/&#(\d+);|&#x([0-9a-f]+);|&([a-z]+);/gi, (m, dec, hex, name) => {
       if (dec || hex) {
         const n = dec ? Number(dec) : parseInt(hex, 16)
@@ -379,9 +380,11 @@ async function allMailFolder(client) {
  * Read one mailbox: the newest PER_MAILBOX mails from, to or copied to any of the addresses since
  * the given date.
  */
-async function readMailbox({ mailbox, addresses, since, connect, timeoutMs = MAILBOX_TIMEOUT_MS }) {
+async function readMailbox({ mailbox, addresses, since, connect, timeoutMs = MAILBOX_TIMEOUT_MS, stop }) {
   const socket = connect(mailbox)
   const timer = setTimeout(() => socket.destroy(new Error('timed out')), timeoutMs)
+  const onStop = () => socket.destroy(new Error('stopped'))
+  if (stop) stop.addEventListener('abort', onStop, { once: true })
   const client = new ImapClient(socket)
   try {
     await client.greeting()
@@ -443,6 +446,7 @@ async function readMailbox({ mailbox, addresses, since, connect, timeoutMs = MAI
     return entries
   } finally {
     clearTimeout(timer)
+    if (stop) stop.removeEventListener('abort', onStop)
     socket.destroy()
   }
 }
@@ -487,8 +491,8 @@ async function mailHistoryFor(memberId, deps = {}) {
   const mailboxes = mailboxesFromEnv(env)
   if (!mailboxes.length) return { available: false, reason: REASON_NOT_SET_UP, entries: [] }
   // One key per member whether the id came as a number or as text.
-  const id = Number(memberId)
-  if (!(id > 0)) return { available: false, reason: REASON_NO_MEMBER, entries: [] }
+  const id = typeof memberId === 'number' || typeof memberId === 'string' ? Number(memberId) : NaN
+  if (!Number.isSafeInteger(id) || id <= 0) return { available: false, reason: REASON_NO_MEMBER, entries: [] }
 
   for (const [k, kept] of cache) if (now() - kept.at >= CACHE_TTL_MS) cache.delete(k)
   const hit = cache.get(id)
@@ -498,11 +502,16 @@ async function mailHistoryFor(memberId, deps = {}) {
   if (!read) {
     // The whole read is bounded too, so a stuck database connection cannot hold every later caller.
     const totalMs = deps.totalTimeoutMs || (deps.timeoutMs || MAILBOX_TIMEOUT_MS) + 15000
+    // At the bound the read is stopped too: its connections close and its result is not kept.
+    const stop = new AbortController()
     let timer
     const bound = new Promise((resolve) => {
-      timer = setTimeout(() => resolve(unreadable()), totalMs)
+      timer = setTimeout(() => {
+        stop.abort()
+        resolve(unreadable())
+      }, totalMs)
     })
-    read = Promise.race([readHistory(id, mailboxes, { ...deps, now }), bound]).finally(() => {
+    read = Promise.race([readHistory(id, mailboxes, { ...deps, now, stop: stop.signal }), bound]).finally(() => {
       clearTimeout(timer)
       inflight.delete(id)
     })
@@ -538,7 +547,10 @@ async function readHistory(memberId, mailboxes, deps) {
   const since = new Date(now())
   since.setUTCFullYear(since.getUTCFullYear() - YEARS_BACK)
 
-  const settled = await Promise.allSettled(mailboxes.map((mailbox) => readMailbox({ mailbox, addresses, since, connect, timeoutMs: deps.timeoutMs })))
+  if (deps.stop && deps.stop.aborted) return unreadable()
+  const settled = await Promise.allSettled(
+    mailboxes.map((mailbox) => readMailbox({ mailbox, addresses, since, connect, timeoutMs: deps.timeoutMs, stop: deps.stop }))
+  )
   const failed = []
   const lists = []
   settled.forEach((s, k) => {
@@ -568,6 +580,7 @@ async function readHistory(memberId, mailboxes, deps) {
     return { available: true, reason: `the ${failed.join(' and ')} mailbox could not be read just now, so only ${read.join(' and ')} mail is listed`, entries }
   }
   const result = { available: true, reason: '', entries }
+  if (deps.stop && deps.stop.aborted) return result
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value)
   cache.set(memberId, { at: now(), result })
   return result
