@@ -21,19 +21,23 @@ login for a member id that does not exist. Each one is counted twice:
 
 | Counted against | Failures that cost nothing | Why |
 |---|---|---|
-| The account being tried (the email address, or the member id for a link login) | 5 | Stops many addresses guessing at one member. |
-| The address trying | 20 | Stops one address trying one password on many members. A school or library is many members behind one address, so it gets more room. |
+| The member being tried. All of a member's email addresses and their login link share one count. | 5 | Stops many addresses guessing at one member. |
+| The address trying. For IPv6 that is the /64, since one customer can pick any address in it. | 20 | Stops one address trying one password on many members. A school or library is many members behind one address, so it gets more room. |
 
 Past the free failures, the next attempt waits 30 seconds. Each further failure doubles the wait,
 up to 15 minutes. A count is forgotten an hour after its last failure. A successful login forgets
-the account's count, and leaves the address's count alone.
+the member's count, and leaves the address's count alone.
 
 ## What a held login gets
 
-HTTP 429, a `Retry-After` header, and a body with `ret: 13`, `retryafter` in seconds and a
+HTTP 403, a `Retry-After` header, and a body with `ret: 13`, `retryafter` in seconds and a
 `status` the login box shows as it is:
 
 > Too many failed attempts. Please wait 30 seconds and try again, or use Forgot password.
+
+It is a 403, like a wrong password, and not a 429. The website and the app builds already
+released retry a 429 by themselves for minutes (`iznik-nuxt3/composables/useFetchRetry.js`) and
+then show nothing, where they show a 403's `status` to the member.
 
 The check comes before the password is looked at, so the right password is held too. Otherwise a
 guesser could tell a right guess from a wrong one. A held attempt is not itself counted, so
@@ -49,6 +53,8 @@ waiting always works.
 
 ## Limits to know about
 
+- Two logins sent at the same moment are both checked before either failure is counted, so a
+  burst gets a few more tries than the table says.
 - The counts are in memory. A restart of the API forgets them, and API processes do not share
   them, so with N processes a guesser gets N times the allowance.
 - Someone who knows a member's email address can make that member wait, for up to 15 minutes at a

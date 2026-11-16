@@ -568,8 +568,8 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error {
 	db := database.DBConn
 
-	accountKey := loginAccountKey(email)
-	if held, err := loginHeldBack(c, accountKey); held {
+	// The address is checked before anything is looked up, the account once we know whose it is.
+	if held, err := loginHeldBack(c, ""); held {
 		return err
 	}
 
@@ -584,12 +584,19 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		Scan(&userID)
 
 	if userID == 0 {
-		loginFailed(c, accountKey)
+		loginFailed(c, "")
 
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "We don't know that email address.",
 		})
+	}
+
+	// Counted against the member, not the address typed, so each of a member's addresses and their
+	// login link share one count, and two spellings the database treats as one address do too.
+	accountKey := loginUserKey(userID)
+	if held, err := loginHeldBack(c, accountKey); held {
+		return err
 	}
 
 	if !auth.VerifyPassword(userID, password) {

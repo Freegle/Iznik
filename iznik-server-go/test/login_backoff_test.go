@@ -71,16 +71,17 @@ func TestLoginRepeatedWrongPasswordsMakeTheAccountWait(t *testing.T) {
 
 	// Now even the right password has to wait, so a guesser learns nothing from trying.
 	status, result, retryAfter := loginAs(t, right, "")
-	assert.Equal(t, 429, status)
+	assert.Equal(t, 403, status)
 	assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
 	assert.Equal(t, "30", retryAfter)
 	assert.Equal(t, float64(30), result["retryafter"])
 	assert.Equal(t, "Too many failed attempts. Please wait 30 seconds and try again, or use Forgot password.", result["status"])
 	assert.Nil(t, result["jwt"])
 
-	// The same address written with other capitals is the same account.
-	status, _, _ = loginAs(t, map[string]interface{}{"email": "  " + upperFirst(email), "password": "rightpassword"}, "")
-	assert.Equal(t, 429, status)
+	// The same address written with other capitals is the same member.
+	status, result, _ = loginAs(t, map[string]interface{}{"email": upperFirst(email), "password": "rightpassword"}, "")
+	assert.Equal(t, 403, status)
+	assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
 
 	// Another member is not held back by this one's failures.
 	_, otherEmail := userWithPassword(t, uniquePrefix("login_backoff_other"), "otherpassword")
@@ -90,6 +91,59 @@ func TestLoginRepeatedWrongPasswordsMakeTheAccountWait(t *testing.T) {
 
 func upperFirst(s string) string {
 	return string(bytes.ToUpper([]byte(s[:1]))) + s[1:]
+}
+
+func TestLoginAMembersAddressesAndLinkShareOneCount(t *testing.T) {
+	session.ResetLoginBackoff()
+	t.Cleanup(session.ResetLoginBackoff)
+	prefix := uniquePrefix("login_backoff_shared")
+	userID, email := userWithPassword(t, prefix, "rightpassword")
+	second := prefix + "-second@test.com"
+	database.DBConn.Exec("INSERT INTO users_emails (userid, email, preferred, validated) VALUES (?, ?, 0, NOW())", userID, second)
+	database.DBConn.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, 'Link', ?, ?)",
+		userID, strconv.FormatUint(userID, 10), "therightkey")
+
+	// Two wrong passwords on each address and two wrong link keys: six failures, one member.
+	for i := 0; i < 2; i++ {
+		status, _, _ := loginAs(t, map[string]interface{}{"email": email, "password": "wrongpassword"}, "")
+		assert.Equal(t, 403, status)
+		status, _, _ = loginAs(t, map[string]interface{}{"email": second, "password": "wrongpassword"}, "")
+		assert.Equal(t, 403, status)
+		status, _, _ = loginAs(t, map[string]interface{}{"u": userID, "k": "awrongkey"}, "")
+		assert.Equal(t, 403, status)
+	}
+
+	for _, right := range []map[string]interface{}{
+		{"email": email, "password": "rightpassword"},
+		{"email": second, "password": "rightpassword"},
+		{"u": userID, "k": "therightkey"},
+	} {
+		status, result, _ := loginAs(t, right, "")
+		assert.Equal(t, 403, status)
+		assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
+	}
+}
+
+func TestLoginOneIPv6NetworkIsOneAddress(t *testing.T) {
+	session.ResetLoginBackoff()
+	t.Cleanup(session.ResetLoginBackoff)
+	_, email := userWithPassword(t, uniquePrefix("login_backoff_v6"), "rightpassword")
+	right := map[string]interface{}{"email": email, "password": "rightpassword"}
+
+	// 2001:db8::/32 is the documentation range (RFC 3849). A new address from the same /64 each time.
+	for i := 0; i < 21; i++ {
+		unknown := map[string]interface{}{"email": fmt.Sprintf("%s-%d@test.com", uniquePrefix("login_backoff_v6_nobody"), i), "password": "guess"}
+		status, _, _ := loginAs(t, unknown, fmt.Sprintf("2001:db8:1:2::%x", i+1))
+		assert.Equal(t, 404, status)
+	}
+
+	status, result, _ := loginAs(t, right, "2001:db8:1:2::ffff")
+	assert.Equal(t, 403, status)
+	assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
+
+	// The /64 next door is someone else.
+	status, _, _ = loginAs(t, right, "2001:db8:1:3::1")
+	assert.Equal(t, 200, status)
 }
 
 func TestLoginSuccessStartsTheCountAgain(t *testing.T) {
@@ -133,7 +187,7 @@ func TestLoginOneAddressTryingManyAccountsHasToWait(t *testing.T) {
 
 	// The address now waits, whoever it tries.
 	status, result, _ := loginAs(t, right, address)
-	assert.Equal(t, 429, status)
+	assert.Equal(t, 403, status)
 	assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
 
 	// The member themselves, from somewhere else, is not held.
@@ -172,7 +226,7 @@ func TestLoginRepeatedWrongLinkKeysMakeTheAccountWait(t *testing.T) {
 	}
 
 	status, result, _ := loginAs(t, right, "")
-	assert.Equal(t, 429, status)
+	assert.Equal(t, 403, status)
 	assert.Equal(t, float64(session.RetLoginBackoff), result["ret"])
 
 	session.ResetLoginBackoff()

@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"net/netip"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,10 +15,14 @@ import (
 // is loginBackoffMaxWait, and a member who is stuck can still use "Forgot password", a login link or
 // a social login, none of which are held back by a wrong password.
 //
-// Failures are counted twice, against the account being tried and against the address trying. The
-// account count stops many addresses guessing at one member; the address count stops one address
-// trying one password on many members. An address gets more room than an account because a school
+// Failures are counted twice, against the member being tried and against the address trying. The
+// member count stops many addresses guessing at one member; the address count stops one address
+// trying one password on many members. An address gets more room than a member because a school
 // or library is many members behind one address.
+//
+// The refusal is a 403, like a wrong password, not a 429: the website and the apps already out
+// there retry a 429 by themselves for minutes and then show nothing, and they show a 403's status
+// text to the member as it is.
 //
 // The counts are held in memory, like the client log limiter. They are lost on a restart and are
 // not shared between API processes, so with N processes a guesser gets N times the allowance. That
@@ -131,8 +134,18 @@ func (b *loginBackoff) fail(key string, free int) {
 				}
 			}
 		}
+		if len(b.keys) >= b.maxKeys && b.lastSweep.Equal(now) {
+			// Still full after the sweep: drop the counts that are not making anyone wait, so a
+			// flood of single failures cannot crowd out the keys that matter.
+			for k, old := range b.keys {
+				if !old.notBefore.After(now) {
+					delete(b.keys, k)
+				}
+			}
+		}
 		if len(b.keys) >= b.maxKeys {
-			// Full of live counts. Leave this one uncounted rather than grow without bound.
+			// Full of counts that are all waiting. Leave this one uncounted rather than grow
+			// without bound.
 			return
 		}
 		f = &loginFailures{}
@@ -150,12 +163,7 @@ func (b *loginBackoff) clear(key string) {
 	delete(b.keys, key)
 }
 
-// loginAccountKey is the count for the account an email and password login is trying.
-func loginAccountKey(email string) string {
-	return "email:" + strings.ToLower(strings.TrimSpace(email))
-}
-
-// loginUserKey is the count for the account a link login is trying.
+// loginUserKey is the count for the member a login is trying.
 func loginUserKey(uid uint64) string {
 	return fmt.Sprintf("user:%d", uid)
 }
@@ -173,12 +181,18 @@ func loginAddressKey(c *fiber.Ctx) string {
 	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
 		return ""
 	}
+	if addr.Is6() {
+		// One IPv6 customer has a whole /64 to pick addresses from, so that is what is counted.
+		if prefix, err := addr.Prefix(64); err == nil {
+			return "addr:" + prefix.String()
+		}
+	}
 	return "addr:" + addr.String()
 }
 
-// loginHeldBack answers the request with a refusal when the account or the address has to wait, and
-// reports whether it did. A refused attempt is not itself counted as a failure, so waiting out the
-// time always works.
+// loginHeldBack answers the request with a refusal when the member (accountKey, or "" when not yet
+// known) or the address has to wait, and reports whether it did. A refused attempt is not itself
+// counted as a failure, so waiting out the time always works.
 func loginHeldBack(c *fiber.Ctx, accountKey string) (bool, error) {
 	wait := defaultLoginBackoff.wait(accountKey)
 	if w := defaultLoginBackoff.wait(loginAddressKey(c)); w > wait {
@@ -191,7 +205,7 @@ func loginHeldBack(c *fiber.Ctx, accountKey string) (bool, error) {
 	seconds := int((wait + time.Second - 1) / time.Second)
 	c.Set(fiber.HeaderRetryAfter, fmt.Sprint(seconds))
 
-	return true, c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+	return true, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 		"ret":        RetLoginBackoff,
 		"status":     "Too many failed attempts. Please wait " + loginWaitWords(seconds) + " and try again, or use Forgot password.",
 		"retryafter": seconds,
@@ -214,13 +228,13 @@ func loginWaitWords(seconds int) string {
 	return fmt.Sprintf("%d minutes", minutes)
 }
 
-// loginFailed counts a failed attempt against the account and the address.
+// loginFailed counts a failed attempt against the member, when there is one, and the address.
 func loginFailed(c *fiber.Ctx, accountKey string) {
 	defaultLoginBackoff.fail(accountKey, loginBackoffAccountFree)
 	defaultLoginBackoff.fail(loginAddressKey(c), loginBackoffAddressFree)
 }
 
-// loginSucceeded forgets the account's failures. The address keeps its count: one member getting in
+// loginSucceeded forgets the member's failures. The address keeps its count: one member getting in
 // does not vouch for everything else that address has tried.
 func loginSucceeded(accountKey string) {
 	defaultLoginBackoff.clear(accountKey)
