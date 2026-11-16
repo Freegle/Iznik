@@ -137,12 +137,16 @@ serves both.
   or the system's. Searching on it would pull in the team's own mail, which is a separate data-protection
   question.
 - **Kept per member for six hours**, in memory, so a follow-up question does not go back to Gmail.
-  A failure is not kept.
+  Callers asking about the same member at the same time share one read. A failure, or a result missing
+  a mailbox, is not kept.
 - **When it cannot read.** No passwords: "mailbox access is not set up yet". No member, or a member with
   no address of their own: said in plain words. A refused login, a mailbox that does not answer in 30
-  seconds or a database error: "the support mailboxes could not be read just now", for both mailboxes,
-  so the brief never says "none" when it means "not read". The log line names neither the member nor
-  their mail.
+  seconds or a database error: "the support mailboxes could not be read just now", so the brief never
+  says "none" when it means "not read". When only one mailbox fails, the other's mail is listed under a
+  line saying which was not read. One mail Gmail will not give is listed without its excerpt. The log
+  line names the mailbox, never the member or their mail.
+- **Inside the first pass's deadline.** The read starts after the deadline clock, and a caller that
+  stops waiting (the deadline, or the batch going away) is told "not read" at once.
 - **Audited.** Every read is in the audit trail as `support_mail_history`, with the member and, in a first
   pass, the referral.
 - **The first pass may read only the member in its case**, as with the dump.

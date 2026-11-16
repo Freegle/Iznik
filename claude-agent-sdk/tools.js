@@ -896,7 +896,7 @@ function buildTools(ctx) {
         if (!ctx.jwt && ctx.dumpKey && id !== ctx.userId) return err('In this run support_mail_history may only look at the member in the case')
         audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'support_mail_history' })
         p('tool', `Reading past mail with support and info for user ${id}…`)
-        return text(await mailHistoryFor(id))
+        return text(await mailHistoryFor(id, { signal: ctx.signal }))
       } catch (e) {
         return err(e.message)
       }

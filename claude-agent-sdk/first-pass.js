@@ -422,20 +422,6 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
 
   auditFn({ tool: 'first_pass', referralid: request.referralid, target: request.memberid || 0, images: request.images.length })
 
-  // The helper reads the member's past mail itself when it has the mailbox passwords; without them the
-  // batch's "not set up" stands.
-  if (deps.mailHistory || mailboxesFromEnv(env).length) {
-    const readMail = deps.mailHistory || ((id) => mailHistoryFor(id, { env }))
-    if (request.memberid) auditFn({ tool: 'support_mail_history', referralid: request.referralid, target: request.memberid })
-    let mailHistory
-    try {
-      mailHistory = await readMail(request.memberid)
-    } catch {
-      mailHistory = { available: false, reason: MAIL_UNREADABLE, entries: [] }
-    }
-    request = { ...request, mailHistory }
-  }
-
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), deadlineMs)
   const onCallerGone = () => abort.abort()
@@ -450,6 +436,21 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
     const token = subscriptionToken(mode, { env })
     const quotaFn = deps.fetchQuotaImpl || fetchQuota
     const quotaBeforeP = quotaFn(token)
+
+    // The helper reads the member's past mail itself when it has the mailbox passwords; without them
+    // the batch's "not set up" stands. The read is inside the deadline and stops when the caller goes.
+    if (deps.mailHistory || mailboxesFromEnv(env).length) {
+      const readMail = deps.mailHistory || ((id, sig) => mailHistoryFor(id, { env, signal: sig }))
+      if (request.memberid) auditFn({ tool: 'support_mail_history', referralid: request.referralid, target: request.memberid })
+      let mailHistory
+      try {
+        mailHistory = await readMail(request.memberid, signal)
+      } catch {
+        mailHistory = { available: false, reason: MAIL_UNREADABLE, entries: [] }
+      }
+      request = { ...request, mailHistory }
+      if (signal.aborted) throw fail('DEADLINE')
+    }
 
     const nonce = deps.nonce || crypto.randomBytes(8).toString('hex')
     const prompt = buildUserPrompt({ request, nonce })

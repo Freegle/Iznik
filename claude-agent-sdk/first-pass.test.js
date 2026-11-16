@@ -944,3 +944,34 @@ test('without the mailbox passwords the batch request stands', async () => {
   assert.match(t.calls[0].prompt, /Not available: mailbox access is not set up yet/)
   assert.ok(!t.audits.some((a) => a.tool === 'support_mail_history'))
 })
+
+test('a mail read that outlasts the deadline is stopped and the pass is DEADLINE, before any model run', async () => {
+  const t = deps({
+    deps: {
+      env: { ...ENV, FIRST_PASS_DEADLINE_MS: '50' },
+      mailHistory: (id, signal) => new Promise((resolve) => signal.addEventListener('abort', () => resolve({ available: false, reason: 'x', entries: [] }))),
+    },
+  })
+  await assert.rejects(runFirstPass(clean(), { deps: t.deps }), (e) => e.code === 'DEADLINE')
+  assert.strictEqual(t.calls.length, 0)
+})
+
+test('with the passwords set the real reader is wired in: its kept result reaches the prompt', async () => {
+  const mh = require('./mail-history')
+  mh._cache.set(22, { at: Date.now(), result: { available: true, reason: '', entries: [MAIL_ENTRY] } })
+  try {
+    const t = deps({ deps: { env: { ...ENV, SUPPORT_MAIL_USER: 'support@example.org', SUPPORT_MAIL_PASS: 'x' } } })
+    await runFirstPass(clean(), { deps: t.deps })
+    assert.match(t.calls[0].prompt, /2026-09-10 08:15 support in: Can't log in/)
+  } finally {
+    mh._cache.clear()
+  }
+})
+
+test('mail read from one mailbox only says so above the entries', () => {
+  const text = buildUserPrompt({
+    request: clean({ mailHistory: { available: true, reason: 'the info mailbox could not be read just now, so only support mail is listed', entries: [MAIL_ENTRY] } }),
+    nonce: 'n',
+  })
+  assert.match(text, /Only partly read: the info mailbox could not be read just now, so only support mail is listed\.\n2026-09-10 08:15 support in/)
+})

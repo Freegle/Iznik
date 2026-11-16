@@ -61,6 +61,10 @@ function fakeServer(mailboxes, opts = {}) {
           ok(mailboxes[who].filter((m) => wanted.includes(m.uid)).map((m, k) => `* ${k + 1} FETCH ${m.meta}\r\n`).join(''))
         } else if (/^UID FETCH \d+ \(BODY\.PEEK\[/.test(cmd)) {
           const uid = Number(cmd.split(' ')[2])
+          if (opts.refuseBody === uid) {
+            sock.write(`${tag} NO Some messages could not be FETCHed (Failure)\r\n`)
+            continue
+          }
           const part = /BODY\.PEEK\[([^\]]+)\]/.exec(cmd)[1]
           const body = mailboxes[who].find((m) => m.uid === uid).parts[part]
           ok(`* 1 FETCH (UID ${uid} BODY[${part}]<0> ${lit(body)})\r\n`)
@@ -175,7 +179,8 @@ test('both mailboxes are read only, merged newest first, and a mail in both appe
     assert.ok(!cmds.some((c) => /^(SELECT|STORE|UID STORE|COPY|UID COPY|MOVE|UID MOVE|EXPUNGE|APPEND|DELETE)\b/.test(c)))
     assert.ok(cmds.filter((c) => /^UID FETCH/.test(c)).every((c) => !/BODY\[/.test(c)))
     // Two years back, on from, to and cc for each address.
-    assert.ok(cmds.includes(`UID SEARCH X-GM-RAW "{from:${MEMBER} to:${MEMBER} cc:${MEMBER}} after:2024/11/16"`))
+    // A day early, because Gmail reads after: in Pacific time.
+    assert.ok(cmds.includes(`UID SEARCH X-GM-RAW "{from:${MEMBER} to:${MEMBER} cc:${MEMBER}} after:2024/11/15"`))
     // The password is sent without its spaces.
     assert.ok(cmds.includes('LOGIN "support@example.org" "abcdefghijklmnop"'))
   } finally {
@@ -199,19 +204,87 @@ test('a result is kept per member, so a second read does not go to the mailboxes
   }
 })
 
-test('a refused login makes the whole history unavailable, says nothing about the member, and is not kept', async () => {
+test('one mailbox refusing its login keeps the other mailbox, says which was not read, and is not kept', async () => {
   const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL, 'info@example.org': INFO_MAIL }, { refuse: 'info@example.org' })
   const logs = []
   try {
     const deps = { env: ENV_BOTH, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: (s) => logs.push(s) }
     const r = await mh.mailHistoryFor(42, deps)
-    assert.deepStrictEqual(r, { available: false, reason: mh.REASON_UNREADABLE, entries: [] })
-    assert.ok(logs.length === 1 && !logs[0].includes(MEMBER) && !logs[0].includes('42'))
+    assert.strictEqual(r.available, true)
+    assert.strictEqual(r.reason, 'the info mailbox could not be read just now, so only support mail is listed')
+    assert.deepStrictEqual(r.entries.map((e) => e.mailbox), ['support', 'support'])
+    // The log names the mailbox and a fixed message, not the member.
+    assert.deepStrictEqual(logs, ['[MailHistory] the info mailbox could not be read: LOGIN refused'])
     await mh.mailHistoryFor(42, deps)
     assert.strictEqual(fake.connections(), 4)
   } finally {
     await fake.close()
   }
+})
+
+test('both mailboxes refusing makes the history unavailable', async () => {
+  const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL }, { refuse: 'support@example.org' })
+  try {
+    const r = await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: () => {} })
+    assert.deepStrictEqual(r, { available: false, reason: mh.REASON_UNREADABLE, entries: [] })
+  } finally {
+    await fake.close()
+  }
+})
+
+test('two callers asking at once for the same member share one read', async () => {
+  const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL })
+  try {
+    const deps = { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: () => {} }
+    const [a, b] = await Promise.all([mh.mailHistoryFor(42, deps), mh.mailHistoryFor(42, deps)])
+    assert.strictEqual(fake.connections(), 1)
+    assert.deepStrictEqual(a, b)
+    assert.strictEqual(mh._inflight.size, 0)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('a caller that stops waiting gets "not read" at once, and the shared read goes on', async () => {
+  const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL }, { hang: 'support@example.org' })
+  try {
+    const ac = new AbortController()
+    const started = Date.now()
+    const p = mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: () => {}, timeoutMs: 1000, signal: ac.signal })
+    setTimeout(() => ac.abort(), 30)
+    assert.deepStrictEqual(await p, { available: false, reason: mh.REASON_UNREADABLE, entries: [] })
+    assert.ok(Date.now() - started < 500)
+    assert.strictEqual(mh._inflight.size, 1)
+    const already = new AbortController()
+    already.abort()
+    assert.strictEqual((await mh.mailHistoryFor(42, { env: ENV_SUPPORT, signal: already.signal })).reason, mh.REASON_UNREADABLE)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('a mail whose body the server refuses is listed without an excerpt; a +tag address counts as the member', async () => {
+  const tagged = mail({ uid: 12, date: '12-Sep-2026 10:00:00 +0000', subject: '"Tagged"', from: 'someone.1975+freegle@example.com', messageId: '<m4@example.com>', structure: PLAIN(), parts: { 1: 'From my tagged address.' } })
+  const fake = await fakeServer({ 'support@example.org': [...SUPPORT_MAIL, tagged] }, { refuseBody: 7 })
+  try {
+    const r = await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: () => {} })
+    assert.deepStrictEqual(
+      r.entries.map((e) => [e.subject, e.direction, e.excerpt]),
+      [
+        ['Tagged', 'in', 'From my tagged address.'],
+        ['Re: Can’t log in', 'out', 'Please try resetting your password.'],
+        ["Can't log in", 'in', ''],
+      ]
+    )
+  } finally {
+    await fake.close()
+  }
+})
+
+test('kept results past their six hours are dropped on the next call', async () => {
+  mh._cache.set(99, { at: NOW - 7 * 60 * 60 * 1000, result: {} })
+  await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: selectFor([]), now: () => NOW })
+  assert.ok(!mh._cache.has(99))
 })
 
 test('a mailbox that stops answering times out as unavailable', async () => {
@@ -243,8 +316,11 @@ test('responses parse into lists, strings, literals and NIL, with [sections] kep
     'FETCH',
     ['UID', '5', 'BODY[1.2]<0>', 'x y', 'ENVELOPE', [null, 'a "q"', [[null, null, 'u', 'h']]]],
   ])
-  // A bracket with no end does not loop.
+  // A bracket with no end, a bare \r and a count that is not a literal all end the parse.
   assert.deepStrictEqual(mh.parseResponse('* OK [ALERT broken\r\n'), ['*', 'OK', '[ALERT broken'])
+  assert.deepStrictEqual(mh.parseResponse('* OK a\rb\r\n'), ['*', 'OK', 'a', 'b'])
+  assert.deepStrictEqual(mh.parseResponse('* 1 FETCH (X {12\r\n'), ['*', '1', 'FETCH', ['X', '{12\r\n']])
+  assert.deepStrictEqual(mh.parseResponse('* "ends with \\'), ['*', 'ends with '])
 })
 
 test('the text part is the plain one, else the html one, and an attached text file is not used', () => {
@@ -255,6 +331,9 @@ test('the text part is the plain one, else the html one, and an attached text fi
   const attached = [['image', 'png'], ['text', 'plain', null, null, null, '7bit', 10, 1, null, ['attachment', null]], 'mixed']
   assert.strictEqual(mh.textPart(attached), null)
   assert.deepStrictEqual(mh.textPart(['text', 'plain', null, null, null, '7bit']).part, '1')
+  // A reply with a forwarded mail attached: the reply's own plain text, not the attached mail's.
+  const forwarded = [[['text', 'plain', null, null, null, '7bit'], ['text', 'html', null, null, null, '7bit'], 'alternative'], ['message', 'rfc822', null, null, null, '7bit'], 'mixed']
+  assert.strictEqual(mh.textPart(forwarded).part, '1.1')
 })
 
 test('dates, headers and bodies decode', () => {
@@ -278,4 +357,8 @@ test('the excerpt is the new text only: quotes, reply lines, forwards and signat
   assert.strictEqual(mh.excerptOf('Body\nSent from my phone'), 'Body')
   assert.strictEqual(mh.excerptOf('x'.repeat(400)).length, 300)
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>a&nbsp;&lt;b&gt;&#8217;&#x2019;&zzz;&#0;</p><script>no</script>')), 'a <b>’’&zzz;')
+  // Cut short inside its style block, or inside a tag, the HTML gives no style rules as text.
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<html><head><style>p{color:red}' + ' .x{margin:0}'.repeat(50))), '')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>Hi there</p><style>a{color:')), 'Hi there')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>Hi</p><a href="https://exa')), 'Hi')
 })

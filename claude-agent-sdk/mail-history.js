@@ -22,6 +22,7 @@ const MAX_ADDRESSES = 8
 const EXCERPT_CHARS = 300
 const SUBJECT_CHARS = 150
 const PART_BYTES = 6000
+const HTML_PART_BYTES = 30000
 const MAILBOX_TIMEOUT_MS = 30000
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const CACHE_MAX = 200
@@ -90,17 +91,23 @@ function parseResponse(s) {
         let v = ''
         while (i < s.length && s[i] !== '"') {
           if (s[i] === '\\') i++
-          v += s[i++]
+          v += s[i++] ?? ''
         }
         i++
         out.push(v)
       } else if (c === '{') {
-        const close = s.indexOf('}', i)
-        const n = Number(s.slice(i + 1, close).replace('+', ''))
-        i = close + 3
-        out.push(s.slice(i, i + n))
-        i += n
+        const m = /^\{(\d+)\+?\}\r\n/.exec(s.slice(i, i + 24))
+        if (!m) {
+          // Not a literal after all: keep the rest as text rather than guess where it ends.
+          out.push(s.slice(i))
+          i = s.length
+          continue
+        }
+        i += m[0].length
+        out.push(s.slice(i, i + Number(m[1])))
+        i += Number(m[1])
       } else {
+        const start = i
         let v = ''
         while (i < s.length && !' ()\r'.includes(s[i])) {
           if (s[i] === '[') {
@@ -110,6 +117,11 @@ function parseResponse(s) {
             v += s.slice(i, end)
             i = end
           } else v += s[i++]
+        }
+        // A stray character that starts nothing (a bare \r) is stepped over, so the parse always moves on.
+        if (i === start) {
+          i++
+          continue
         }
         out.push(v === 'NIL' ? null : v)
       }
@@ -244,12 +256,16 @@ function decodePart(raw, encoding, charset) {
   return decodeBytes(bytes, charset)
 }
 
+/**
+ * HTML as plain text. The part may have been cut short, so a style, script or head block, quoted mail
+ * or a tag with no end runs to the end of what was read and is dropped with it.
+ */
 function htmlToText(html) {
   return html
-    .replace(/<(style|script|head)\b[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<blockquote\b[\s\S]*?<\/blockquote>/gi, '\n')
+    .replace(/<(style|script|head)\b[\s\S]*?(<\/\1>|$)/gi, ' ')
+    .replace(/<blockquote\b[\s\S]*?(<\/blockquote>|$)/gi, '\n')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
-    .replace(/<[^>]*>/g, ' ')
+    .replace(/<[^>]*(>|$)/g, ' ')
     .replace(/&#(\d+);|&#x([0-9a-f]+);|&([a-z]+);/gi, (m, dec, hex, name) => {
       if (dec || hex) {
         const n = dec ? Number(dec) : parseInt(hex, 16)
@@ -331,8 +347,16 @@ function internalDate(s) {
 const addressOf = (a) => (Array.isArray(a) && a[2] && a[3] ? `${a[2]}@${a[3]}`.toLowerCase() : '')
 const quoteImap = (s) => `"${String(s).replace(/[\\"]/g, '\\$&')}"`
 
+/** An address without any +tag, so mail from someone+freegle@ counts as theirs. */
+const untagged = (a) => a.replace(/\+[^@]*@/, '@')
+
+/**
+ * The date for Gmail's after:, a day early: Gmail reads it in Pacific time, so the extra day makes
+ * sure nothing at the edge of the two years is missed.
+ */
 function gmailDate(d) {
-  return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+  const e = new Date(d.getTime() - 24 * 60 * 60 * 1000)
+  return `${e.getUTCFullYear()}/${String(e.getUTCMonth() + 1).padStart(2, '0')}/${String(e.getUTCDate()).padStart(2, '0')}`
 }
 
 /** The folder holding every mail, sent and received: Gmail flags it \All whatever its local name. */
@@ -372,20 +396,27 @@ async function readMailbox({ mailbox, addresses, since, connect, timeoutMs = MAI
       .filter((p) => p[2] === 'FETCH')
       .map(fetchItems)
 
-    const own = new Set(addresses)
+    const own = new Set(addresses.map(untagged))
     const entries = []
     for (const m of metas) {
       const env = Array.isArray(m.ENVELOPE) ? m.ENVELOPE : []
       const from = addressOf(Array.isArray(env[2]) ? env[2][0] : null)
-      const part = textPart(m.BODYSTRUCTURE)
+      const part = /^\d+$/.test(String(m.UID)) ? textPart(m.BODYSTRUCTURE) : null
       let excerpt = ''
       if (part) {
-        const got = await client.command(`UID FETCH ${m.UID} (BODY.PEEK[${part.part}]<0.${PART_BYTES}>)`)
-        const items = got.map(parseResponse).filter((p) => p[2] === 'FETCH').map(fetchItems)[0] || {}
-        const raw = Object.entries(items).find(([k]) => k.startsWith('BODY['))
-        if (raw && typeof raw[1] === 'string') {
-          const body = decodePart(raw[1], part.encoding, part.charset)
-          excerpt = excerptOf(part.subtype === 'html' ? htmlToText(body) : body)
+        // HTML often starts with kilobytes of style, so more of it is read.
+        const bytes = part.subtype === 'html' ? HTML_PART_BYTES : PART_BYTES
+        try {
+          const got = await client.command(`UID FETCH ${m.UID} (BODY.PEEK[${part.part}]<0.${bytes}>)`)
+          const items = got.map(parseResponse).filter((p) => p[2] === 'FETCH').map(fetchItems)[0] || {}
+          const raw = Object.entries(items).find(([k]) => k.startsWith('BODY['))
+          if (raw && typeof raw[1] === 'string') {
+            const body = decodePart(raw[1], part.encoding, part.charset)
+            excerpt = excerptOf(part.subtype === 'html' ? htmlToText(body) : body)
+          }
+        } catch (e) {
+          // One mail the server will not give is listed without an excerpt; a lost connection ends the read.
+          if (client.failure) throw e
         }
       }
       const at = internalDate(m.INTERNALDATE)
@@ -394,7 +425,7 @@ async function readMailbox({ mailbox, addresses, since, connect, timeoutMs = MAI
         messageId: String(env[9] || ''),
         date: at ? new Date(at).toISOString().slice(0, 16).replace('T', ' ') : '',
         mailbox: mailbox.name,
-        direction: own.has(from) ? 'in' : 'out',
+        direction: own.has(untagged(from)) ? 'in' : 'out',
         subject: decodeHeader(env[1]).replace(/\s+/g, ' ').trim().slice(0, SUBJECT_CHARS),
         excerpt,
       })
@@ -428,26 +459,51 @@ async function memberAddresses(memberId, select) {
   return [...seen]
 }
 
+const unreadable = () => ({ available: false, reason: REASON_UNREADABLE, entries: [] })
+
+// Results by member, and reads under way by member, so callers asking at the same time share one read.
 const cache = new Map()
+const inflight = new Map()
 
 /**
- * A member's past mail with support@ and info@, newest first. A result with mail in it, or with
- * none, is kept for CACHE_TTL_MS; a failure is not kept.
+ * A member's past mail with support@ and info@, newest first. A full result, with mail in it or with
+ * none, is kept for CACHE_TTL_MS; a failure, or a result missing a mailbox, is not kept.
  *
  * @param {number} memberId
- * @param {object} [deps] - env, select (a read-only SELECT), connect (mailbox -> socket), now, log.
+ * @param {object} [deps] - env, select (a read-only SELECT), connect (mailbox -> socket), now, log,
+ *   timeoutMs, signal (the caller stops waiting on abort; a read it shares goes on to its own timeout).
  */
 async function mailHistoryFor(memberId, deps = {}) {
   const env = deps.env || process.env
   const now = deps.now || Date.now
-  const log = deps.log || console.log
   const mailboxes = mailboxesFromEnv(env)
   if (!mailboxes.length) return { available: false, reason: REASON_NOT_SET_UP, entries: [] }
   if (!memberId) return { available: false, reason: REASON_NO_MEMBER, entries: [] }
 
+  for (const [id, kept] of cache) if (now() - kept.at >= CACHE_TTL_MS) cache.delete(id)
   const hit = cache.get(memberId)
-  if (hit && now() - hit.at < CACHE_TTL_MS) return hit.result
+  if (hit) return hit.result
 
+  let read = inflight.get(memberId)
+  if (!read) {
+    read = readHistory(memberId, mailboxes, { ...deps, now }).finally(() => inflight.delete(memberId))
+    inflight.set(memberId, read)
+  }
+  return deps.signal ? untilAborted(read, deps.signal) : read
+}
+
+function untilAborted(read, signal) {
+  if (signal.aborted) return Promise.resolve(unreadable())
+  return new Promise((resolve) => {
+    const onAbort = () => resolve(unreadable())
+    signal.addEventListener('abort', onAbort, { once: true })
+    read.then(resolve, () => resolve(unreadable())).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
+async function readHistory(memberId, mailboxes, deps) {
+  const { now } = deps
+  const log = deps.log || console.log
   const select = deps.select || ((sql) => require('./tools').dbSelect(sql, 50, {}))
   const connect = deps.connect || (() => tls.connect({ host: IMAP_HOST, port: IMAP_PORT, servername: IMAP_HOST }))
 
@@ -456,21 +512,23 @@ async function mailHistoryFor(memberId, deps = {}) {
     addresses = await memberAddresses(memberId, select)
   } catch {
     log('[MailHistory] the member addresses could not be read')
-    return { available: false, reason: REASON_UNREADABLE, entries: [] }
+    return unreadable()
   }
   if (!addresses.length) return { available: false, reason: REASON_NO_ADDRESS, entries: [] }
 
   const since = new Date(now())
   since.setUTCFullYear(since.getUTCFullYear() - YEARS_BACK)
 
-  let lists
-  try {
-    lists = await Promise.all(mailboxes.map((mailbox) => readMailbox({ mailbox, addresses, since, connect, timeoutMs: deps.timeoutMs })))
-  } catch (e) {
+  const settled = await Promise.allSettled(mailboxes.map((mailbox) => readMailbox({ mailbox, addresses, since, connect, timeoutMs: deps.timeoutMs })))
+  const failed = []
+  const lists = []
+  settled.forEach((s, k) => {
+    if (s.status === 'fulfilled') return lists.push(s.value)
+    failed.push(mailboxes[k].name)
     // The mailbox name and a fixed message only: nothing about the member.
-    log(`[MailHistory] a mailbox could not be read: ${String((e && e.message) || 'error').replace(/[^\w ]/g, '')}`)
-    return { available: false, reason: REASON_UNREADABLE, entries: [] }
-  }
+    log(`[MailHistory] the ${mailboxes[k].name} mailbox could not be read: ${String((s.reason && s.reason.message) || 'error').replace(/[^\w ]/g, '')}`)
+  })
+  if (!lists.length) return unreadable()
 
   // A mail sent to both mailboxes appears once, under the first.
   const seen = new Set()
@@ -486,6 +544,10 @@ async function mailHistoryFor(memberId, deps = {}) {
     .slice(0, MAX_ENTRIES)
     .map(({ date, mailbox, direction, subject, excerpt }) => ({ date, mailbox, direction, subject, excerpt }))
 
+  if (failed.length) {
+    const read = mailboxes.map((m) => m.name).filter((n) => !failed.includes(n))
+    return { available: true, reason: `the ${failed.join(' and ')} mailbox could not be read just now, so only ${read.join(' and ')} mail is listed`, entries }
+  }
   const result = { available: true, reason: '', entries }
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value)
   cache.set(memberId, { at: now(), result })
@@ -510,4 +572,5 @@ module.exports = {
   excerptOf,
   htmlToText,
   _cache: cache,
+  _inflight: inflight,
 }
