@@ -235,6 +235,76 @@ class UxRollupServiceTest extends TestCase
         $this->assertSame([0, 10], [(int) $banner->clicks, (int) $banner->impressions]);
     }
 
+    private function flowLine(string $action, string $step, array $who, array $extra = []): array
+    {
+        return $who + $extra + [
+            'flow' => 'login', 'action_name' => $action, 'step' => $step, 'device_class' => 'desktop',
+            'logged_in' => false, 'is_app' => false, 'variant' => '',
+        ];
+    }
+
+    public function test_a_step_counts_people_once_each_by_member_then_address_then_session(): void
+    {
+        $k = ['step' => 'signup', 'device_class' => 'desktop', 'logged_in' => 'false', 'is_app' => 'false', 'variant' => ''];
+        $this->lokiMatrix($this->flowPattern('login', 'step_enter'), [[$k + ['first_visit' => 'true'], 9]]);
+        // 192.0.2.0/24 and 198.51.100.0/24 are documentation ranges (RFC 5737).
+        $this->lokiLines('/event_type="flow"\} \| json flow, action_name \| flow="login" \| action_name=~"\^\(step_enter\|step_complete\)\$"$/', [
+            // One address opening the form five times is one person.
+            $this->flowLine('step_enter', 'signup', ['user_id' => null, 'client_ip' => '192.0.2.1', 'session_id' => 's1']),
+            $this->flowLine('step_enter', 'signup', ['user_id' => null, 'client_ip' => '192.0.2.1', 'session_id' => 's2']),
+            $this->flowLine('step_enter', 'signup', ['user_id' => null, 'client_ip' => '192.0.2.1', 'session_id' => 's3']),
+            $this->flowLine('step_enter', 'signup', ['user_id' => null, 'client_ip' => '192.0.2.1', 'session_id' => 's4']),
+            $this->flowLine('step_enter', 'signup', ['user_id' => 0, 'client_ip' => '192.0.2.1', 'session_id' => 's5']),
+            // Another address is another person.
+            $this->flowLine('step_enter', 'signup', ['user_id' => null, 'client_ip' => '198.51.100.7', 'session_id' => 's6']),
+            // A member is themselves whatever address they come from.
+            $this->flowLine('step_enter', 'signup', ['user_id' => 42, 'client_ip' => '192.0.2.1', 'session_id' => 's7']),
+            $this->flowLine('step_enter', 'signup', ['user_id' => '42', 'client_ip' => '198.51.100.9', 'session_id' => 's8']),
+            // No member and no address: the session.
+            $this->flowLine('step_enter', 'signup', ['session_id' => 's9']),
+            $this->flowLine('step_enter', 'signup', ['session_id' => 's9']),
+            // Nothing to tell them by: not counted.
+            $this->flowLine('step_enter', 'signup', []),
+            // Finishing is counted the same way, in the row for the state they finished in.
+            $this->flowLine('step_complete', 'signup', ['user_id' => 42, 'client_ip' => '192.0.2.1'], ['logged_in' => true]),
+            $this->flowLine('step_complete', 'signup', ['user_id' => 42, 'client_ip' => '192.0.2.1'], ['logged_in' => 'true']),
+            $this->flowLine('step_complete', 'signup', ['user_id' => 43, 'client_ip' => '192.0.2.1'], ['logged_in' => true]),
+        ]);
+
+        $this->assertTrue($this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC')));
+
+        $out = DB::table('ux_flow_daily')->where('date', self::DAY)->where('flow', 'login')->where('step', 'signup')->where('logged_in', 0)->first();
+        $this->assertSame([9, 4, 0], [(int) $out->entered, (int) $out->people_entered, (int) $out->people_completed]);
+        // The row for logged-in members exists only because people finished there: no metric named it.
+        $in = DB::table('ux_flow_daily')->where('date', self::DAY)->where('flow', 'login')->where('step', 'signup')->where('logged_in', 1)->first();
+        $this->assertSame([0, 0, 2], [(int) $in->entered, (int) $in->people_entered, (int) $in->people_completed]);
+        // A flow nobody touched still says nobody, not "not measured".
+        $this->assertSame(0, DB::table('ux_flow_daily')->where('date', self::DAY)->whereNull('people_entered')->count());
+    }
+
+    public function test_a_component_counts_the_people_who_clicked_it_and_the_people_who_had_trouble(): void
+    {
+        $k = ['page_route' => 'chats-id', 'component' => 'ChatMessage', 'device_class' => 'mobile'];
+        $this->lokiMatrix('/interaction_type="click" \| device_class="mobile" \[1d\]/', [[$k, 104]]);
+        $click = fn (array $who, array $extra = []) => $who + $extra + ['interaction_type' => 'click', 'page_route' => 'chats-id', 'component' => 'ChatMessage', 'device_class' => 'mobile', 'interactive' => true];
+        $lines = [];
+        // One member clicks a hundred times in anger: one person, in trouble.
+        for ($i = 0; $i < 100; $i++) {
+            $lines[] = $click(['user_id' => 7, 'client_ip' => '192.0.2.1'], ['rage' => true]);
+        }
+        // Three others click once each with no trouble; one has a click that did nothing, sent as the string LogQL sees.
+        $lines[] = $click(['user_id' => 8]);
+        $lines[] = $click(['client_ip' => '192.0.2.2']);
+        $lines[] = $click(['client_ip' => '192.0.2.3'], ['repeat_no_api' => 'false', 'rage' => 'false']);
+        $lines[] = $click(['client_ip' => '192.0.2.4'], ['interactive' => 'false']);
+        $this->lokiLines('/event_type="interaction"\} \| json interaction_type \| interaction_type="click"$/', $lines);
+
+        $this->assertTrue($this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC')));
+
+        $r = DB::table('ux_component_daily')->where('date', self::DAY)->where('component', 'ChatMessage')->first();
+        $this->assertSame([104, 5, 2], [(int) $r->clicks, (int) $r->people, (int) $r->people_trouble]);
+    }
+
     public function test_feature_adoption_counts_distinct_users_and_sessions_against_active_users(): void
     {
         config()->set('freegle.ux.features', ['noticeboards' => ['noticeboards', 'noticeboards-id']]);
