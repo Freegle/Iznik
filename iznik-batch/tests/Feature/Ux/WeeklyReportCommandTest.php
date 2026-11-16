@@ -189,14 +189,14 @@ class WeeklyReportCommandTest extends TestCase
         $this->artisan('ux:weekly-report')->assertExitCode(0);
 
         $text = $this->text();
-        $this->assertStringContainsString('TRAFFIC, NOT BEHAVIOUR', $text);
+        $this->assertStringContainsString('PROBABLY TRAFFIC, NOT THE PAGE', $text);
         $this->assertStringContainsString('Signing in or joining, the join form, desktop: people arriving 14 times as many; people finishing no change.', $text);
         // Only phones are compared.
         $this->assertStringContainsString('1. Signing in or joining, the join form: 40.0% of people who reached it finished it, was 50.0%.', $text);
         $this->assertStringContainsString('People finishing: down 20%. People arriving: no change.', $text);
         $this->assertStringContainsString('     mobile: 40.0%, was 50.0%', $text);
         $this->assertStringNotContainsString('     desktop: ', $text);
-        $this->assertLessThan(strpos($text, 'FIVE CLEAREST'), strpos($text, 'TRAFFIC, NOT BEHAVIOUR'));
+        $this->assertLessThan(strpos($text, 'FIVE CLEAREST'), strpos($text, 'PROBABLY TRAFFIC, NOT THE PAGE'));
         $this->assertNoCounts();
     }
 
@@ -222,7 +222,7 @@ class WeeklyReportCommandTest extends TestCase
         $this->artisan('ux:weekly-report')->assertExitCode(0);
 
         $text = $this->text();
-        $this->assertStringNotContainsString('TRAFFIC, NOT BEHAVIOUR', $text);
+        $this->assertStringNotContainsString('PROBABLY TRAFFIC, NOT THE PAGE', $text);
         $this->assertStringContainsString('Browse, Card: 6.7% of people who clicked it had trouble', $text);
         $this->assertStringContainsString('People having trouble: no change. People clicking: 3 times as many.', $text);
     }
@@ -245,6 +245,35 @@ class WeeklyReportCommandTest extends TestCase
         $this->assertLessThan(strpos($text, 'step "step4"'), strpos($text, 'step "step8"'));
     }
 
+    public function test_a_fifth_fewer_people_finishing_is_not_filed_as_traffic(): void
+    {
+        $this->fullWeeks();
+        // Half as many again arrive and a fifth fewer finish: the rate nearly halves. That is compared.
+        $this->step('2026-02-24', 'signup', 1000, 500, 'login', 0, 'desktop');
+        $this->step('2026-03-03', 'signup', 1500, 400, 'login', 0, 'desktop');
+
+        $this->artisan('ux:weekly-report')->assertExitCode(0);
+
+        $text = $this->text();
+        $this->assertStringNotContainsString('PROBABLY TRAFFIC', $text);
+        $this->assertStringContainsString('the join form: 26.7% of people who reached it finished it, was 50.0%.', $text);
+        $this->assertStringContainsString('People finishing: down 20%. People arriving: up 50%.', $text);
+    }
+
+    public function test_more_members_finishing_than_addresses_arriving_is_capped_and_still_compared(): void
+    {
+        $this->fullWeeks();
+        // Members behind shared addresses: 120 finish from 100 addresses. This week 60 do.
+        $this->step('2026-02-24', 'signup', 100, 120, 'login', 0, 'mobile');
+        $this->step('2026-03-03', 'signup', 100, 60, 'login', 0, 'mobile');
+
+        $this->artisan('ux:weekly-report')->assertExitCode(0);
+
+        $text = $this->text();
+        $this->assertStringContainsString('the join form: 60.0% of people who reached it finished it, was 100.0%.', $text);
+        $this->assertStringNotContainsString('120.0%', $text);
+    }
+
     public function test_fewer_people_finishing_is_a_change_however_much_the_arrivals_moved(): void
     {
         $this->fullWeeks();
@@ -255,7 +284,7 @@ class WeeklyReportCommandTest extends TestCase
         $this->artisan('ux:weekly-report')->assertExitCode(0);
 
         $text = $this->text();
-        $this->assertStringNotContainsString('TRAFFIC, NOT BEHAVIOUR', $text);
+        $this->assertStringNotContainsString('PROBABLY TRAFFIC, NOT THE PAGE', $text);
         $this->assertStringContainsString('the join form: 10.0% of people who reached it finished it, was 40.0%.', $text);
         $this->assertStringContainsString('People finishing: down 50%. People arriving: 2 times as many.', $text);
     }
@@ -273,7 +302,9 @@ class WeeklyReportCommandTest extends TestCase
         $text = $this->text();
         $this->assertStringContainsString('93.8% of visits to it finished it (events, not people), was 80.0%.', $text);
         $this->assertStringContainsString('Completions: up 88%. Visits: up 60%.', $text);
-        $this->assertStringContainsString('COUNTED IN EVENTS, NOT PEOPLE (a week was rolled up before people were counted): Finishing a step; Trouble clicking.', $text);
+        $this->assertStringContainsString('COUNTED IN EVENTS, NOT PEOPLE this week (a week was rolled up before people were counted): Finishing a step; Trouble clicking.', $text);
+        // Said before the changes it qualifies, not after them.
+        $this->assertLessThan(strpos($text, 'FIVE CLEAREST'), strpos($text, 'COUNTED IN EVENTS'));
         $this->assertNoCounts();
     }
 
@@ -288,7 +319,7 @@ class WeeklyReportCommandTest extends TestCase
 
         $text = $this->text();
         $this->assertStringContainsString('(events, not people)', $text);
-        $this->assertStringContainsString('COUNTED IN EVENTS, NOT PEOPLE (a week was rolled up before people were counted): Finishing a step.', $text);
+        $this->assertStringContainsString('COUNTED IN EVENTS, NOT PEOPLE this week (a week was rolled up before people were counted): Finishing a step.', $text);
     }
 
     public function test_unhealthy_telemetry_leads_the_mail(): void

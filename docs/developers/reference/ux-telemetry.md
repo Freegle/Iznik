@@ -260,28 +260,34 @@ site. A rate does, with how much each side of it moved.
 
 **People, not events.** A rate is over distinct people: a member id when the line has one, else the
 client address, else the session (`UxRollupService::person`). A person is counted once a day in each
-row, so one stuck page or one member clicking in anger is one person. Loki cannot count them (a
+row, so one stuck page or one member clicking in anger is one person. The week adds the days up, so
+"people" in the mail are person-days. Arrivals at the join form are told apart by address and the
+people who finish by member id, so a rate is capped at 100%. Loki cannot count them (a
 distinct count is one series per person and its cap is 500), so the rollup pages the raw
 `step_enter`, `step_complete` and click lines. A row written before the people columns existed has
-them NULL, and a table with any NULL in the fortnight is compared in events; the mail says so.
+them NULL, and a table with any NULL in the fortnight is compared in events; the mail says so at the
+top. Loki keeps seven days, so the old rows cannot be filled in: the first report in people is the one
+two full weeks after the migration and this code are live.
 
 **Which side moved.** Each change says how much the people finishing moved, and how much the people
-arriving moved. At a funnel step, on a device where the arrivals moved by half or more and the people
-finishing stayed within a quarter, the page works as it did and only the traffic changed. That device
-is named under TRAFFIC, NOT BEHAVIOUR (the five biggest moves) and left out of the comparison. Clicks
+arriving moved. At a funnel step, on a device with at least 50 people in both weeks, where the
+arrivals rose by half or fell by a third and the people finishing stayed within a tenth, the cause is
+probably traffic (a scraper, a campaign) and not the page. That device is named under PROBABLY
+TRAFFIC, NOT THE PAGE (the five biggest moves) and left out of the comparison. It is a judgement, not
+a proof: a campaign that brings people who do not join looks the same. Clicks
 get no such rule: a scraper does not click, and the same trouble among more clicks is a real change
 in the rate. Counting people by address does not catch a
 scraper that comes from a new address each time (15 November 2026: one browser string, about 2,700
-addresses an hour, opening the join form and leaving); this rule does.
+addresses an hour, opening the join form and leaving); this rule does, when the arrivals move that far.
 
 | Part of the mail | What it says |
 |---|---|
 | WHAT WE MEASURE CHANGED | each health row outside 0.7 to 1.3, as a multiple of the usual amount |
 | WHO IS COUNTED CHANGED | a device class whose clicks moved by half or more from at least 1,000, as a relative change, or "new this week" when it had under 100. An app release that starts sending telemetry is the usual cause (the iOS app, early November 2026) |
-| TRAFFIC, NOT BEHAVIOUR | a funnel step, on one device, where only the arrivals moved |
+| PROBABLY TRAFFIC, NOT THE PAGE | a funnel step, on one device, where only the arrivals moved |
 | FIVE CLEAREST CHANGES | finishing a step, trouble clicking and second thoughts, each compared device by device on devices with 20 people in both weeks and 50 in all. Ranked by how unlikely the change is to be chance (a two-proportion z score, not printed), and listed only at 2 or more. Each gives the rate now and before, how much each side moved, its devices, any device new this week, and a link to the place on the tab for the same week (`ux_period=custom`) |
 | Under a trouble-clicking change | from Loki: whether two people made half the clicks or more (then the change is theirs, not everyone's), and the three elements with the most trouble clicks, by tag and the first 40 characters of their label, each as a share of the trouble. Loki not answering is said, not skipped |
-| COUNTED IN EVENTS, NOT PEOPLE | the tables compared in events because a week has no people counts yet |
+| COUNTED IN EVENTS, NOT PEOPLE | at the top: the tables compared in events because a week has no people counts yet |
 
 Names are the ones staff use: the funnel titles of the UX tab, a few step and page names
 (`STEP_TITLES`, `PAGE_TITLES` in the command), and a sentence for each regret signal. Anything

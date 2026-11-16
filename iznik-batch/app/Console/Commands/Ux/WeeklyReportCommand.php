@@ -24,8 +24,9 @@ use Symfony\Component\Console\Attribute\AsCommand;
  *   address (the people_* columns the rollup writes). A week rolled up before those columns existed
  *   is compared in events, and the mail says so.
  * - Each change says which side moved: the people finishing, or the people arriving. When only the
- *   arrivals at a funnel step moved, on some device, that is traffic and not a change in how the page
- *   works. It is listed apart, in one line, and left out of the comparison.
+ *   arrivals at a funnel step moved, on some device, that is probably traffic and not the page. It
+ *   is listed apart, in one line, and left out of the comparison.
+ * - "People" are person-days: a person is counted once a day and the days are added up.
  * - Each change is compared device by device, only on devices with enough people in both weeks, and
  *   ranked by how unlikely it is to be chance (a two-proportion z score), which the mail does not
  *   print. A difference that small samples would throw up by chance (z under MIN_Z) is not listed.
@@ -63,10 +64,14 @@ class WeeklyReportCommand extends Command
     /** Two people making at least this share of the clicks are named as the reason. */
     private const FEW_PEOPLE_SHARE = 0.5;
 
-    /** Arrivals that moved by this factor either way, while the people finishing stayed within STEADY, are traffic. */
+    /**
+     * Arrivals that moved by this factor either way, while the people finishing stayed within STEADY
+     * (a tenth), are traffic. The band is narrow on purpose: wider, and a real fall in the people
+     * finishing would be filed as traffic and never compared.
+     */
     private const TRAFFIC_FACTOR = 1.5;
 
-    private const STEADY = 1.25;
+    private const STEADY = 1.1;
 
     /** At most this many traffic lines are printed; the rest are counted. */
     private const TRAFFIC_LINES = 5;
@@ -289,6 +294,10 @@ class WeeklyReportCommand extends Command
         $new = [];
         foreach ($now as $device => [$n, $h]) {
             [$bn, $bh] = $before[$device] ?? [0, 0];
+            // Arrivals are told apart by address and finishers by member id, so several members behind
+            // one address can finish more often than they "arrived". Nobody finishes without arriving.
+            $h = min($h, $n);
+            $bh = min($bh, $bn);
             if ($bn < self::MIN_DEVICE_EVENTS || $n < self::MIN_DEVICE_EVENTS) {
                 if ($bn === 0 && $n >= self::MIN_DEVICE_EVENTS) {
                     $new[] = (string) $device;
@@ -298,7 +307,7 @@ class WeeklyReportCommand extends Command
             }
             $baseMoved = $n >= $bn * self::TRAFFIC_FACTOR || $bn >= $n * self::TRAFFIC_FACTOR;
             $hitsSteady = $bh > 0 && $h <= $bh * self::STEADY && $bh <= $h * self::STEADY;
-            if ($arrivals && $baseMoved && $hitsSteady) {
+            if ($arrivals && $baseMoved && $hitsSteady && min($n, $bn) >= self::MIN_EVENTS) {
                 $traffic[] = ['device' => (string) $device, 'base' => $n / $bn, 'hits' => $h / $bh];
 
                 continue;
@@ -560,7 +569,14 @@ class WeeklyReportCommand extends Command
     private function compose(array $cur, array $prev, $unhealthy, array $shifts, array $traffic, array $changes, array $notCompared = [], array $inEvents = []): string
     {
         $body = sprintf("UX weekly report: %s to %s, against %s to %s.\n", $cur[0], $cur[1], $prev[0], $prev[1]);
-        $body .= "Rates and relative changes only. How many people came is set by things outside the site, so no counts are given.\n\n";
+        $body .= "Rates and relative changes only. How many people came is set by things outside the site, so no counts are given.\n";
+        $body .= "A person is counted once a day, by member id or else by address.\n\n";
+
+        if ($inEvents) {
+            $body .= "COUNTED IN EVENTS, NOT PEOPLE this week (a week was rolled up before people were counted): ".implode('; ', $inEvents).".\n"
+                ."  One person or one stuck page can move an event rate by themselves, so read those changes with care.\n\n";
+        }
+
 
         if (count($unhealthy)) {
             $body .= "WHAT WE MEASURE CHANGED. Read this first: more or fewer events is not more or fewer people.\n";
@@ -582,8 +598,8 @@ class WeeklyReportCommand extends Command
         }
 
         if ($traffic) {
-            $body .= "TRAFFIC, NOT BEHAVIOUR. The number arriving moved and the number finishing did not, so the page works as it did.\n"
-                ."These are left out of the changes below:\n";
+            $body .= "PROBABLY TRAFFIC, NOT THE PAGE. The number arriving moved and the number finishing did not.\n"
+                ."That is usually a scraper or a campaign, not a change in the page. Left out of the changes below:\n";
             foreach (array_slice($traffic, 0, self::TRAFFIC_LINES) as [$c, $t]) {
                 $body .= sprintf("  %s%s: %s %s; %s %s.\n", $c['name'], $t['device'] !== '' ? ', '.$t['device'] : '',
                     lcfirst($c['baseSide']), $this->moved($t['base']), lcfirst($c['hitsSide']), $this->moved($t['hits']));
@@ -594,7 +610,8 @@ class WeeklyReportCommand extends Command
             $body .= "\n";
         }
 
-        $body .= "FIVE CLEAREST CHANGES, the least likely to be chance first. Each compares a device with itself:\n";
+        $body .= "FIVE CLEAREST CHANGES, the least likely to be chance first. Each compares a device with itself,\n"
+            ."and \"was\" is last week's rate at this week's mix of devices:\n";
         if (! $changes) {
             $body .= "  (nothing moved by more than chance)\n";
         }
@@ -613,11 +630,6 @@ class WeeklyReportCommand extends Command
                 $body .= $this->frictionLines($c['detail']);
             }
             $body .= '     See it: '.$this->link($cur, $c['link'])."\n";
-        }
-
-        if ($inEvents) {
-            $body .= "\nCOUNTED IN EVENTS, NOT PEOPLE (a week was rolled up before people were counted): ".implode('; ', $inEvents).".\n"
-                ."  One person or one stuck page can move an event rate by themselves.\n";
         }
 
         if ($notCompared) {
