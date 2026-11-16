@@ -900,3 +900,47 @@ test('validateAnswer strips markdown images and img tags from every text field, 
   assert.strictEqual(v.draft, 'D the logo')
   assert.ok(!/evil\.example|<img/i.test(JSON.stringify(v)))
 })
+
+// ---------------------------------------------------------------------------
+// Past mail with support@ and info@
+// ---------------------------------------------------------------------------
+
+const MAIL_ENTRY = { date: '2026-09-10 08:15', mailbox: 'support', direction: 'in', subject: "Can't log in", excerpt: 'I cannot log in since Tuesday.' }
+
+test('the helper reads the past mail itself, audits it, and the brief is given it', async () => {
+  const asked = []
+  const t = deps({
+    deps: {
+      mailHistory: async (id) => {
+        asked.push(id)
+        return { available: true, reason: '', entries: [MAIL_ENTRY] }
+      },
+    },
+  })
+  await runFirstPass(clean(), { deps: t.deps })
+  assert.deepStrictEqual(asked, [22])
+  assert.ok(t.audits.some((a) => a.tool === 'support_mail_history' && a.target === 22 && a.referralid === 11))
+  assert.match(t.calls[0].prompt, /2026-09-10 08:15 support in: Can't log in - I cannot log in since Tuesday\./)
+  assert.doesNotMatch(t.calls[0].prompt, /Not available/)
+})
+
+test('with the mailbox passwords set the default reader is used, and with no member it says so', async () => {
+  const t = deps({ deps: { env: { ...ENV, SUPPORT_MAIL_USER: 'support@example.org', SUPPORT_MAIL_PASS: 'x' } } })
+  await runFirstPass(clean({ memberid: null }), { deps: t.deps })
+  assert.match(t.calls[0].prompt, /Not available: there is no member in this case/)
+  assert.ok(!t.audits.some((a) => a.tool === 'support_mail_history'))
+})
+
+test('a reader that fails leaves the pass running with the mail marked unavailable', async () => {
+  const t = deps({ deps: { mailHistory: async () => { throw new Error('imap down') } } })
+  const out = await runFirstPass(clean(), { deps: t.deps })
+  assert.strictEqual(out.brief.version, 2)
+  assert.match(t.calls[0].prompt, /Not available: the support mailboxes could not be read just now/)
+})
+
+test('without the mailbox passwords the batch request stands', async () => {
+  const t = deps()
+  await runFirstPass(clean(), { deps: t.deps })
+  assert.match(t.calls[0].prompt, /Not available: mailbox access is not set up yet/)
+  assert.ok(!t.audits.some((a) => a.tool === 'support_mail_history'))
+})

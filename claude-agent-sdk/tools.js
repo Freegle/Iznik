@@ -28,6 +28,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const execFileP = util.promisify(execFile)
+const { mailboxesFromEnv, mailHistoryFor } = require('./mail-history')
 
 // ---------------------------------------------------------------------------
 // Read-only MySQL pool.
@@ -880,10 +881,38 @@ function buildTools(ctx) {
     { annotations: { readOnlyHint: true } }
   )
 
+  const support_mail_history = tool(
+    'support_mail_history',
+    'Past mail between a member and the support@ and info@ mailboxes, two years back, newest first: date, ' +
+      'mailbox, direction (in = from the member, out = to them), subject and a short excerpt of the new text. ' +
+      "Matched on the member's own email addresses. Use it to see whether they have written in before, about " +
+      'what, and what they were told.',
+    { userid: z.number().optional().describe('Member id; defaults to the selected member') },
+    async (a) => {
+      try {
+        const id = a.userid || ctx.userId
+        if (!id) return err('No member selected/provided')
+        // The first pass may read only the member in its case, as with get_user_dump.
+        if (!ctx.jwt && ctx.dumpKey && id !== ctx.userId) return err('In this run support_mail_history may only look at the member in the case')
+        audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'support_mail_history' })
+        p('tool', `Reading past mail with support and info for user ${id}…`)
+        return text(await mailHistoryFor(id))
+      } catch (e) {
+        return err(e.message)
+      }
+    },
+    { annotations: { readOnlyHint: true } }
+  )
+
+  // The mail tool is offered only where the mailbox passwords are set, so a run never spends a step on it
+  // for nothing.
+  const withMail = mailboxesFromEnv().length > 0
+
   return {
     tools: [
       identify_user, get_user_dump, query_dump, db_query, loki_search, sentry_search,
       discourse_search, code_history_search, git_fixed_already,
+      ...(withMail ? [support_mail_history] : []),
     ],
     names: [
       'identify_user',
@@ -895,6 +924,7 @@ function buildTools(ctx) {
       'discourse_search',
       'code_history_search',
       'git_fixed_already',
+      ...(withMail ? ['support_mail_history'] : []),
     ],
     cleanup() {
       // Cached dumps are owned by dumpCache (swept on TTL) so a follow-up

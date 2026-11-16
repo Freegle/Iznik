@@ -3,7 +3,9 @@
 namespace App\Services\Support;
 
 /**
- * The mailbox history until mailbox access is set up: always unavailable, with a plain reason.
+ * The mailbox history the batch sends: always unavailable, with a plain reason. The AI helper reads
+ * the mailboxes itself when it has their passwords (claude-agent-sdk/mail-history.js) and puts its own
+ * result in place of this one.
  */
 class UnconfiguredMailboxHistory implements MailboxHistory
 {

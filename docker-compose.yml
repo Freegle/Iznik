@@ -688,6 +688,13 @@ services:
       - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
       - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
       - SUPPORT_SMTP_PASS=${SUPPORT_SMTP_PASS:-}
+      # Google app passwords for reading a member's past mail with support@ and info@, read only
+      # (mail-history.js). info@ signs in as its own account address, not info@. Unset, the first
+      # pass says the past mail is not set up and the support_mail_history tool is not offered.
+      - SUPPORT_MAIL_USER=${SUPPORT_MAIL_USER:-}
+      - SUPPORT_MAIL_PASS=${SUPPORT_MAIL_PASS:-}
+      - INFO_MAIL_USER=${INFO_MAIL_USER:-}
+      - INFO_MAIL_PASS=${INFO_MAIL_PASS:-}
       # Shared secret the /internal routes require, which the batch presents too. Unset, the
       # helper refuses every internal call.
       - UX_INTERNAL_SECRET=${UX_INTERNAL_SECRET:-}

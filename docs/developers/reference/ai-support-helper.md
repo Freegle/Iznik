@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -28,6 +28,7 @@ covers:
   - claude-agent-sdk/ux-internal.test.js
   - claude-agent-sdk/first-pass.js
   - claude-agent-sdk/first-pass.test.js
+  - claude-agent-sdk/mail-history.js
   - claude-agent-sdk/first-pass-prompt.js
   - claude-agent-sdk/agent-options.js
   - claude-agent-sdk/agent-options.test.js
@@ -115,6 +116,39 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 | `sentry_search` | recent Sentry issues across the nuxt3/go/capacitor/modtools projects |
 | `discourse_search` | search the community forum (bug reports cite topic numbers) |
 | `code_history_search` / `git_fixed_already` | grep git history to see if an issue is already fixed |
+| `support_mail_history` | the member's past mail with support@ and info@ (see [Past mail with support](#past-mail-with-support)); offered only when the mailbox passwords are set |
+
+### Past mail with support
+
+`mail-history.js` reads a member's past mail with the support@ and info@ mailboxes. The first pass puts
+it in its prompt, and the `support_mail_history` tool gives it to the interactive helper. One reader
+serves both.
+
+- **What it reads.** Each mailbox's All Mail folder (found by its `\All` flag, whatever its local name),
+  over IMAP to Gmail with a Google app password. Mail from, to or copied to any of the member's own
+  addresses (up to eight, preferred first, from `users_emails`), two years back, newest 15 per mailbox and
+  20 in all. A mail sent to both mailboxes appears once.
+- **What it returns.** For each mail: the date, the mailbox, `in` (from the member) or `out`, the subject
+  and up to 300 characters of the new text, with quoted mail, "On ... wrote:", forwarded headers and
+  signatures cut. Plain text is used when there is one, else the HTML with its tags taken out.
+- **Read only.** The folder is opened with `EXAMINE` and bodies are fetched with `BODY.PEEK`, so nothing
+  is marked read or changed. The tests check that no writing command is ever sent.
+- **Our own addresses are not searched.** An `@ilovefreegle.org` address (or a subdomain) is a volunteer's
+  or the system's. Searching on it would pull in the team's own mail, which is a separate data-protection
+  question.
+- **Kept per member for six hours**, in memory, so a follow-up question does not go back to Gmail.
+  A failure is not kept.
+- **When it cannot read.** No passwords: "mailbox access is not set up yet". No member, or a member with
+  no address of their own: said in plain words. A refused login, a mailbox that does not answer in 30
+  seconds or a database error: "the support mailboxes could not be read just now", for both mailboxes,
+  so the brief never says "none" when it means "not read". The log line names neither the member nor
+  their mail.
+- **Audited.** Every read is in the audit trail as `support_mail_history`, with the member and, in a first
+  pass, the referral.
+- **The first pass may read only the member in its case**, as with the dump.
+
+Settings, by name only: `SUPPORT_MAIL_USER`, `SUPPORT_MAIL_PASS`, `INFO_MAIL_USER` and `INFO_MAIL_PASS`
+in the helper's `environment:` block. info@ signs in as its own account's address, not as info@.
 
 The investigation playbook (held chat replies, duplicate conversations, purged accounts,
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
@@ -541,6 +575,10 @@ Support gets, is in [refer-to-support.md](refer-to-support.md). This section is 
   directs it, everything else is data, a request for another member's details is itself the finding, and no
   email, phone or postal address goes in the answer. Markdown images are stripped from the answer, and the
   mail shows it as plain text.
+- **Past mail.** When the helper has the mailbox passwords it reads the member's past mail with support@
+  and info@ itself (see [Past mail with support](#past-mail-with-support)) and puts it in the prompt in
+  place of what the batch sent. Without them the batch's "not set up" stands. A reader that fails leaves
+  the pass running with the mail marked as not read.
 - **It never sends anything.** The pass returns data. It has no mail tool, and the batch alone decides what
   is mailed. It is recorded in the audit trail as `first_pass`, with the referral id.
 
@@ -561,7 +599,7 @@ See [deployment-switches.md](deployment-switches.md).
 - **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
 - **Internal routes**: `claude-agent-sdk/ux-internal.js` (guard, queue, handler and JSON parser),
   `ux-themes.js` and `ux-groups.js` (the two coders), wired in `server.js`.
-- **First pass**: `claude-agent-sdk/first-pass.js` (route logic, validation, the headless investigation), `first-pass-prompt.js` (method, prompt and answer schema), `agent-options.js` (options shared with the interactive agent). The flow around it is in [refer-to-support.md](refer-to-support.md).
+- **First pass**: `claude-agent-sdk/first-pass.js` (route logic, validation, the headless investigation), `first-pass-prompt.js` (method, prompt and answer schema), `agent-options.js` (options shared with the interactive agent), `mail-history.js` (past mail with support@ and info@, also behind the `support_mail_history` tool). The flow around it is in [refer-to-support.md](refer-to-support.md).
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
 - **Lockdown**: the user dump (`iznik-server-go/userdump/userdump.go`) is a download, so it is
   refused while a [lockdown](../../ops/runbooks/lockdown.md) holds `export`, for Support and Admin
