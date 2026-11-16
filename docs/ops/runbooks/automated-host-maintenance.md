@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-15
+last_reviewed: 2026-11-16
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -238,7 +238,7 @@ same gates.
 2. **Housekeep the previous refresh.** Copy each staged note into the live column, delete
    the previous layout's leaf rows one post at a time, and drop the kept previous
    artifacts. It refuses within 6 days of a switch (`MAINT_REACH_HOUSEKEEP_MIN_DAYS`; six because a weekly refresh comes back a few minutes short of seven whole days),
-   which is how long a cheap rollback stays possible. It must run before the next
+   which is how long a cheap rollback stays possible. A run that finds the live layout still inside that window does nothing else and reports success: the schedule waiting, not a failure. It must run before the next
    staging, which overwrites the staged column. A run on an unchanged map does only this.
 3. **Build.** Rebuild the spatial image from the checkout, then in a throwaway container
    build the road network from the map and deprivation file, divide it into regions and
@@ -251,7 +251,7 @@ same gates.
 5. **Ship.** Copy the artifacts and the deprivation file to each node, beside the live
    ones, and check the copy carries the new fingerprint.
 6. **Switch**, back to back: a top-up export and apply for the posts that arrived since
-   step 4; the pairing record set to the new layout; then the Docker host's container,
+   step 4; the pairing record set to the new layout; then the Docker host's container (recreated, since the image and settings are unchanged),
    db2, db3, each stopped, swapped (the live artifacts kept as `reach.prev`), started
    through monit and required to serve the new fingerprint, with the reach engine and a
    route answering, before the next is touched.
