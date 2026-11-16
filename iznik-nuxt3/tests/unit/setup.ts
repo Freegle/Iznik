@@ -1,6 +1,7 @@
 import { vi, beforeEach, afterEach } from 'vitest'
 import { config, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { monotonic } from './monotonicClock'
 import {
   ref,
   computed,
@@ -9,6 +10,14 @@ import {
   onBeforeUnmount,
   defineAsyncComponent,
 } from 'vue'
+
+// ============================================
+// A WALL CLOCK THAT DOES NOT STEP BACKWARDS
+// ============================================
+// See monotonicClock.ts: a backward step of the machine's clock between a mount
+// and a click makes Vue drop the click. Fake timers replace Date wholesale and
+// are not affected by this.
+Date.now = monotonic(Date.now.bind(Date))
 
 // ============================================
 // BROWSER API STUBS

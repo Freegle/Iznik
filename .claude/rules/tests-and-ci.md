@@ -429,3 +429,18 @@ the statuses never appear until it is sent. The step now checks the real thing a
 webhook: the per-flag commit statuses on GitHub, counted from when the coverage setup
 started. If that warns, read the commit's statuses first; four of them means the wait ran
 out, not that the ids are wrong.
+
+## A click that did nothing in one vitest run and never again
+
+A component test fails once on "the thing the click should have caused is not there", in a
+file nobody touched, and passes on every rerun. Check whether the machine's wall clock steps
+backwards before looking at the test: `journalctl | grep "Time jumped backwards"`, or sample
+`Date.now()` against `performance.now()`. Vue drops a DOM event stamped earlier than the
+moment its handler was attached, and Vue Test Utils stamps each triggered event with
+`Date.now() + 1`, so a backward step between `mount` and `trigger` loses the click with no
+error. The dev WSL host was stepping back by 3 and 5 seconds every 30 seconds on 2026-11-15
+(time sync fighting itself), which failed about one full run in twelve, a different test each
+time. `tests/unit/setup.ts` now reads `Date.now` through `monotonicClock.ts`, which holds its
+last value across a backward step; `monotonicClock.spec.js` keeps a test of the unguarded
+failure so the reason stays checked against the installed Vue. CPU load does not reproduce
+this, and fake timers are not involved.
