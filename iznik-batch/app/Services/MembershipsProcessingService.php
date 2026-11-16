@@ -29,6 +29,13 @@ use Illuminate\Support\Facades\Mail;
  */
 class MembershipsProcessingService
 {
+    /**
+     * Days after a moderator marks a member OK on a group during which "seen on many groups"
+     * does not flag that group again. The same 31 days V1 used to keep a reviewed member out
+     * of the review list.
+     */
+    public const REVIEW_QUIET_DAYS = 31;
+
     public function processAll(bool $dryRun = false): int
     {
         $entries = DB::table('memberships_history')
@@ -183,8 +190,7 @@ class MembershipsProcessingService
             return;
         }
 
-        // Suspect. Record it and flag the member for review on all their groups,
-        // exactly as V1 Spam::checkUser did via User::memberReview().
+        // Suspect. Record it and flag the member for review on their groups.
         DB::table('logs')->insert([
             'type'    => 'User',
             'subtype' => 'Suspect',
@@ -192,16 +198,24 @@ class MembershipsProcessingService
             'text'    => 'Seen on many groups',
         ]);
 
-        DB::table('memberships')
+        // A group whose moderators marked the member OK in the last REVIEW_QUIET_DAYS is left
+        // alone. One more join is not new information, and flagging every group again on each
+        // join puts the member back in front of every moderator who has already cleared them.
+        $flagged = DB::table('memberships')
             ->where('userid', $userId)
+            ->where(function ($q) {
+                $q->whereNull('reviewedat')
+                    ->orWhere('reviewedat', '<', now()->subDays(self::REVIEW_QUIET_DAYS));
+            })
             ->update([
                 'reviewrequestedat' => now(),
                 'reviewreason'      => 'Seen on many groups',
             ]);
 
         Log::info('MembershipsProcessing: flagged member for review - seen on many groups', [
-            'user'        => $userId,
-            'group_count' => $count,
+            'user'                => $userId,
+            'group_count'         => $count,
+            'memberships_flagged' => $flagged,
         ]);
     }
 
