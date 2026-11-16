@@ -261,11 +261,18 @@ function decodePart(raw, encoding, charset) {
  * or a tag with no end runs to the end of what was read and is dropped with it.
  */
 function htmlToText(html) {
-  return html
-    .replace(/<(style|script|head)\b[\s\S]*?(<\/\1>|$)/gi, ' ')
-    .replace(/<blockquote\b[\s\S]*?(<\/blockquote>|$)/gi, '\n')
+  let s = html.replace(/<(style|script|head)(?=[\s>])[\s\S]*?(<\/\1>|$)/gi, ' ')
+  // Quoted mail, innermost quote first so a quote inside a quote goes whole.
+  const innermost = /<blockquote\b(?:(?!<blockquote\b)[\s\S])*?<\/blockquote>/gi
+  for (let before = ''; before !== s; ) {
+    before = s
+    s = s.replace(innermost, '\n')
+  }
+  return s
+    .replace(/<blockquote\b[\s\S]*$/i, '\n')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
-    .replace(/<[^>]*(>|$)/g, ' ')
+    // Only something that starts like a tag is a tag: "a < 5 deal" keeps its text.
+    .replace(/<[a-z/!][^>]*(>|$)/gi, ' ')
     .replace(/&#(\d+);|&#x([0-9a-f]+);|&([a-z]+);/gi, (m, dec, hex, name) => {
       if (dec || hex) {
         const n = dec ? Number(dec) : parseInt(hex, 16)
@@ -471,23 +478,35 @@ const inflight = new Map()
  *
  * @param {number} memberId
  * @param {object} [deps] - env, select (a read-only SELECT), connect (mailbox -> socket), now, log,
- *   timeoutMs, signal (the caller stops waiting on abort; a read it shares goes on to its own timeout).
+ *   timeoutMs (per mailbox), totalTimeoutMs (the whole read), signal (the caller stops waiting on
+ *   abort; a read it shares goes on to its own timeout).
  */
 async function mailHistoryFor(memberId, deps = {}) {
   const env = deps.env || process.env
   const now = deps.now || Date.now
   const mailboxes = mailboxesFromEnv(env)
   if (!mailboxes.length) return { available: false, reason: REASON_NOT_SET_UP, entries: [] }
-  if (!memberId) return { available: false, reason: REASON_NO_MEMBER, entries: [] }
+  // One key per member whether the id came as a number or as text.
+  const id = Number(memberId)
+  if (!(id > 0)) return { available: false, reason: REASON_NO_MEMBER, entries: [] }
 
-  for (const [id, kept] of cache) if (now() - kept.at >= CACHE_TTL_MS) cache.delete(id)
-  const hit = cache.get(memberId)
+  for (const [k, kept] of cache) if (now() - kept.at >= CACHE_TTL_MS) cache.delete(k)
+  const hit = cache.get(id)
   if (hit) return hit.result
 
-  let read = inflight.get(memberId)
+  let read = inflight.get(id)
   if (!read) {
-    read = readHistory(memberId, mailboxes, { ...deps, now }).finally(() => inflight.delete(memberId))
-    inflight.set(memberId, read)
+    // The whole read is bounded too, so a stuck database connection cannot hold every later caller.
+    const totalMs = deps.totalTimeoutMs || (deps.timeoutMs || MAILBOX_TIMEOUT_MS) + 15000
+    let timer
+    const bound = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(unreadable()), totalMs)
+    })
+    read = Promise.race([readHistory(id, mailboxes, { ...deps, now }), bound]).finally(() => {
+      clearTimeout(timer)
+      inflight.delete(id)
+    })
+    inflight.set(id, read)
   }
   return deps.signal ? untilAborted(read, deps.signal) : read
 }

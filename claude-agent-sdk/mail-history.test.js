@@ -131,7 +131,10 @@ const INFO_MAIL = [
   }),
 ]
 
-beforeEach(() => mh._cache.clear())
+beforeEach(() => {
+  mh._cache.clear()
+  mh._inflight.clear()
+})
 
 test('without mailbox passwords the history is not set up, and a member is not needed to say so', async () => {
   const r = await mh.mailHistoryFor(42, { env: {}, select: () => assert.fail('no query') })
@@ -258,6 +261,9 @@ test('a caller that stops waiting gets "not read" at once, and the shared read g
     const already = new AbortController()
     already.abort()
     assert.strictEqual((await mh.mailHistoryFor(42, { env: ENV_SUPPORT, signal: already.signal })).reason, mh.REASON_UNREADABLE)
+    // The shared read ends at its own timeout and clears itself.
+    await mh._inflight.get(42)
+    assert.strictEqual(mh._inflight.size, 0)
   } finally {
     await fake.close()
   }
@@ -279,6 +285,26 @@ test('a mail whose body the server refuses is listed without an excerpt; a +tag 
   } finally {
     await fake.close()
   }
+})
+
+test('a member id given as text shares the number\'s read and kept result', async () => {
+  const fake = await fakeServer({ 'support@example.org': SUPPORT_MAIL })
+  try {
+    const deps = { env: ENV_SUPPORT, select: selectFor([MEMBER]), connect: fake.connect, now: () => NOW, log: () => {} }
+    await Promise.all([mh.mailHistoryFor(42, deps), mh.mailHistoryFor('42', deps)])
+    await mh.mailHistoryFor('42', deps)
+    assert.strictEqual(fake.connections(), 1)
+    assert.strictEqual((await mh.mailHistoryFor('x', deps)).reason, mh.REASON_NO_MEMBER)
+  } finally {
+    await fake.close()
+  }
+})
+
+test('a read stuck before any mailbox (the database) still ends, and the next caller starts afresh', async () => {
+  const stuck = () => new Promise(() => {})
+  const r = await mh.mailHistoryFor(42, { env: ENV_SUPPORT, select: stuck, totalTimeoutMs: 50, log: () => {} })
+  assert.strictEqual(r.reason, mh.REASON_UNREADABLE)
+  assert.strictEqual(mh._inflight.size, 0)
 })
 
 test('kept results past their six hours are dropped on the next call', async () => {
@@ -361,4 +387,8 @@ test('the excerpt is the new text only: quotes, reply lines, forwards and signat
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<html><head><style>p{color:red}' + ' .x{margin:0}'.repeat(50))), '')
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>Hi there</p><style>a{color:')), 'Hi there')
   assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>Hi</p><a href="https://exa')), 'Hi')
+  // A quote inside a quote goes whole, and a bare < in the text is kept.
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>New</p><blockquote>outer<blockquote>inner</blockquote>outer tail</blockquote><p>end</p>')), 'New end')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<p>a < 5 deal</p>')), 'a < 5 deal')
+  assert.strictEqual(mh.excerptOf(mh.htmlToText('<header>kept</header>')), 'kept')
 })

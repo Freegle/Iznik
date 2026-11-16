@@ -137,8 +137,10 @@ serves both.
   or the system's. Searching on it would pull in the team's own mail, which is a separate data-protection
   question.
 - **Kept per member for six hours**, in memory, so a follow-up question does not go back to Gmail.
-  Callers asking about the same member at the same time share one read. A failure, or a result missing
-  a mailbox, is not kept.
+  Callers asking about the same member at the same time share one read, which ends within 45 seconds
+  whatever is stuck. A failure, or a result missing a mailbox, is not kept.
+- **Plus addresses.** Mail from `name+tag@` counts as the member's own (`in`) when it is found, but the
+  search uses the addresses on record, so mail only ever sent from a tagged form may not be found.
 - **When it cannot read.** No passwords: "mailbox access is not set up yet". No member, or a member with
   no address of their own: said in plain words. A refused login, a mailbox that does not answer in 30
   seconds or a database error: "the support mailboxes could not be read just now", so the brief never
