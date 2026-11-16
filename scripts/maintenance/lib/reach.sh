@@ -188,16 +188,28 @@ reach_preflight() {
 # ---------------------------------------------------------------------------
 # Housekeep: make the last switch permanent
 # ---------------------------------------------------------------------------
+# Days since the live layout was switched in, or empty when no switch is recorded.
+days_since_switch() {
+  local switched; switched=$(state_get switched-at)
+  [ -n "$switched" ] || return 0
+  echo $(( ($(date -u +%s) - $(date -u -d "$switched" +%s)) / 86400 ))
+}
+
+# Whether housekeeping may run now: the live layout is already housekept, or it went live
+# long enough ago that its rollback window has closed.
+housekeep_due() {
+  local days
+  [ "$(state_get housekept)" = "$LIVE" ] && return 0
+  days=$(days_since_switch)
+  [ -z "$days" ] || [ "$days" -ge "$MAINT_REACH_HOUSEKEEP_MIN_DAYS" ]
+}
+
 reach_housekeep() {
   phase housekeep
-  local prev switched days
+  local prev
   [ "$(state_get housekept)" = "$LIVE" ] && { info "layout $LIVE is already housekept"; return 0; }
-  switched=$(state_get switched-at)
-  if [ -n "$switched" ]; then
-    days=$(( ($(date -u +%s) - $(date -u -d "$switched" +%s)) / 86400 ))
-    [ "$days" -ge "$MAINT_REACH_HOUSEKEEP_MIN_DAYS" ] \
-      || die "layout $LIVE went live $days days ago; housekeeping waits $MAINT_REACH_HOUSEKEEP_MIN_DAYS so it can still be rolled back"
-  fi
+  housekeep_due \
+    || die "layout $LIVE went live $(days_since_switch) days ago; housekeeping waits $MAINT_REACH_HOUSEKEEP_MIN_DAYS so it can still be rolled back"
   prev=$(state_get prev-fp)
 
   sqlq "SELECT msgid FROM rippling_reach WHERE reach_labels_next_fp = $LIVE" \
@@ -356,7 +368,9 @@ reach_local_swap() {  # <in: next|prev> <fp>
     swap="rm -rf $d/reach.failed && mv $d/reach $d/reach.failed && mv $d/reach.prev $d/reach"
   fi
   act local "put the $1 artifacts in place" "$swap" || die "could not swap this host's artifacts"
-  act local "recreate the spatial container" "cd '$MAINT_REPO' && docker compose up -d --no-deps '$MAINT_REACH_SPATIAL_SERVICE'"
+  # --force-recreate: the artifacts change under the same image and settings, so a plain
+  # "up -d" sees nothing to do and leaves the old layout loaded (16 November 2026).
+  act local "recreate the spatial container" "cd '$MAINT_REPO' && docker compose up -d --force-recreate --no-deps '$MAINT_REACH_SPATIAL_SERVICE'"
   reach_wait_local "$2"
 }
 
@@ -456,6 +470,13 @@ reach_run() {
     point_of_no_return
     reach_housekeep
     reach_finish "layout $LIVE housekept"
+    return
+  fi
+  # A layout still inside its rollback window is left alone: no housekeeping, so no new
+  # layout can be staged either. That is the schedule working, so it is a success.
+  if ! housekeep_due; then
+    point_of_no_return
+    reach_finish "layout $LIVE went live $(days_since_switch) days ago and can still be rolled back; the next refresh waits until it is $MAINT_REACH_HOUSEKEEP_MIN_DAYS days old"
     return
   fi
   if ! map_is_new; then
