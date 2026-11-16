@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
+  - iznik-batch/app/Services/MembershipsProcessingService.php
   - iznik-nuxt3/modtools/pages/chats/**
   - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/pages/spammers.vue
@@ -106,6 +107,11 @@ The count beside **Member Review** in the menu is red for members nobody has dea
 and blue for members who are held by a moderator or flagged in a community where you are not
 an active moderator. Once you have reviewed or held everything, the red count goes and only
 blue is left.
+
+When you mark a member as OK, that is your community's decision. A member flagged for being
+on many communities does not come back to your queue each time they join another one: they
+come back only if they join another more than 31 days after you looked at them. Other kinds
+of flag, such as a note flagged to other communities, still show straight away.
 
 Treat these as prompts to look, not verdicts. There is no rule against joining several
 communities or posting enthusiastically. Ban only with clear evidence of harm, and prefer
