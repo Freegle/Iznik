@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - iznik-server-go/chat/chatroom.go
@@ -37,7 +37,10 @@ under "First pass on a referral". For moderators, see
 3. **First pass and mail.** `support:first-pass` (`iznik-batch/app/Console/Commands/Support/`) takes
    the task, asks the helper for the first pass (`FirstPassService`), and sends `ReferToSupportMail`
    to the support address, with the brief, or with the plain reason there is none. Sending the mail
-   is what marks the task processed.
+   is what marks the task processed. The request carries the chat and its images. The member's past
+   mail with support@ and info@ is read by the helper itself when it has the mailbox passwords
+   (`UnconfiguredMailboxHistory` is the batch's "not set up" placeholder); see "Past mail with
+   support" in [ai-support-helper.md](ai-support-helper.md#past-mail-with-support).
 4. **Reply.** Support replies to the mail. It goes to the community's volunteers address, which
    the incoming mail code turns into a chat to that community's moderators.
 
