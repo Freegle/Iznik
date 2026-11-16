@@ -17,7 +17,8 @@ The code is `iznik-server-go/session/loginbackoff.go`. The numbers below are con
 ## What is counted
 
 A failed login is a wrong password, an email address we do not know, a wrong link key, or a link
-login for a member id that does not exist. Each one is counted twice:
+login for a member id that does not exist. Each one is counted against the address, and against
+the member when there is one (an email address we do not know has no member to count against):
 
 | Counted against | Failures that cost nothing | Why |
 |---|---|---|
@@ -55,6 +56,8 @@ waiting always works.
 
 - Two logins sent at the same moment are both checked before either failure is counted, so a
   burst gets a few more tries than the table says.
+- The table of counts is bounded. When it is full it drops counts over an hour old, then single
+  failures, and after that leaves new keys uncounted until there is room.
 - The counts are in memory. A restart of the API forgets them, and API processes do not share
   them, so with N processes a guesser gets N times the allowance.
 - Someone who knows a member's email address can make that member wait, for up to 15 minutes at a

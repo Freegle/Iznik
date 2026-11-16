@@ -83,21 +83,24 @@ func TestLoginBackoffTableIsBounded(t *testing.T) {
 	assert.Equal(t, 30*time.Second, b.wait("new"))
 }
 
-func TestLoginBackoffAFullTableDropsCountsThatHoldNobody(t *testing.T) {
+func TestLoginBackoffAFullTableDropsSingleFailuresOnly(t *testing.T) {
 	b, now := backoffAt(time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC))
-	b.maxKeys = 4
+	b.maxKeys = 5
 
-	// One key that is waiting, and three single failures that hold nobody.
+	// One key that is waiting, one part way to a wait, and three single failures.
 	b.fail("held", 0)
+	b.fail("partway", loginBackoffAddressFree)
+	b.fail("partway", loginBackoffAddressFree)
 	for i := 0; i < 3; i++ {
 		b.fail(fmt.Sprintf("single%d", i), loginBackoffAddressFree)
 	}
-	assert.Len(t, b.keys, 4)
+	assert.Len(t, b.keys, 5)
 
 	*now = now.Add(time.Second)
 	b.fail("held2", 0)
-	assert.Len(t, b.keys, 2, "the single failures made room")
+	assert.Len(t, b.keys, 3, "the single failures made room")
 	assert.Greater(t, b.wait("held"), time.Duration(0), "the key that is waiting was kept")
+	assert.Equal(t, 2, b.keys["partway"].count, "a count part way to a wait was kept")
 	assert.Equal(t, 30*time.Second, b.wait("held2"))
 }
 

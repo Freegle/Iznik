@@ -135,17 +135,17 @@ func (b *loginBackoff) fail(key string, free int) {
 			}
 		}
 		if len(b.keys) >= b.maxKeys && b.lastSweep.Equal(now) {
-			// Still full after the sweep: drop the counts that are not making anyone wait, so a
-			// flood of single failures cannot crowd out the keys that matter.
+			// Still full after the sweep: drop the single failures, so a flood of them cannot crowd
+			// out the keys that matter. A count that is part way to a wait is kept.
 			for k, old := range b.keys {
-				if !old.notBefore.After(now) {
+				if old.count <= 1 && !old.notBefore.After(now) {
 					delete(b.keys, k)
 				}
 			}
 		}
 		if len(b.keys) >= b.maxKeys {
-			// Full of counts that are all waiting. Leave this one uncounted rather than grow
-			// without bound.
+			// Full of counts that are waiting or part way there. Leave this one uncounted rather
+			// than grow without bound.
 			return
 		}
 		f = &loginFailures{}
