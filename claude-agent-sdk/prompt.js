@@ -71,6 +71,9 @@ function systemPrompt(userId, codebase) {
     `eventual fix"). A commit that fixes/describes the exact symptom points straight at the root cause; read its diff. ` +
     `In testing this repeatedly found the real cause faster than live guesswork.\n` +
     `- **git_fixed_already** — date-aware history check for a suspect path.\n` +
+    `- **support_mail_history** (when offered) — the member's past mail with support@ and info@, two years back: ` +
+    `dates, subjects and short excerpts. Use it to see whether they have written in about this before and what they ` +
+    `were told.\n` +
     `- **Read / Grep / Glob** — read the code at ${codebase} to understand how a feature actually behaves before guessing.\n` +
     `\n**Run independent checks together.** When several lookups do not depend on each other's results (a few ` +
     `query_dump queries, a Sentry search, a Grep of the code), make all of those tool calls in the same turn rather ` +

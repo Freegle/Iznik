@@ -217,8 +217,10 @@ function chatToText(chat) {
 
 function mailToText(mail) {
   if (!mail.available) return `Not available: ${scrubMarker(mail.reason || 'mail history is not set up')}`
-  if (!mail.entries.length) return 'No past mail with support or info found.'
-  return mail.entries
+  // Available with a reason: one mailbox was read and the other was not.
+  const partly = mail.reason ? `Only partly read: ${scrubMarker(mail.reason)}.\n` : ''
+  if (!mail.entries.length) return `${partly}No past mail with support or info found.`
+  return partly + mail.entries
     .map((e) => `${e.date} ${e.mailbox} ${e.direction}: ${scrubMarker(e.subject)} - ${scrubMarker(e.excerpt).replace(/\s+/g, ' ')}`)
     .join('\n')
 }

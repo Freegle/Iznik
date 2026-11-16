@@ -28,6 +28,7 @@ const { parseModelJson } = require('./ux-internal')
 const { unknownSiteLinks } = require('./links')
 const { agentEnv, agentOptions } = require('./agent-options')
 const { CLASSIFICATIONS, CONFIDENCE_LEVELS, ANSWER_SCHEMA, systemPrompt, buildUserPrompt } = require('./first-pass-prompt')
+const { mailboxesFromEnv, mailHistoryFor, REASON_UNREADABLE: MAIL_UNREADABLE } = require('./mail-history')
 
 const CHAT_TYPES = ['User2Mod', 'User2User', 'Mod2Mod', 'Group']
 const SOURCE_KINDS = ['referral', 'mail']
@@ -402,7 +403,8 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
  * @param {object} request - cleaned by cleanFirstPassRequest.
  * @param {object} [o]
  * @param {AbortSignal} [o.signal] - the caller going away.
- * @param {object} [o.deps] - queryImpl, buildTools, createMcpServer, fetchQuotaImpl, audit, now, env, pagesDir, nonce, driver.
+ * @param {object} [o.deps] - queryImpl, buildTools, createMcpServer, fetchQuotaImpl, audit, now, env, pagesDir, nonce, driver,
+ *   mailHistory (member id -> the past-mail result; defaults to mail-history.js when the mailboxes are set up).
  */
 async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
   const env = deps.env || process.env
@@ -434,6 +436,21 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
     const token = subscriptionToken(mode, { env })
     const quotaFn = deps.fetchQuotaImpl || fetchQuota
     const quotaBeforeP = quotaFn(token)
+
+    // The helper reads the member's past mail itself when it has the mailbox passwords; without them
+    // the batch's "not set up" stands. The read is inside the deadline and stops when the caller goes.
+    if (deps.mailHistory || mailboxesFromEnv(env).length) {
+      const readMail = deps.mailHistory || ((id, sig) => mailHistoryFor(id, { env, signal: sig }))
+      if (request.memberid) auditFn({ tool: 'support_mail_history', referralid: request.referralid, target: request.memberid })
+      let mailHistory
+      try {
+        mailHistory = await readMail(request.memberid, signal)
+      } catch {
+        mailHistory = { available: false, reason: MAIL_UNREADABLE, entries: [] }
+      }
+      request = { ...request, mailHistory }
+      if (signal.aborted) throw fail('DEADLINE')
+    }
 
     const nonce = deps.nonce || crypto.randomBytes(8).toString('hex')
     const prompt = buildUserPrompt({ request, nonce })
