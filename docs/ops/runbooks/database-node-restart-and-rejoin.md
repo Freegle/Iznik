@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-22
+last_reviewed: 2026-11-17
 owner: Freegle dev team
 ---
 
@@ -83,8 +83,12 @@ TLS certificates, and it deletes `grastate.dat`, which trips the reboot gate abo
    SST". Until "ready for connections" appears, `mysql` cannot connect; that is the transfer
    in progress, not a hang.
 6. Confirm with `mysql -e "SHOW STATUS LIKE 'wsrep_local_state_comment'"` (Synced) and
-   `wsrep_cluster_size`, then `systemctl start monit`, which starts the API, spatial and
-   routing servers it manages.
+   `wsrep_cluster_size`, then `systemctl start monit`, which starts the spatial and routing
+   servers it manages.
+7. Once the routing server answers `/health` and its internal route, `monit start
+   iznik-server-go`. The API's check is `onreboot nostart`, so monit never starts it after a
+   reboot on its own: an API that comes up before routing fails every reach question, and the
+   load balancer sends members to it as soon as it answers.
 
 Monit is deliberately **not** enabled at boot on the data nodes. When it was, it started and
 restarted the services it manages against a node that was still resyncing, and made the

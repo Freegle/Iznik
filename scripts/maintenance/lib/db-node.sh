@@ -436,10 +436,13 @@ db_run() {  # <target>
   db_wait_rejoin
 
   phase services
-  # 6. monit back: start the daemon, then monitor every service explicitly
-  #    (whether "Not monitored" survives a reboot is not relied on either way).
+  # 6. monit back: start the daemon, then monitor every service explicitly.
   #    The API is left out here; db_verify_services starts it once reach can be answered.
+  #    Its monit check is "onreboot nostart" (ops/hosts/monit/db-node/conf.d/api.conf), so monit
+  #    never starts it after the reboot; the unmonitor below makes sure of that state rather
+  #    than trusting it.
   act "$T" "start the monit daemon" "systemctl start monit" || die "$T: could not start monit"
+  monit_unmonitor "$T" iznik-server-go
   # shellcheck disable=SC2086
   monit_monitor "$T" $MAINT_DB_MONIT_RESTORE
   db_verify_services
