@@ -341,7 +341,7 @@ var cronJobs = []CronJob{
 
 	// Monitoring
 	{Command: "monitor:email-health", Name: "Email Health", Description: "Alerts if incoming/outgoing email flow drops below thresholds", Schedule: "Every 15 minutes", IntervalMinutes: 15, Category: "Monitoring", Active: true},
-	{Command: "emails:validate", Name: "Validate Emails", Description: "Daily syntactic email validation for newly-added addresses (last 30 days)", Schedule: "Daily at 4:30am", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
+	{Command: "emails:validate", Name: "Validate Emails", Description: "Daily syntactic email validation for newly-added addresses (last 30 days)", Schedule: "Daily at 5:20am UTC", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
 
 	// AI & Analytics
 	{Command: "ai:usage-counts:update", Name: "AI Usage Counts", Description: "Updates usage counts for AI-generated images across posts", Schedule: "Hourly", IntervalMinutes: 60, Category: "AI & Analytics", Active: true},

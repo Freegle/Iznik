@@ -750,8 +750,10 @@ Schedule::command('purge:logs')
 
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
+// 05:20, after the Tuesday data-node maintenance gives the scheduler back (see
+// BackupDrainWindowTest::test_no_once_a_day_job_fires_while_data_node_maintenance_holds_the_scheduler).
 Schedule::command('emails:validate')
-    ->dailyAt('04:50')
+    ->dailyAt('05:20')
     ->withoutOverlapping(360)
     ->appendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -817,10 +819,11 @@ Schedule::command('chats:update-expected')
     ->runInBackground();
 
 // The nightly backstop: re-check every waiting message, catching anything the two
-// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
-// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
+// triggers above cannot see. 05:25 is clear of the backup drain window and of the hold
+// the Tuesday data-node maintenance puts on the scheduler (BackupDrainWindowTest keeps
+// it out of both).
 Schedule::command('chats:update-expected --full')
-    ->dailyAt('04:50')
+    ->dailyAt('05:25')
     ->withoutOverlapping(60)
     ->appendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
