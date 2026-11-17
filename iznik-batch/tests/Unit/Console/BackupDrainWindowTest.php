@@ -147,6 +147,40 @@ class BackupDrainWindowTest extends TestCase
         );
     }
 
+    public function test_no_once_a_day_job_fires_while_data_node_maintenance_holds_the_scheduler(): void
+    {
+        // freegle-maint's Tuesday data-node slot starts at 04:40 UTC. After about eight
+        // minutes of preflight it moves the batch and holds the scheduler, and gives it back
+        // when the node has rejoined: 04:49 to 04:55 on 17 November 2026. A once-a-day job
+        // due in that hold is skipped, not delayed, as emails:validate and the full
+        // chats:update-expected pass were that morning at 04:50.
+        $holdFrom = 4 * 60 + 48;
+        $holdTo = 4 * 60 + 58;
+
+        $inside = [];
+        foreach ($this->loadSchedule()->events() as $event) {
+            $time = $this->fixedTimeOfDay($event);
+            if ($time === null) {
+                continue;
+            }
+            [$hour, $minute] = $time;
+            foreach ($this->firings($event, $hour, $minute, self::DATES) as $fires) {
+                $utc = $fires->copy()->utc();
+                $at = (int) $utc->format('G') * 60 + (int) $utc->format('i');
+                if ($at >= $holdFrom && $at < $holdTo) {
+                    $inside[] = sprintf('%s at %s UTC on %s', $this->describe($event), $utc->format('H:i'), $fires->format('Y-m-d'));
+                    break;
+                }
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $inside,
+            "These fire once a day while Tuesday's data-node maintenance holds the scheduler (04:48 to 04:58 UTC) and would be skipped that day. Move them:\n  ".implode("\n  ", $inside)
+        );
+    }
+
     public function test_the_backup_itself_sits_inside_the_window(): void
     {
         // The window exists for the backup. If someone moves one without the other the
