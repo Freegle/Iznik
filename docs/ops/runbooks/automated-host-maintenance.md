@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-16
+last_reviewed: 2026-11-17
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -147,7 +147,10 @@ around a reboot. No step lets writes or reads fail while the node is down.
    that fails with "wrong seqno". The retry waits until the node has been up five and a
    half minutes: a "wrong seqno" failure leaves `seqno: -1`, which the gate refuses before
    then. A full state transfer is left to run. The other node must stay Synced throughout.
-9. Start monit and monitor every service but the API explicitly. Start the spatial and
+9. Start monit, take the API off it at once, and monitor every other service explicitly. The
+   API's monit check is `onreboot nostart`, because monit's default starts every service after
+   a reboot whatever was unmonitored before it; that put an API in front of members before its
+   routing server could answer. Start the spatial and
    routing servers if they are not running: monit checks them only through their ports,
    so it neither starts them when monitored again nor restarts routing for 15 minutes.
    Wait for spatial `/health`, routing `/health` and its internal route (monit's grace
