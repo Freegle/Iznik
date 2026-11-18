@@ -799,9 +799,10 @@ class UnifiedDigestService
      * Candidates are posts on a group the member belongs to with immediate mail, whose stored
      * outer bound contains the member's point (the spatial index does that), plus any post
      * whose overflow ring admits the point per the ring index. Both are limited to reaches
-     * that changed within freegle.ripple.reach_member_window_minutes: every open post that
-     * covers a member of a dozen busy communities is over a thousand posts, and each is its
-     * own mail. mailNewlyReachedForPost then
+     * that changed no earlier than freegle.ripple.reach_member_window_minutes before the
+     * member was queued: every open post that covers a member of a dozen busy communities is
+     * over a thousand posts, and each is its own mail. The look-back is measured from the
+     * queue row, so a drain that runs late covers the same posts. mailNewlyReachedForPost then
      * applies the exact label test, so a candidate the bound admits but the label does not
      * is simply not mailed.
      *
@@ -813,7 +814,7 @@ class UnifiedDigestService
     private function drainMemberQueue(array &$stats, bool $dryRun, int $shard, int $shards, ?callable $shouldStop): void
     {
         $srid = (int) config('freegle.srid', 3857);
-        $changedSince = now()->subMinutes((int) config('freegle.ripple.reach_member_window_minutes', 60))->toDateTimeString();
+        $windowMinutes = (int) config('freegle.ripple.reach_member_window_minutes', 60);
 
         // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
         // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
@@ -822,13 +823,14 @@ class UnifiedDigestService
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
 
-        foreach ($pending->limit(500)->get(['id', 'userid']) as $row) {
+        foreach ($pending->limit(500)->get(['id', 'userid', 'added']) as $row) {
             if ($shouldStop && $shouldStop()) {
                 $stats['stopped'] = true;
                 break;
             }
 
             try {
+                $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)->toDateTimeString();
                 $user = User::find($row->userid);
                 $point = $user ? $this->resolveUserLatLng($user) : null;
 
@@ -861,6 +863,7 @@ class UnifiedDigestService
                     if ($ringAdmitted !== []) {
                         $ringAdmitted = DB::table('rippling_reach')
                             ->whereIn('msgid', $ringAdmitted)
+                            ->whereIn('status', ['expanding', 'done'])
                             ->where('updated_at', '>=', $changedSince)
                             ->pluck('msgid')
                             ->map(fn ($id) => (int) $id)
@@ -888,6 +891,8 @@ class UnifiedDigestService
                 }
 
                 if (! $dryRun) {
+                    // `added` is also what the look-back is measured from, so a row sent to the
+                    // back is measured from now.
                     DB::table('rippling_reach_member_pending')->where('id', $row->id)->update(['added' => now()]);
                 }
             }

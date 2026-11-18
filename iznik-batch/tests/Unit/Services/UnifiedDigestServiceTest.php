@@ -4989,7 +4989,67 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->sendReachDigests(null, false, 0, 1);
 
-        $this->assertFalse($this->ledgered($msgid, $member->id));
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'a reach that changed 30 minutes ago is outside a 20 minute look-back');
+
+        config(['freegle.ripple.reach_member_window_minutes' => 40]);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'and inside a 40 minute one');
+    }
+
+    /**
+     * The look-back is measured from when the member was queued, not from when the queue is
+     * drained. A drain that runs late (a backlog, a routing outage, mail held) still covers the
+     * hour before the member's change.
+     */
+    public function test_queued_member_look_back_is_measured_from_when_they_were_queued(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(150)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        DB::table('rippling_reach_member_pending')->where('userid', $member->id)->update(['added' => now()->subMinutes(120)]);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the reach changed 30 minutes before the member was queued');
+    }
+
+    /**
+     * A post that reaches the member only through an overflow ring is a candidate under the
+     * same look-back as one whose reach covers them.
+     */
+    public function test_queued_ring_member_is_mailed_only_about_a_reach_inside_the_look_back(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*', 'freegle.ripple.rural_access.enabled' => true]);
+        $msg = $this->seedRuralRingDigestPost('sparse');
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        DB::table('config')->upsert(
+            ['key' => UnifiedDigestService::reachMailMarkKey(0), 'value' => now()->subMinutes(10)->toDateTimeString()],
+            ['key'], ['value']
+        );
+        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
+        $member = $this->makeRingMember($group, 'sparse');
+        DB::table('memberships')->where('userid', $member->id)->update(['emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE]);
+
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes(90)]);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msg->id, $member->id), 'the ring post last changed 90 minutes ago');
+
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes(30)]);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msg->id, $member->id), 'the ring post changed 30 minutes ago');
     }
 
     /**

@@ -1232,11 +1232,13 @@ rows, its latest row states its outcome.
     reasons goes to the back of the queue; a routing outage stops the drain and keeps the rows.
     It asks `mailNewlyReachedForPost`
     about each candidate post scoped to that one member. A candidate is a post whose reach last
-    changed within `freegle.ripple.reach_member_window_minutes` (60, `RIPPLE_REACH_MEMBER_WINDOW_MINUTES`),
-    so a member who joins or switches to immediate mail is told about the last hour's posts and
-    not about every open post that covers them. `ripple:reconcile-reach-members` runs
+    changed no earlier than `freegle.ripple.reach_member_window_minutes` (60, `RIPPLE_REACH_MEMBER_WINDOW_MINUTES`)
+    before the member was queued, so a member who joins or switches to immediate mail is told
+    about the last hour's posts and not about every open post that covers them. A drain that
+    runs late covers the same posts. `ripple:reconcile-reach-members` runs
     daily at 04:36 UTC (after the backup drain, so the pass it sets off finishes before the digest) and re-queues anyone whose join or postcode change since yesterday has no ledger row
-    after it, so a missed hook costs a day, not the mail.
+    after it. A re-queued member is measured from the re-queue, so a missed hook costs the posts
+    of that day and they hear about the hour before the re-queue.
   The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
