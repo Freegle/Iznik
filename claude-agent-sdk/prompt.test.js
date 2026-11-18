@@ -111,7 +111,23 @@ test('the review pass cuts a long reply', () => {
   assert.match(reviewPrompt(), /"Best wishes"/)
 })
 
-test('the first pass draft follows the same voice', () => {
+// The first pass writes to a moderator, who needs the cause and whose name it must not assume.
+test('the first pass shares the voice but not the shape of a reply to a member', () => {
   const { systemPrompt: firstPass } = require('./first-pass-prompt')
-  assert.match(firstPass(1, CODEBASE), /30 to 80 words/)
+  const p = firstPass(1, CODEBASE)
+  assert.match(p, /Answer first/)
+  assert.match(p, /End with "Best wishes"/)
+  assert.match(p, /Open it "Hi" with no name/)
+  assert.doesNotMatch(p, /30 to 80 words/)
+  assert.doesNotMatch(p, /Hi Sam/)
+  assert.doesNotMatch(p, /not how Freegle works inside/)
+})
+
+// The helper is read-only: a draft that says a fault was passed on claims something nobody has done.
+test('a draft never says a fault has been passed on, and never greets by time of day', () => {
+  const p = systemPrompt(1, CODEBASE)
+  assert.match(p, /Do not write that it has been passed on/)
+  assert.doesNotMatch(p, /I have passed it/)
+  assert.doesNotMatch(p, /Good morning Sam/)
+  assert.match(require('./prompt').reviewPrompt(), /never cut a step they need/)
 })

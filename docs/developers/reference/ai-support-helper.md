@@ -297,12 +297,17 @@ info@ mailboxes to people outside Freegle in the four months to November 2026:
 | Greeting | "Hi" (half), "Good morning" and the like (a quarter) | "Hi" or "Hello" |
 | Sign-off | "Best wishes" or "With warm wishes", then a first name (six in seven) | "Thanks, and best wishes" |
 
-So the prompt asks for 30 to 80 words, a greeting on its own line, the answer in the first
-sentence, what happened and what to do without how Freegle works inside, directions that name
-what is on the screen, one question when the cause is not known, one short apology only when
-something went wrong, and "Best wishes" as the last line for the volunteer to put their name
-under. It holds three made-up replies as examples of length and shape. The few volunteer replies
-over 170 words in the sample were helper drafts that had been pasted.
+So the prompt asks for the answer first, directions that name what is on the screen, one question
+when the cause is not known, one short apology only when something went wrong, and "Best wishes" as
+the last line. The helper cannot pass a fault on, so a draft never says that it has: the analysis
+tells the volunteer, who adds the line. Those rules (`REPLY_VOICE`) are shared with the first pass.
+
+A reply to a member has more (`MEMBER_REPLY_SHAPE`): 30 to 80 words, "Hi" and a first name on its
+own line (no time of day, as nobody knows when it will be sent), what happened and what to do
+without how Freegle works inside, and three made-up replies as examples of length and shape. The
+first pass writes to a moderator, who needs the cause, so its draft opens "Hi" with no name and
+runs to about 100 words. The few volunteer replies over 170 words in the sample were helper drafts
+that had been pasted.
 
 To measure again, sample `in:sent` in both mailboxes read-only (the reader in `mail-history.js`
 opens with EXAMINE and fetches with BODY.PEEK), cut each mail at the quoted trail and count

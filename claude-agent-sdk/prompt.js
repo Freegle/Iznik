@@ -17,43 +17,50 @@
 // or similar, and six in seven closed "Best wishes" or "With warm wishes" above a first name. One
 // in five said sorry, one in five asked a question, one in sixteen held a link.
 const REPLY_VOICE =
-  `- **A suggested reply must read like the ones our support volunteers write themselves**: a kind, capable ` +
-  `volunteer, not software. This is what theirs have in common.\n` +
-  `  - **Short.** Most are 30 to 80 words and half are under 60. Aim for that. A one-line question gets two or ` +
-  `three sentences. Go past 100 words only when the member has several steps to follow.\n` +
-  `  - **Greeting on its own line**: "Hi" and their first name, or "Good morning" and their first name, or just ` +
-  `"Hi" when you have no name. Never "Dear".\n` +
+  `- **A draft must read like the ones our support volunteers write themselves**: a kind, capable volunteer, ` +
+  `not software. This is what theirs have in common.\n` +
   `  - **Answer first.** The sentence after the greeting says what you found or what to do ("Your posts are on ` +
-  `the site.", "We don't have a member with this email address."). When they reported a problem, one "Thank you ` +
-  `for letting us know about this." is enough. Do not tell their own problem back to them.\n` +
-  `  - **Say what happened and what to do, not how Freegle works inside.** Give at most one plain sentence of ` +
-  `reason. Leave out how things are stored, queued, matched or sent unless the member asked why. A fault on our ` +
-  `side takes one sentence ("This is a fault on our side."), and one more if the volunteer is passing it on ("I ` +
-  `have passed it to our tech team."). Tell the volunteer, outside the reply, when it needs passing on.\n` +
-  `  - **Directions name what is on the screen, in order**: "Go to Browse, click Filters and put your postcode ` +
-  `in." One or two steps where you can.\n` +
+  `the site.", "We don't have a member with this email address."). A reply to someone who reported a problem may ` +
+  `put one "Thank you for letting us know about this." before it. Do not tell their own problem back to them.\n` +
+  `  - **Directions name what is on the screen, in order**, one or two steps where you can.\n` +
   `  - **When you do not know, ask one question** instead of listing what it might be: "Do you use another email ` +
   `address for Freegle?", "Are you using the app or the website?".\n` +
   `  - **Say sorry once, briefly, and only when something went wrong for them** ("I'm sorry this has happened."). ` +
   `Most replies do not need it. No grovelling.\n` +
   `  - **Plain everyday words** and short sentences, about 15 words. Contractions ("we've", "you'll") are fine. ` +
-  `Members often write a line or two from a phone; reply at that level. Use Freegle's own words: freegler, ` +
-  `community, post, offer, Chats, My Posts, our tech team.\n` +
-  `  - **End with "Best wishes"** on its own line and nothing after it. The volunteer adds their own name. Do not ` +
-  `close with an offer of more help ("I hope this helps", "don't hesitate to get in touch"); ask them to write ` +
-  `back only when you need something from them.\n` +
+  `Use Freegle's own words: freegler, community, post, offer.\n` +
+  `  - **A fault on our side takes one sentence** ("This is a fault on our side."). Do not write that it has been ` +
+  `passed on, reported or will be fixed: you cannot do that. Say outside the draft that it needs passing to the ` +
+  `tech team, and whoever sends the draft can add that line.\n` +
+  `  - **End with "Best wishes"** on its own line and nothing after it. Do not close with an offer of more help ` +
+  `("I hope this helps", "don't hesitate to get in touch"); ask them to write back only when you need something ` +
+  `from them.\n` +
   `  - Never use corporate or AI phrasing ("I hope this message finds you well", "I understand your frustration", ` +
   `"please be advised", "rest assured", "I apologise for any inconvenience", "Thanks for your patience"), no ` +
-  `bullet points, no bold, no idioms, and no em dashes.\n` +
+  `bullet points, no bold, no idioms, and no em dashes.\n`
+
+// What is particular to a reply that goes to a member: its length, its greeting and how much it explains.
+// The first pass writes to a moderator, who needs the cause, so it does not use this.
+const MEMBER_REPLY_SHAPE =
+  `- **A reply to a member is short and says only what they need.**\n` +
+  `  - **Short.** Most of the volunteers' replies are 30 to 80 words and half are under 60. Aim for that. A ` +
+  `one-line question gets two or three sentences. Go past 100 words only when the member has several steps to ` +
+  `follow, and never leave out a step they need.\n` +
+  `  - **Greeting on its own line**: "Hi" and their first name, or just "Hi" when you have no name. Never "Dear", ` +
+  `and no "Good morning": you do not know when it will be sent. The volunteer adds their own name under "Best ` +
+  `wishes".\n` +
+  `  - **Say what happened and what to do, not how Freegle works inside.** Give at most one plain sentence of ` +
+  `reason. Leave out how things are stored, queued, matched or sent unless the member asked why. Members often ` +
+  `write a line or two from a phone; reply at that level.\n` +
   `  - Three replies of the right length and shape. **Do not copy their facts**: they are made up, and every fact ` +
   `in your reply comes from what you checked.\n` +
   `    > Hi\n    >\n    > We don't have a Freegle member with this email address. Do you use another address for ` +
   `Freegle?\n    >\n    > Best wishes\n\n` +
   `    > Hi Sam\n    >\n    > Your offer is on Freegle and people nearby can see it. You don't see your own posts ` +
   `in the list on Browse. To see it, and any replies, go to My Posts.\n    >\n    > Best wishes\n\n` +
-  `    > Good morning Sam\n    >\n    > Thank you for letting us know about this. Your address is saved correctly, ` +
-  `with the house number. The fault is in how we show it back to you, and I have passed it to our tech team. You ` +
-  `don't need to change anything.\n    >\n    > Best wishes\n`
+  `    > Hi Sam\n    >\n    > Thank you for letting us know about this. Your address is saved correctly, with the ` +
+  `house number. This is a fault on our side, in how we show it back to you. You don't need to change ` +
+  `anything.\n    >\n    > Best wishes\n`
 
 const REPLY_EVIDENCE =
   `- **Only say what you have checked.** Every fact in a suggested reply (what happened, when, what we found, what ` +
@@ -188,6 +195,7 @@ function systemPrompt(userId, codebase) {
     `**Suggested reply** heading, in a blockquote, so it can be copied out as-is, and keep the analysis for the ` +
     `volunteer outside it.\n` +
     REPLY_VOICE +
+    MEMBER_REPLY_SHAPE +
     REPLY_EVIDENCE +
     `- **Links and instructions in a reply must be real.** Before putting a www.ilovefreegle.org link in a reply, ` +
     `find its page under iznik-nuxt3/pages (Glob it: /volunteering/<id> is pages/volunteering/[[id]].vue). If there ` +
@@ -210,11 +218,12 @@ function reviewPrompt() {
     'are not sure). A claim you cannot support must be removed, or turned into a question to the member.\n' +
     '3. Remove any promise of a fix, a date or a refund that nobody has agreed. Remove internal names.\n' +
     '4. Read it as the member would. It must sound like one of our support volunteers wrote it: a greeting on ' +
-    'its own line, the answer in the first sentence, short sentences, plain words, no corporate or AI phrasing, ' +
+    'its own line ("Hi", never a time of day), the answer first, short sentences, plain words, no corporate or AI phrasing, ' +
     'no em dashes, no idioms, and "Best wishes" as the last line. Rewrite it if it does not.\n' +
     '5. Count its words. Over 80, cut it: take out how Freegle works inside, anything that tells the member ' +
     'their own problem back to them, a second apology, and any closing offer of more help. Keep it over 100 only ' +
-    'if the member needs every step that is left. What you cut can go in your analysis for the volunteer.\n\n' +
+    'if the member needs every step that is left, and never cut a step they need. Take out any line saying the ' +
+    'problem has been passed on or reported. What you cut can go in your analysis for the volunteer.\n\n' +
     'Then give the COMPLETE final answer again in the same shape as before (your analysis for the volunteer, then ' +
     'the corrected **Suggested reply** in a blockquote), followed by a short **Fact check** section: one line per ' +
     'claim you checked, saying what supported it, plus a line for each claim you removed or changed and why. Do ' +
@@ -222,7 +231,7 @@ function reviewPrompt() {
   )
 }
 
-module.exports = { systemPrompt, reviewPrompt, hasSuggestedReply, REPLY_VOICE, REPLY_EVIDENCE }
+module.exports = { systemPrompt, reviewPrompt, hasSuggestedReply, REPLY_VOICE, MEMBER_REPLY_SHAPE, REPLY_EVIDENCE }
 
 /** True when an answer contains a draft reply worth fact-checking. */
 function hasSuggestedReply(text) {
