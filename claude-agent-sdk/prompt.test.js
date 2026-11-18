@@ -61,7 +61,7 @@ test('the agent is told which logs the snapshot leaves out, and where to get the
 test('suggested replies are asked to sound friendly and human, and to claim only what was checked', () => {
   const p = systemPrompt(1, CODEBASE)
   assert.match(p, /kind, capable volunteer/)
-  assert.match(p, /contractions/)
+  assert.match(p, /contractions/i)
   assert.match(p, /rest assured/)
   assert.match(p, /Only say what you have checked/)
   assert.match(p, /second review pass/)
@@ -84,4 +84,34 @@ test('the prompt asks for independent checks in the same turn', () => {
   const p = systemPrompt(1, CODEBASE)
   assert.match(p, /Run independent checks together/)
   assert.match(p, /in the same turn/)
+})
+
+// Measured against several hundred replies the support volunteers sent themselves (November 2026):
+// theirs had a median of about 55 words with the sign-off, the helper's drafts about 110, and nobody
+// on the team signs off "Thanks, and best wishes".
+test('a suggested reply is asked to be as short as the ones volunteers write, and to end the way they do', () => {
+  const p = systemPrompt(1, CODEBASE)
+  assert.match(p, /30 to 80 words/)
+  assert.match(p, /End with "Best wishes"/)
+  assert.doesNotMatch(p, /Thanks, and best wishes/)
+  assert.doesNotMatch(p, /120 words/)
+})
+
+test('a suggested reply answers first, leaves out how Freegle works inside, and asks one question when unsure', () => {
+  const p = systemPrompt(1, CODEBASE)
+  assert.match(p, /Answer first/)
+  assert.match(p, /not how Freegle works inside/)
+  assert.match(p, /ask one question/)
+  assert.match(p, /Do not copy their facts/)
+})
+
+test('the review pass cuts a long reply', () => {
+  const { reviewPrompt } = require('./prompt')
+  assert.match(reviewPrompt(), /Count its words/)
+  assert.match(reviewPrompt(), /"Best wishes"/)
+})
+
+test('the first pass draft follows the same voice', () => {
+  const { systemPrompt: firstPass } = require('./first-pass-prompt')
+  assert.match(firstPass(1, CODEBASE), /30 to 80 words/)
 })
