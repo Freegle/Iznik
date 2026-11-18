@@ -1240,6 +1240,12 @@ rows, its latest row states its outcome.
     after it. A re-queued member is measured from the re-queue, so a missed hook costs the posts
     of that day and they hear about the hour before the re-queue.
   The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
+  Neither feed tells a member about a post that arrived on their community before they became
+  eligible: the drain records the time from the queue row in `rippling_reach_member_since`
+  (the latest wins), and `mailNewlyReachedForPost` leaves out a member whose time there, or whose
+  waiting queue row, is more than the look-back after the copy's `messages_groups.arrival`. A
+  member with no row is not limited. Arrival is per community, so a post that ripples into another
+  of their communities later is new to them.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a

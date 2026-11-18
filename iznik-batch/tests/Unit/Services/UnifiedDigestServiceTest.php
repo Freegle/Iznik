@@ -5041,6 +5041,119 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
+     * A post inside the post-side pass (its reach changed five minutes ago) that arrived on its
+     * community the given number of minutes ago.
+     *
+     * @return array{0: int, 1: \App\Models\Group}
+     */
+    private function seedPostInThePostPassThatArrived(int $minutesAgo): array
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subMinutes($minutesAgo)]);
+
+        return [$msgid, $group];
+    }
+
+    private function immediateMemberInReach(\App\Models\Group $group, ?\Illuminate\Support\Carbon $eligibleSince): User
+    {
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        if ($eligibleSince !== null) {
+            DB::table('rippling_reach_member_since')->insert(['userid' => $member->id, 'since' => $eligibleSince]);
+        }
+
+        return $member;
+    }
+
+    /**
+     * A member who became eligible for reach mail after a post arrived is not told about that
+     * post when its reach next changes. A member who was eligible all along is, and so is a
+     * member nothing has been recorded for.
+     */
+    public function test_reach_pass_does_not_mail_a_post_that_arrived_before_the_member_became_eligible(): void
+    {
+        [$msgid, $group] = $this->seedPostInThePostPassThatArrived(3 * 24 * 60);
+        $newlyEligible = $this->immediateMemberInReach($group, now()->subMinutes(20));
+        $eligibleAllAlong = $this->immediateMemberInReach($group, now()->subDays(5));
+        $neverQueued = $this->immediateMemberInReach($group, null);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $newlyEligible->id), 'the post is three days older than the member being eligible');
+        $this->assertTrue($this->ledgered($msgid, $eligibleAllAlong->id), 'a member eligible before the post arrived is told as its reach grows');
+        $this->assertTrue($this->ledgered($msgid, $neverQueued->id), 'a member with nothing recorded is not limited');
+    }
+
+    /**
+     * The look-back applies here too: a post that arrived within it before the member became
+     * eligible is still theirs to hear about.
+     */
+    public function test_reach_pass_mails_a_post_that_arrived_inside_the_look_back_before_the_member_became_eligible(): void
+    {
+        [$msgid, $group] = $this->seedPostInThePostPassThatArrived(60);
+        $member = $this->immediateMemberInReach($group, now()->subMinutes(20));
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'arrived 40 minutes before the member became eligible');
+    }
+
+    /**
+     * A member still waiting in the queue is limited in the same way, so the post side of a
+     * pass cannot mail them old posts in the minute before the drain records them.
+     */
+    public function test_reach_pass_does_not_mail_an_old_post_to_a_member_still_in_the_queue(): void
+    {
+        [$msgid, $group] = $this->seedPostInThePostPassThatArrived(3 * 24 * 60);
+        $member = $this->immediateMemberInReach($group, null);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id));
+    }
+
+    /**
+     * The drain records when the member became eligible, taken from the queue row, and that
+     * limits the drain itself as well as every later pass.
+     */
+    public function test_drain_records_when_the_member_became_eligible(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(3)]);
+        $member = $this->immediateMemberInReach($group, null);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        $queuedAt = DB::table('rippling_reach_member_pending')->where('userid', $member->id)->value('added');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame($queuedAt, DB::table('rippling_reach_member_since')->where('userid', $member->id)->value('since'));
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'the drain does not mail a post three days older than the change');
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()]);
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'nor does the post side when the reach changes again');
+    }
+
+    /**
+     * A second change moves the recorded time forward, never back.
+     */
+    public function test_drain_keeps_the_latest_time_the_member_became_eligible(): void
+    {
+        [, $group] = $this->seedSettledPostOutsideThePostPass();
+        $later = now()->addHour()->startOfSecond();
+        $member = $this->immediateMemberInReach($group, $later);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_MOVED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame($later->toDateTimeString(), DB::table('rippling_reach_member_since')->where('userid', $member->id)->value('since'));
+    }
+
+    /**
      * A post that reaches the member only through an overflow ring is a candidate under the
      * same look-back as one whose reach covers them.
      */

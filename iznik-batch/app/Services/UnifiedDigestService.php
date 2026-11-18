@@ -831,6 +831,19 @@ class UnifiedDigestService
             }
 
             try {
+                // When the member became eligible, for every later pass: reach mail does not
+                // tell them about a post that arrived before then (mailNewlyReachedForPost).
+                // The latest time wins. A dry run writes nothing; the recipient query reads
+                // the queue row as well, so its preview is limited the same way.
+                // keep-raw: GREATEST over the existing value has no upsert equivalent.
+                if (! $dryRun) {
+                    DB::statement(
+                        'INSERT INTO rippling_reach_member_since (userid, since) VALUES (?, ?)
+                         ON DUPLICATE KEY UPDATE since = GREATEST(since, VALUES(since))',
+                        [$row->userid, $row->added]
+                    );
+                }
+
                 // From the queue row, but never further back than twice the look-back: a row
                 // that waited days would otherwise bring days of posts at once.
                 $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)
@@ -1265,6 +1278,15 @@ class UnifiedDigestService
             $onlySql = $onlyUserid !== null ? ' AND u.id = ?' : '';
             $onlyParams = $onlyUserid !== null ? [$onlyUserid] : [];
 
+            // A member who became eligible after the post arrived on their community is not
+            // told about it: joining, moving, returning or switching to immediate mail is not
+            // a reason to hear about every open post, at once or as each one's reach next
+            // changes. rippling_reach_member_since holds the time once the queue has been
+            // drained, rippling_reach_member_pending until then. A post that arrived inside
+            // the look-back before that time is still theirs, and so is one that arrives on
+            // another of their communities later, since arrival is per community.
+            $eligibleWindow = (int) config('freegle.ripple.reach_member_window_minutes', 60);
+
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
             // would be the one surface still pushing a post that is under review. Nobody is lost by
@@ -1294,6 +1316,14 @@ class UnifiedDigestService
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
+                   AND NOT EXISTS (
+                         SELECT 1 FROM rippling_reach_member_since s
+                         WHERE s.userid = u.id AND s.since > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )
+                   AND NOT EXISTS (
+                         SELECT 1 FROM rippling_reach_member_pending p
+                         WHERE p.userid = u.id AND p.added > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1303,6 +1333,7 @@ class UnifiedDigestService
                     $primaryParams,
                     [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
                     $onlyParams,
+                    [$eligibleWindow, $eligibleWindow],
                     [$srid],
                     $overflowParams,
                     $itemCopies
