@@ -9,7 +9,7 @@
 // rippling_reach_notified ledger dedupes, so queueing someone already mailed is harmless.
 //
 // One row per member: the UNIQUE key on userid collapses a burst of signals before the drain
-// into one row carrying the latest reason. PHP writes the same table through
+// into one row carrying the latest reason, except that a join never replaces another reason. PHP writes the same table through
 // App\Services\Ripple\ReachMemberQueueService.
 package reachqueue
 
@@ -27,8 +27,11 @@ func QueueMember(db *gorm.DB, userid uint64, reason string) {
 	if userid == 0 {
 		return
 	}
+	// A join never replaces another reason: the batch records a move, a return or a switch to
+	// immediate mail against the member, and a join needs nothing recorded.
 	db.Exec("INSERT INTO rippling_reach_member_pending (userid, reason, added) VALUES (?, ?, NOW()) "+
-		"ON DUPLICATE KEY UPDATE reason = VALUES(reason), added = VALUES(added)", userid, reason)
+		"ON DUPLICATE KEY UPDATE reason = IF(VALUES(reason) = 'joined', reason, VALUES(reason)), "+
+		"added = GREATEST(added, VALUES(added))", userid, reason)
 }
 
 // BumpReachForRepost marks a reposted post's reach as changed so the reach pass re-evaluates

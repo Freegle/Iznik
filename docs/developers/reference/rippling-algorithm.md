@@ -1245,7 +1245,8 @@ rows, its latest row states its outcome.
   `mailNewlyReachedForPost`. A join is per community and is read from `memberships.added`. A move,
   a return and a switch to immediate mail are about the member: the drain records the time from
   the queue row in `rippling_reach_member_since` (the latest wins), and a waiting queue row counts
-  the same way until then. A member with no row is not limited. Arrival is per community, so a
+  the same way until then. A queue row keeps a move, a return or a switch when a join follows it,
+  and its time only moves forward. A member with no row is not limited. Arrival is per community, so a
   post that ripples into another of their communities later is new to them. The daily re-queue
   of a missed move carries the time of the move.
 - **Held replies:** a reply from outside the post's current reach is parked in

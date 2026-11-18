@@ -1180,8 +1180,12 @@ class UnifiedDigestService
      */
     private function reachMemberSinceReady(): bool
     {
+        // keep-raw: the check Schema::hasTable makes, answered by the write node. The read
+        // node can be behind a table that was only just created.
         return self::$reachMemberSinceReady
-            || (self::$reachMemberSinceReady = \Illuminate\Support\Facades\Schema::hasTable('rippling_reach_member_since'));
+            || (self::$reachMemberSinceReady = DB::connection()->selectFromWriteConnection(
+                "select 1 from information_schema.tables where table_schema = schema() and table_name = 'rippling_reach_member_since' limit 1"
+            ) !== []);
     }
 
     private static bool $reachMemberSinceReady = false;

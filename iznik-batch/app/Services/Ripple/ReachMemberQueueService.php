@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\DB;
  * changed in the last hour now cover the member and mailing them about each.
  *
  * One row per member: the UNIQUE key on userid means a burst of signals before the
- * drain collapses to one row carrying the latest reason.
+ * drain collapses to one row carrying the latest reason, except that a join never
+ * replaces another reason.
  */
 class ReachMemberQueueService
 {
@@ -30,10 +31,16 @@ class ReachMemberQueueService
      */
     public static function enqueue(int $userid, string $reason, \DateTimeInterface|string|null $at = null): void
     {
-        DB::table('rippling_reach_member_pending')->upsert(
-            ['userid' => $userid, 'reason' => $reason, 'added' => $at ?? now()],
-            ['userid'],
-            ['reason', 'added']
+        // A join never replaces another reason: the drain records a move, a return or a
+        // switch to immediate mail against the member, and a join needs nothing recorded.
+        // The time only moves forward. iznik-server-go's reachqueue writes the same rule.
+        // keep-raw: an upsert cannot make its update depend on the row's present values.
+        DB::statement(
+            "INSERT INTO rippling_reach_member_pending (userid, reason, added) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                 reason = IF(VALUES(reason) = 'joined', reason, VALUES(reason)),
+                 added = GREATEST(added, VALUES(added))",
+            [$userid, $reason, $at ?? now()]
         );
     }
 }
