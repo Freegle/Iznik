@@ -934,6 +934,10 @@ return [
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
         'enabled' => (bool) EnvSetting::env('RIPPLE_ENABLED', true),
+        // How far back reach mail looks for a member who has just become eligible (joined,
+        // moved, returned, or switched to immediate mail): they are told about posts whose
+        // reach changed in this many minutes, not about every open post that covers them.
+        'reach_member_window_minutes' => (int) EnvSetting::env('RIPPLE_REACH_MEMBER_WINDOW_MINUTES', 60),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
