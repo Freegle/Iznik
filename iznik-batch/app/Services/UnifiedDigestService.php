@@ -791,13 +791,19 @@ class UnifiedDigestService
      * Drain the member side of reach mail: members queued in rippling_reach_member_pending
      * because they joined a group, moved, returned after a long absence or switched to
      * immediate mail (see ReachMemberQueueService and iznik-server-go's reachqueue). For
-     * each, find the live posts whose reach might cover them and ask mailNewlyReachedForPost
-     * about that one member - the same containment test and the same ledger the post side
-     * uses, so there is one definition of "in reach" and nobody is mailed twice.
+     * each, find the live posts whose reach changed in the last hour and might cover them, and
+     * ask mailNewlyReachedForPost about that one member - the same containment test and the
+     * same ledger the post side uses, so there is one definition of "in reach" and nobody is
+     * mailed twice.
      *
      * Candidates are posts on a group the member belongs to with immediate mail, whose stored
      * outer bound contains the member's point (the spatial index does that), plus any post
-     * whose overflow ring admits the point per the ring index. mailNewlyReachedForPost then
+     * whose overflow ring admits the point per the ring index. Both are limited to reaches
+     * that changed no earlier than freegle.ripple.reach_member_window_minutes before the
+     * member was queued: every open post that covers a member of a dozen busy communities is
+     * over a thousand posts, and each is its own mail. The look-back is measured from the
+     * queue row, so a drain that runs late covers the same posts, and never reaches further
+     * back than twice the setting. mailNewlyReachedForPost then
      * applies the exact label test, so a candidate the bound admits but the label does not
      * is simply not mailed.
      *
@@ -809,6 +815,7 @@ class UnifiedDigestService
     private function drainMemberQueue(array &$stats, bool $dryRun, int $shard, int $shards, ?callable $shouldStop): void
     {
         $srid = (int) config('freegle.srid', 3857);
+        $windowMinutes = (int) config('freegle.ripple.reach_member_window_minutes', 60);
 
         // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
         // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
@@ -817,13 +824,18 @@ class UnifiedDigestService
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
 
-        foreach ($pending->limit(500)->get(['id', 'userid']) as $row) {
+        foreach ($pending->limit(500)->get(['id', 'userid', 'added']) as $row) {
             if ($shouldStop && $shouldStop()) {
                 $stats['stopped'] = true;
                 break;
             }
 
             try {
+                // From the queue row, but never further back than twice the look-back: a row
+                // that waited days would otherwise bring days of posts at once.
+                $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)
+                    ->max(now()->subMinutes(2 * $windowMinutes))
+                    ->toDateTimeString();
                 $user = User::find($row->userid);
                 $point = $user ? $this->resolveUserLatLng($user) : null;
 
@@ -832,6 +844,7 @@ class UnifiedDigestService
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
+                        ->where('mr.updated_at', '>=', $changedSince)
                         ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
                         ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
                         ->whereExists(function ($q) use ($row) {
@@ -852,6 +865,15 @@ class UnifiedDigestService
                     $settings = is_string($user->settings) ? (json_decode($user->settings, true) ?: []) : (array) $user->settings;
                     $band = $settings['browseDensityBand'] ?? null;
                     $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
+                    if ($ringAdmitted !== []) {
+                        $ringAdmitted = DB::table('rippling_reach')
+                            ->whereIn('msgid', $ringAdmitted)
+                            ->whereIn('status', ['expanding', 'done'])
+                            ->where('updated_at', '>=', $changedSince)
+                            ->pluck('msgid')
+                            ->map(fn ($id) => (int) $id)
+                            ->all();
+                    }
 
                     foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
                         $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid, true);
@@ -874,6 +896,8 @@ class UnifiedDigestService
                 }
 
                 if (! $dryRun) {
+                    // `added` is also what the look-back is measured from, so a row sent to the
+                    // back is measured from now.
                     DB::table('rippling_reach_member_pending')->where('id', $row->id)->update(['added' => now()]);
                 }
             }

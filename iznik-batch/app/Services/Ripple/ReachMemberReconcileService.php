@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
  * codebases. If one is missed, or a new join path appears later without one, the members it
  * would have covered are never picked up and nothing reports it. Once a day this re-queues
  * anyone whose join or postcode change since yesterday has no reach mail ledger row after it.
+ * The drain looks back an hour from the re-queue, so they hear about that hour's posts and
+ * not about the day they missed.
  *
  * It has no containment test of its own on purpose. The drain decides whether any live reach
  * covers the member; a member nobody covers is dequeued without mail. So this pass is two
