@@ -1953,7 +1953,7 @@ func PatchMemberships(c *fiber.Ctx) error {
 	// Update whichever settings were provided.
 	if req.Emailfrequency != nil {
 		var previous int
-		db.Raw("SELECT emailfrequency FROM memberships WHERE userid = ? AND groupid = ?", userid, req.Groupid).Scan(&previous)
+		db.Table("memberships").Select("emailfrequency").Where("userid = ? AND groupid = ?", userid, req.Groupid).Scan(&previous)
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("emailfrequency", int(*req.Emailfrequency))
 		// Reach mail goes to immediate members only, so switching to immediate is the moment
