@@ -791,13 +791,17 @@ class UnifiedDigestService
      * Drain the member side of reach mail: members queued in rippling_reach_member_pending
      * because they joined a group, moved, returned after a long absence or switched to
      * immediate mail (see ReachMemberQueueService and iznik-server-go's reachqueue). For
-     * each, find the live posts whose reach might cover them and ask mailNewlyReachedForPost
-     * about that one member - the same containment test and the same ledger the post side
-     * uses, so there is one definition of "in reach" and nobody is mailed twice.
+     * each, find the live posts whose reach changed in the last hour and might cover them, and
+     * ask mailNewlyReachedForPost about that one member - the same containment test and the
+     * same ledger the post side uses, so there is one definition of "in reach" and nobody is
+     * mailed twice.
      *
      * Candidates are posts on a group the member belongs to with immediate mail, whose stored
      * outer bound contains the member's point (the spatial index does that), plus any post
-     * whose overflow ring admits the point per the ring index. mailNewlyReachedForPost then
+     * whose overflow ring admits the point per the ring index. Both are limited to reaches
+     * that changed within freegle.ripple.reach_member_window_minutes: every open post that
+     * covers a member of a dozen busy communities is over a thousand posts, and each is its
+     * own mail. mailNewlyReachedForPost then
      * applies the exact label test, so a candidate the bound admits but the label does not
      * is simply not mailed.
      *
@@ -809,6 +813,7 @@ class UnifiedDigestService
     private function drainMemberQueue(array &$stats, bool $dryRun, int $shard, int $shards, ?callable $shouldStop): void
     {
         $srid = (int) config('freegle.srid', 3857);
+        $changedSince = now()->subMinutes((int) config('freegle.ripple.reach_member_window_minutes', 60))->toDateTimeString();
 
         // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
         // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
@@ -832,6 +837,7 @@ class UnifiedDigestService
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
+                        ->where('mr.updated_at', '>=', $changedSince)
                         ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
                         ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
                         ->whereExists(function ($q) use ($row) {
@@ -852,6 +858,14 @@ class UnifiedDigestService
                     $settings = is_string($user->settings) ? (json_decode($user->settings, true) ?: []) : (array) $user->settings;
                     $band = $settings['browseDensityBand'] ?? null;
                     $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
+                    if ($ringAdmitted !== []) {
+                        $ringAdmitted = DB::table('rippling_reach')
+                            ->whereIn('msgid', $ringAdmitted)
+                            ->where('updated_at', '>=', $changedSince)
+                            ->pluck('msgid')
+                            ->map(fn ($id) => (int) $id)
+                            ->all();
+                    }
 
                     foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
                         $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid, true);
