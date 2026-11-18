@@ -5007,16 +5007,37 @@ class UnifiedDigestServiceTest extends TestCase
     public function test_queued_member_look_back_is_measured_from_when_they_were_queued(): void
     {
         [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
-        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(150)]);
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(90)]);
         $member = $this->createTestUser();
         $this->createMembership($member, $group);
         $this->setMyLocation($member, 51.5, -0.1);
         ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
-        DB::table('rippling_reach_member_pending')->where('userid', $member->id)->update(['added' => now()->subMinutes(120)]);
+        DB::table('rippling_reach_member_pending')->where('userid', $member->id)->update(['added' => now()->subMinutes(60)]);
 
         $this->service->sendReachDigests(null, false, 0, 1);
 
         $this->assertTrue($this->ledgered($msgid, $member->id), 'the reach changed 30 minutes before the member was queued');
+    }
+
+    /**
+     * A queue row that has waited a long time does not widen the look-back with it: it never
+     * reaches further back than twice the setting, or a row stuck for days would bring days of
+     * posts at once.
+     */
+    public function test_queued_member_look_back_is_capped_for_a_row_that_waited_a_long_time(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(180)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        DB::table('rippling_reach_member_pending')->where('userid', $member->id)->update(['added' => now()->subHours(5)]);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'a reach that changed three hours ago is beyond the two hour cap');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
     }
 
     /**
@@ -5045,7 +5066,13 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertFalse($this->ledgered($msg->id, $member->id), 'the ring post last changed 90 minutes ago');
 
-        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes(30)]);
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes(30), 'status' => 'stopped']);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msg->id, $member->id), 'a stopped reach is not a candidate, as on the reach side');
+
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['updated_at' => now()->subMinutes(30), 'status' => 'done']);
         ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
         $this->service->sendReachDigests(null, false, 0, 1);
 

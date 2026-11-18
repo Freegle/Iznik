@@ -1235,7 +1235,7 @@ rows, its latest row states its outcome.
     changed no earlier than `freegle.ripple.reach_member_window_minutes` (60, `RIPPLE_REACH_MEMBER_WINDOW_MINUTES`)
     before the member was queued, so a member who joins or switches to immediate mail is told
     about the last hour's posts and not about every open post that covers them. A drain that
-    runs late covers the same posts. `ripple:reconcile-reach-members` runs
+    runs late covers the same posts, up to twice the setting back from the drain. `ripple:reconcile-reach-members` runs
     daily at 04:36 UTC (after the backup drain, so the pass it sets off finishes before the digest) and re-queues anyone whose join or postcode change since yesterday has no ledger row
     after it. A re-queued member is measured from the re-queue, so a missed hook costs the posts
     of that day and they hear about the hour before the re-queue.

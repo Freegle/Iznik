@@ -802,7 +802,8 @@ class UnifiedDigestService
      * that changed no earlier than freegle.ripple.reach_member_window_minutes before the
      * member was queued: every open post that covers a member of a dozen busy communities is
      * over a thousand posts, and each is its own mail. The look-back is measured from the
-     * queue row, so a drain that runs late covers the same posts. mailNewlyReachedForPost then
+     * queue row, so a drain that runs late covers the same posts, and never reaches further
+     * back than twice the setting. mailNewlyReachedForPost then
      * applies the exact label test, so a candidate the bound admits but the label does not
      * is simply not mailed.
      *
@@ -830,7 +831,11 @@ class UnifiedDigestService
             }
 
             try {
-                $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)->toDateTimeString();
+                // From the queue row, but never further back than twice the look-back: a row
+                // that waited days would otherwise bring days of posts at once.
+                $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)
+                    ->max(now()->subMinutes(2 * $windowMinutes))
+                    ->toDateTimeString();
                 $user = User::find($row->userid);
                 $point = $user ? $this->resolveUserLatLng($user) : null;
 

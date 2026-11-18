@@ -4,7 +4,7 @@
 // rippling_reach.updated_at) and a member changed. This package carries the second. The
 // codepath that changes a member - a join, a postcode change, a return after a long absence, a
 // switch to immediate mail - queues them here, and iznik-batch's reach pass drains the queue,
-// asking which live posts whose reach changed in the hour before now cover the member and
+// asking which live posts whose reach changed in the hour before that now cover the member and
 // mailing them about each. The
 // rippling_reach_notified ledger dedupes, so queueing someone already mailed is harmless.
 //
