@@ -824,7 +824,7 @@ class UnifiedDigestService
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
 
-        foreach ($pending->limit(500)->get(['id', 'userid', 'added']) as $row) {
+        foreach ($pending->limit(500)->get(['id', 'userid', 'reason', 'added']) as $row) {
             if ($shouldStop && $shouldStop()) {
                 $stats['stopped'] = true;
                 break;
@@ -833,10 +833,12 @@ class UnifiedDigestService
             try {
                 // When the member became eligible, for every later pass: reach mail does not
                 // tell them about a post that arrived before then (mailNewlyReachedForPost).
-                // The latest time wins. A dry run writes nothing; the recipient query reads
-                // the queue row as well, so its preview is limited the same way.
+                // The latest time wins. A join is not recorded here: it is about one
+                // community, and the membership's own `added` already says when. A dry run
+                // writes nothing; the recipient query reads the queue row as well, so its
+                // preview is limited the same way.
                 // keep-raw: GREATEST over the existing value has no upsert equivalent.
-                if (! $dryRun) {
+                if (! $dryRun && $row->reason !== \App\Services\Ripple\ReachMemberQueueService::REASON_JOINED && $this->reachMemberSinceReady()) {
                     DB::statement(
                         'INSERT INTO rippling_reach_member_since (userid, since) VALUES (?, ?)
                          ON DUPLICATE KEY UPDATE since = GREATEST(since, VALUES(since))',
@@ -1169,6 +1171,21 @@ class UnifiedDigestService
         return $lanes;
     }
 
+    /**
+     * Whether rippling_reach_member_since is there to read and write. Production tables are
+     * created by hand before a deploy; without this, a deploy that got ahead of the table
+     * would fail every reach mail query and move the pass's mark past the posts it could not
+     * mail. Only a yes is remembered, so a long-running pass picks the table up without a
+     * restart. Remove this once the table is on production.
+     */
+    private function reachMemberSinceReady(): bool
+    {
+        return self::$reachMemberSinceReady
+            || (self::$reachMemberSinceReady = \Illuminate\Support\Facades\Schema::hasTable('rippling_reach_member_since'));
+    }
+
+    private static bool $reachMemberSinceReady = false;
+
     private function srid(): int
     {
         return (int) config('freegle.srid', 3857);
@@ -1281,11 +1298,23 @@ class UnifiedDigestService
             // A member who became eligible after the post arrived on their community is not
             // told about it: joining, moving, returning or switching to immediate mail is not
             // a reason to hear about every open post, at once or as each one's reach next
-            // changes. rippling_reach_member_since holds the time once the queue has been
-            // drained, rippling_reach_member_pending until then. A post that arrived inside
-            // the look-back before that time is still theirs, and so is one that arrives on
-            // another of their communities later, since arrival is per community.
+            // changes. A join is per community and is read from the membership's own `added`.
+            // The other three are about the member: rippling_reach_member_since holds the
+            // time once the queue has been drained, rippling_reach_member_pending until then.
+            // A post that arrived inside the look-back before that time is still theirs, and
+            // so is one that arrives on another of their communities later, since arrival is
+            // per community.
             $eligibleWindow = (int) config('freegle.ripple.reach_member_window_minutes', 60);
+            $sinceSql = '';
+            $sinceParams = [];
+            if ($this->reachMemberSinceReady()) {
+                $sinceSql = '
+                   AND NOT EXISTS (
+                         SELECT 1 FROM rippling_reach_member_since s
+                         WHERE s.userid = u.id AND s.since > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )';
+                $sinceParams = [$eligibleWindow];
+            }
 
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
@@ -1316,14 +1345,12 @@ class UnifiedDigestService
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
-                   AND NOT EXISTS (
-                         SELECT 1 FROM rippling_reach_member_since s
-                         WHERE s.userid = u.id AND s.since > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
-                       )
+                   AND m.added <= DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_member_pending p
-                         WHERE p.userid = u.id AND p.added > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
-                       )
+                         WHERE p.userid = u.id AND p.reason <> 'joined'
+                           AND p.added > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )$sinceSql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1334,6 +1361,7 @@ class UnifiedDigestService
                     [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
                     $onlyParams,
                     [$eligibleWindow, $eligibleWindow],
+                    $sinceParams,
                     [$srid],
                     $overflowParams,
                     $itemCopies

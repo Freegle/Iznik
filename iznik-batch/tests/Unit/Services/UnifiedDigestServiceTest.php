@@ -5055,10 +5055,10 @@ class UnifiedDigestServiceTest extends TestCase
         return [$msgid, $group];
     }
 
-    private function immediateMemberInReach(\App\Models\Group $group, ?\Illuminate\Support\Carbon $eligibleSince): User
+    private function immediateMemberInReach(\App\Models\Group $group, ?\Illuminate\Support\Carbon $eligibleSince, ?\Illuminate\Support\Carbon $joined = null): User
     {
         $member = $this->createTestUser();
-        $this->createMembership($member, $group);
+        $this->createMembership($member, $group, ['added' => $joined ?? now()->subDays(30)]);
         $this->setMyLocation($member, 51.5, -0.1);
         if ($eligibleSince !== null) {
             DB::table('rippling_reach_member_since')->insert(['userid' => $member->id, 'since' => $eligibleSince]);
@@ -5084,6 +5084,44 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertFalse($this->ledgered($msgid, $newlyEligible->id), 'the post is three days older than the member being eligible');
         $this->assertTrue($this->ledgered($msgid, $eligibleAllAlong->id), 'a member eligible before the post arrived is told as its reach grows');
         $this->assertTrue($this->ledgered($msgid, $neverQueued->id), 'a member with nothing recorded is not limited');
+    }
+
+    /**
+     * Joining is per community: a member is not told about a post that arrived on a community
+     * before they joined it, and nothing is recorded against the member for it.
+     */
+    public function test_reach_pass_does_not_mail_a_post_that_arrived_before_the_member_joined_that_community(): void
+    {
+        [$msgid, $group] = $this->seedPostInThePostPassThatArrived(3 * 24 * 60);
+        $member = $this->immediateMemberInReach($group, null, now()->subMinutes(20));
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertFalse($this->ledgered($msgid, $member->id));
+    }
+
+    /**
+     * Joining one community says nothing about the others. A long-standing member who joins
+     * somewhere else is queued as joined, and is still told about an older post on the
+     * community they were already on when its reach grows over them.
+     */
+    public function test_joining_another_community_does_not_cut_a_member_off_from_the_ones_they_were_on(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subHours(5)]);
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(3)]);
+        $member = $this->immediateMemberInReach($group, null);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame(0, DB::table('rippling_reach_member_since')->where('userid', $member->id)->count(), 'a join records nothing against the member');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the reach last changed five hours ago');
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()]);
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the older post on their own community still reaches them');
     }
 
     /**
@@ -5124,7 +5162,7 @@ class UnifiedDigestServiceTest extends TestCase
         [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
         DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(3)]);
         $member = $this->immediateMemberInReach($group, null);
-        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_FREQUENCY);
         $queuedAt = DB::table('rippling_reach_member_pending')->where('userid', $member->id)->value('added');
 
         $this->service->sendReachDigests(null, false, 0, 1);

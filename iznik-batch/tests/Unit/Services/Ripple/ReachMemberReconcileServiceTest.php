@@ -71,6 +71,33 @@ class ReachMemberReconcileServiceTest extends TestCase
         $this->assertSame('moved', $this->queued($user->id));
     }
 
+    /**
+     * The queue row's time is when the member became eligible, and reach mail leaves out posts
+     * from before it. A move found a day late keeps the time of the move, or the posts that
+     * arrived in between would be left out too.
+     */
+    public function test_a_requeued_move_keeps_the_time_of_the_move(): void
+    {
+        $user = $this->createTestUser();
+        $movedAt = now()->subHours(6)->startOfSecond();
+        DB::table('logs')->insert([
+            'timestamp' => $movedAt->copy()->subHours(2), 'type' => 'User', 'subtype' => 'PostcodeChange',
+            'user' => $user->id, 'byuser' => $user->id,
+        ]);
+        DB::table('logs')->insert([
+            'timestamp' => $movedAt, 'type' => 'User', 'subtype' => 'PostcodeChange',
+            'user' => $user->id, 'byuser' => $user->id,
+        ]);
+
+        (new ReachMemberReconcileService())->reconcile();
+
+        $this->assertSame(
+            $movedAt->toDateTimeString(),
+            DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('added'),
+            'the latest move, not the time of the re-queue'
+        );
+    }
+
     public function test_reconcile_reports_how_many_it_queued(): void
     {
         $user = $this->createTestUser();

@@ -7,10 +7,10 @@ use Illuminate\Support\Facades\Schema;
 /**
  * rippling_reach_member_since - when each member last became eligible for reach mail.
  *
- * A member becomes eligible by joining a community, changing postcode, returning after a long
- * absence or switching to immediate mail. Reach mail does not tell them about a post that
- * arrived on their community more than the look-back before that moment, however often that
- * post's reach changes afterwards. The reach pass writes the row as it drains
+ * A member becomes eligible by changing postcode, returning after a long absence or switching
+ * to immediate mail. (Joining is per community and is read from memberships.added.) Reach mail
+ * does not tell them about a post that arrived on their community more than the look-back
+ * before that moment, however often that post's reach changes afterwards. The reach pass writes the row as it drains
  * rippling_reach_member_pending and reads it in the recipient query.
  *
  * One row per member (UNIQUE userid), holding the latest time. A member never queued has no

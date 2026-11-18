@@ -23,10 +23,15 @@ class ReachMemberQueueService
     public const REASON_RETURNED = 'returned';
     public const REASON_FREQUENCY = 'frequency';
 
-    public static function enqueue(int $userid, string $reason): void
+    /**
+     * @param \DateTimeInterface|string|null $at When the member changed, if that is not now. Reach
+     *     mail leaves out posts from before this time, so a change found late is queued with the
+     *     time it happened.
+     */
+    public static function enqueue(int $userid, string $reason, \DateTimeInterface|string|null $at = null): void
     {
         DB::table('rippling_reach_member_pending')->upsert(
-            ['userid' => $userid, 'reason' => $reason, 'added' => now()],
+            ['userid' => $userid, 'reason' => $reason, 'added' => $at ?? now()],
             ['userid'],
             ['reason', 'added']
         );
