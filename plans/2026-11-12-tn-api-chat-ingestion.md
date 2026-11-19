@@ -27,12 +27,288 @@ picks it up depends only on the address TN sends it to.
 | 3 | Wrote to a Freegle member, not about a post | Same address, no `X-FD-MsgId` | `handleDirectMail` | `findRefMessage` (:3748) tries a fuzzy subject match on the recipient's posts from the last 90 days; failing that, a `Default` message with the subject put in front of the body |
 | 4 | Wrote to a community's volunteers | `{nameshort}-volunteers@groups.ilovefreegle.org` | `handleVolunteersMessage` (:2529), Phase 4 | A message in the member's User2Mod chat with that community |
 | 5 | Reported a member or a post | Same as 4, subject `Reporting member "…"` / `Reporting …` | `handleVolunteersMessage` | As 4, but quoted text is kept because the body carries TN's conversation transcript |
-| 6 | TN sent an automated response on the poster's behalf | Arrives as 1 or 2 | As 1 or 2 | The message is kept; `StripQuotedService` removes TN's `[Note: This is an automated response from trashnothing.com on behalf of the post author]` |
-| 7 | Replied to a digest | `replyto-{msgid}-{uid}@…` | `handleReplyToAddress` (:1624) | Only the digest sets this Reply-To, and digests skip TN members, so expect almost none. Measure before deciding whether the feed needs it |
+| 6 | TN sent an automated response on the poster's behalf | Arrives as 1 or 2 | As 1 or 2 | The message is kept; `StripQuotedService` removes TN's `[Note: This is an automated response from trashnothing.com on behalf of the post author]`. Q2 and Q9 found none in two days |
+| 7 | Replied to a digest | `replyto-{msgid}-{uid}@…` | `handleReplyToAddress` (:1624) | Only the digest sets this Reply-To, and digests skip TN members. Q1 found none, so the feed does not need it |
 | 8 | Replied to our notification's From instead of its Reply-To | `noreply@ilovefreegle.org` | `handleDigestReply` | Nothing: the member gets the "we can't tell which post" auto-reply and the message is lost. #790 tried to recover these and was closed. The API fixes this by construction, because TN will name the chat |
+| 9 | Nobody: TN itself sent a notice to a community's volunteers | `{nameshort}-volunteers@groups.ilovefreegle.org`, From `noreply@trashnothing.com`, signed with TN's secret | `handleVolunteersMessage` | A message in a User2Mod chat from TN's own account on Freegle: the account holding `noreply@trashnothing.com`, named for Trash Nothing, made from that address in December 2020 and holding a TN user id. It has 34 User2Mod chats and has sent 23,818 messages since June 2021 (Q12, Q12b) |
 
-Scale: [trashnothing.md](../docs/developers/reference/trashnothing.md) records 28,051 TN replies
-to Freegle posts in the 30 days to 2026-11-03, about 900 a day for row 2 alone.
+### Results so far
+
+Q1 and Q7, run on yesterday's snapshot of 18 November 2026. The snapshot's chat mail runs from
+about 02:30 on 16 November, where the purge cut it off (below), to about 04:00 on 18 November, when
+the backup was taken: about 49 hours. Q1's rows add up to 5,468, the same as Q7's days, so every TN
+chat mail falls into one of the rows.
+
+| Row | Messages | Senders | Chats |
+|---|---|---|---|
+| 1, reply in a User2User chat | 3,643 | 1,434 | 1,654 |
+| 1, reply in a User2Mod chat | 9 | 4 | 4 |
+| 2, first reply to a post | 1,788 | 1,354 | 1,611 |
+| 3, message not about a post | 1 | 1 | 1 |
+| 4, to the volunteers | 17 | 7 | 14 |
+| 5, report | 10 | 10 | 10 |
+| 7, digest reply-to | 0 | | |
+
+| Day (Q7) | TN chat mails | Busiest hour | Hours with mail |
+|---|---|---|---|
+| Mon 16 Nov (from about 02:30) | 2,800 | 218 | 22 |
+| Tue 17 Nov | 2,629 | 209 | 24 |
+| Wed 18 Nov (to about 04:00) | 39 | 21 | 4 |
+
+What this settles:
+
+- **Volume.** About 2,650 messages a day: 2,629 on Tuesday 17 November, the one whole day in the
+  snapshot. Two thirds are replies in existing chats and one third first replies to posts. Mail to
+  the volunteers and reports together are about half a per cent.
+- **Load on the sync is small.** The busiest hour had 218 messages, about one every 16 seconds. A
+  `tn:sync` run every ten seconds will usually see none, one or two, and one page of 100 covers
+  about half an hour even at the peak. A feed held for its full hour (`FEED_HOLD_MAX_MINUTES`)
+  re-reads at most about three pages a run. The cost is the fourth request a run, not the volume.
+- **It agrees with the earlier count.** [trashnothing.md](../docs/developers/reference/trashnothing.md)
+  records 28,051 TN replies to Freegle posts in the 30 days to 3 November. 1,788 in 49 hours is
+  about 26,000 in 30 days.
+- **Row 3 is almost nothing.** TN names the post on nearly every first reply. That supports dropping
+  the fuzzy subject match (3.2). Q2's `has_fd_msgid` shows whether `X-FD-MsgId` is on every row 2
+  mail.
+- **Row 7 is not a TN route.** The feed needs no kind for it, and the gate need not cover
+  `replyto-` addresses.
+- **Row 4 is mostly TN itself.** 17 messages from 7 senders landed in 14 chats. 11 of them were
+  TN's own notices to volunteers, from `noreply@trashnothing.com` (Q4, Q11), which section 1 now
+  lists as row 9. That leaves about 6 messages from members to the volunteers in two days. On the
+  second snapshot it was 3, beside 10 of TN's notices (Q8, Q11).
+- **No member's message to the volunteers goes to several communities.** Q8, on the second
+  snapshot, found 13 mails to the volunteers with 13 different texts, and 8 reports with 8. Each
+  member message reaches one community's volunteers.
+- **Rows 4-5 are rare but handled differently**: different spam checks, and the transcript is kept.
+  From members they are about 7 a day: 16 on the first snapshot, 11 on the second, 27 in about 97
+  hours. So the parity gate (5.3) must run long enough to see enough of them; fourteen days gives
+  about 90.
+
+Q2, on the same snapshot: the headers on TN chat mail.
+
+| Route | Mails | Secret | TN user id | `X-FD-MsgId` | TN message id header | Image part | HTML part |
+|---|---|---|---|---|---|---|---|
+| 1 notify | 3,652 | 0 | 3,650 | 2,841 | 0 | 0 | 3,650 |
+| 2-3 direct | 1,789 | 0 | 1,789 | 1,788 | 0 | 0 | 1,789 |
+| 4-5 volunteers | 27 | 11 | 16 | 1 | 0 | 0 | 8 |
+
+What this settles:
+
+- **TN does not put its secret on reply mail.** None of the 5,441 replies carries
+  `X-Trash-Nothing-Secret`, while 11 of the 27 mails to the volunteers do. Nothing on our side
+  strips it: nothing in the app touches the header, and the only `header_checks` is on the outbound
+  relay. So the gate cannot rely on the secret (4.3).
+- **The TN user id is on almost every reply.** All but 2 of the 5,441 replies carry it, but only 16
+  of the 27 mails to the volunteers. Without the secret anyone could write it, so it is fit for
+  measuring (Q4) and for nothing that decides who someone is (conventions).
+- **TN names the post on most chat replies too.** `X-FD-MsgId` is on 2,841 of the 3,652 replies in a
+  chat. The email path ignores it there and writes no `refmsgid` on a chat reply. The API path does
+  the same, for parity (7.1). Using it could be an improvement later, made on both paths.
+- **Every first reply but one names the post.** 1,788 of 1,789 do. The one without is Q1's single
+  row 3 message, so the fuzzy subject match decided nothing in the window.
+- **TN attaches no images to chat mail.** None of the 5,468 has an image part, so `addPhotosToChat`
+  never runs for TN mail and the API path need not mirror it for parity. Photos arrive as links in
+  the text instead (Q9, below).
+- **Q2 missed TN's per-mail id.** It tested only for header names with "message", "chat" or "reply"
+  in them. The header scan (below) found `X-Trash-Nothing-Log-Id` on every mail.
+- **Nearly every reply is multipart with an HTML part.** The email path uses the text part. Q2's
+  `automated` count was 0, but it searched the encoded raw mail, which can hide a phrase. Q9 reads
+  the decoded text instead.
+
+Q9, on the second snapshot: what is in the decoded text part the email path stores.
+
+| Route | Mails | No text part | Automated note | Photo links | Any TN link | TN signature | "Collection times" | Quoted lines | Stripped over 20% | Avg kept / text chars |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 notify | 3,577 | 0 | 0 | 35 | 35 | 0 | 5 | 0 | 0 | 80 / 80 |
+| 2-3 direct | 1,691 | 0 | 0 | 14 | 15 | 0 | 1,528 | 0 | 4 | 137 / 135 |
+| 4-5 volunteers | 21 | 0 | 0 | 7 | 17 | 0 | 3 | 10 | 3 | 739 / 805 |
+
+What this settles:
+
+- **TN's text is already clean.** Every mail has a text part. Replies carry no quoted history and
+  no TN signature, and the email path keeps nearly all of it: 80 of 80 characters on average for a
+  chat reply, 137 for 135 on a first reply. Only mail to the volunteers loses much, because reports
+  carry transcripts. So the feed's `text` should be the text part TN sends today, and the parity
+  job's text comparison has little to normalise (5.3).
+- **First replies carry TN's "Possible collection times:".** 1,528 of 1,691 do, about 90%. It is
+  part of the text the email path stores, so the feed's `text` must include it the same way (7.1).
+- **Photos arrive as links in the text.** 56 of the 5,289 mails carry a `trashnothing.com/pics/`
+  link, about 1%. The email path stores them as text, so for parity the API path does the same.
+  Fetching them as attachments would be a later improvement, made on both paths (7.1, `images`).
+- **No automated responses in two days.** Q9 found none in the decoded text, as Q2 found none in
+  the raw mail. Row 6 may no longer be in use. The feed keeps the `automated` flag anyway, since it
+  costs nothing and the email path still handles the note.
+
+Q3: the Message-IDs on TN chat mail, over the two-day window.
+
+| Message-ID domain | Mails |
+|---|---|
+| `m2.trashnothing.com` | 2,082 |
+| `s2.trashnothing.com` | 1,966 |
+| `w5.trashnothing.com` | 1,410 |
+
+All three have the shape `{yymmddhhmm}.{32 hex}@{host}.trashnothing.com`.
+
+What this settles:
+
+- **Every TN chat mail carries a Message-ID TN made.** There is no row with no Message-ID, or with
+  the one the email path makes up when a mail has none. Each is the send time (`yymmddhhmm`), a
+  32-character hex string, and one of three TN hosts.
+- **The Message-ID is the fallback key.** If the feed cannot use TN's log id (below), each record
+  could carry this Message-ID instead, which the email path already stores in
+  `messages.messageid` (5.2).
+
+The header scan, on the same two days: every `X-` header on TN chat mail. It shows the shape of
+TN's values, never the values.
+
+| Header | Mails | Value shape |
+|---|---|---|
+| `X-Trash-Nothing-Log-Id` | 5,468 | UUID |
+| `X-Trash-Nothing-User-Id` | 5,455 | 5 to 8 digits |
+| `X-Trash-Nothing-Ip-Hash` | 5,447 | 40 hex characters (a SHA-1) |
+| `X-FD-MsgId` | 4,630 | 9 digits |
+| `X-Trash-Nothing-Meta` | 21 | 11 or 18 characters |
+| `X-Trash-Nothing-Secret` | 11 | not shown |
+| `X-Spam` | 1 | not TN's |
+
+What this settles:
+
+- **TN has its own id for every mail: `X-Trash-Nothing-Log-Id`.** It is on all 5,468, and is a
+  UUID. It looks like the key of a log TN keeps of what it sends to Freegle. Q10 confirms it is
+  unique, on two snapshots: 5,458 mails carried 5,458 distinct log ids, then 5,289 carried 5,289,
+  and none lacked one.
+- **That makes the correlation key free.** If the feed's `id` is the same log id, a record and its
+  email carry the same value, and TN adds nothing to its mail (5.2).
+- **TN may have a chat log to compare against.** The posts parity check reads `fd-post-log.csv`,
+  TN's log of the post mail it sent, which has the same `X-Trash-Nothing-Ip-Hash` column. A chat
+  counterpart keyed by this log id would list every chat mail TN sent, including any we dropped or
+  never received (7.2).
+- **The counts agree with Q2.** `X-FD-MsgId` on 4,630 is 2,841 + 1,788 + 1. The TN user id on
+  5,455 is 3,650 + 1,789 + 16.
+- **`X-Trash-Nothing-Meta` is a list of TN's servers, and the feed does not need it.** Q10 on the
+  second snapshot found 18 mails with it, with values like `w1|w4|w5|w2` and `localhost|w1|w2|w4`:
+  TN host names in varying order, most likely the hosts that handled the mail. 17 of the 18 were
+  to the volunteers (10) or reports (7). So it marks TN's path for that mail, not anything about
+  the message.
+- **`X-Trash-Nothing-Ip-Hash` is not needed.** The spam check skips IP checks for TN mail
+  (section 2).
+
+Q4: would the API path's rule, the account holding the TN user id (3.1), pick the account the email
+path used? Read off the `X-Trash-Nothing-User-Id` header, over the two days.
+
+| Case | Route | Messages | Senders |
+|---|---|---|---|
+| a. no TN user id header | 1 notify | 2 | 2 |
+| a. no TN user id header | 4-5 volunteers | 11 | 1 |
+| b. same account: it holds the TN id | 1 notify | 3,639 | 1,429 |
+| b. same account: it holds the TN id | 2-3 direct | 1,781 | 1,351 |
+| b. same account: it holds the TN id | 4-5 volunteers | 16 | 16 |
+| c. no account holds the TN id, sender has none | any | 0 | |
+| d. another account holds the TN id, sender has none | any | 0 | |
+| e. sender holds a different TN id | 1 notify | 5 | 3 |
+| e. sender holds a different TN id | 2-3 direct | 4 | 3 |
+
+What this settles:
+
+- **99.6% need no decision.** 5,436 of 5,458 messages went to the account that holds the sender's
+  TN id, so the two paths agree on the sender.
+- **Every account the email path used holds a TN id.** Cases c and d are empty: no message came
+  from an account with no TN id at all.
+- **9 messages, about 4 a day, went to an account holding a different TN id.** These look like
+  accounts two TN members share, the case `tn:split-shared-account` exists for. They are the only
+  messages the API path would handle differently from the email path.
+
+Q4b: what the API path would do with those 9.
+
+| Route | Account holding the header's TN id | Messages | Accounts used | Chats |
+|---|---|---|---|---|
+| 1 notify | none | 5 | 3 | 3 |
+| 2-3 direct | none | 3 | 2 | 2 |
+| 2-3 direct | exists, not in the chat | 1 | 1 | 1 |
+
+What this settles:
+
+- **8 would be skipped.** For each, no account holds the TN id in the header, and the account the
+  email path used holds another, so `TnMemberMatch` finds no account and 3.1 skips the message
+  (`tn-sender-unknown`). This is the "no account at all" case, and it does occur: about 4 a day.
+- **1 would go to the right account.** A first reply whose TN id is held by another account would
+  be filed on that account, in a new chat with the poster, instead of on the shared one.
+- **The skips come from at most 5 accounts.** Each is an account a second TN member uses but was
+  never split out of, so their messages land on the first member's account. Splitting those
+  accounts before cutover (`tn:split-shared-account`) gives the second member their own account,
+  with their TN id, and their messages then go through. Q4c lists the accounts, from the TN ids
+  alone. Run it on several snapshots, since each holds about two days.
+
+Q4c, on the next snapshot (its rows run to the evening of 18 November), found 7 mismatched
+messages on 6 accounts. The account ids are kept out of this plan, because it is committed and they
+name members. By kind:
+
+| Kind | Accounts | Messages | API path | What fixes it |
+|---|---|---|---|---|
+| No account holds the header's TN id | 3 | 4 | skips | Split each account: the second member gets an account of their own with their TN id |
+| The member has an account, but replied in a chat on the shared one | 1 | 1 | skips (`tn-sender-not-in-chat`) | Split it: when the member already has an account, `tn:split-shared-account` moves their chats and the rest onto it |
+| A first reply filed on the wrong account, the right one existing | 2 | 2 | files it on the right account | Nothing for the API path. The email path's address lookup chose the wrong account. Splitting only tidies the history |
+
+What this adds:
+
+- **The skips run at about 2 to 4 a day** across the two snapshots: 8 in Q4b's 49 hours, 5 in
+  Q4c's two days.
+- **Two kinds of mismatch need different handling.** A shared account that was never split makes
+  the API path skip, and is fixed by splitting. An address sitting on the wrong account makes the
+  email path misfile, and the API path files those correctly by itself.
+- **The pre-cutover split list is short**: 4 accounts on this snapshot. Repeat Q4c on a few more
+  snapshots and split what they list, on production.
+- **11 mails to the volunteers came from one account with no TN user id.** Q11 shows who.
+
+Q11, on the second snapshot: the TN mail with no TN user id header.
+
+| Route | From | Account holds a TN id | TN's secret | Mails | Communities |
+|---|---|---|---|---|---|
+| 4-5 volunteers | `noreply@trashnothing.com` | yes | yes | 10 | 10 |
+| 1 notify | a member address | yes | no | 1 | |
+
+What this settles:
+
+- **These are TN's own notices, not members' messages.** All 10 come from
+  `noreply@trashnothing.com`, carry TN's secret and its server-list header, and went to 10
+  communities' volunteers, one mail each. This is row 9 of section 1, about 5 a day.
+- **The email path files them under an account with a TN user id.** `handleVolunteersMessage`
+  looks the sender up by address, and the account holding `noreply@trashnothing.com` also holds a
+  TN user id. So moderators see TN's notices as messages from that account.
+
+Q12: the accounts holding a TN address that is not a member's.
+
+- **One account holds `noreply@trashnothing.com`,** as its preferred address, added on 28 December
+  2020. It holds a TN user id, has no member TN address (`@user.trashnothing.com`), and is not
+  deleted.
+- **It is TN's own account on Freegle (Q12b).** It was made in the same second its address was
+  added, which is its only address. Its name says Trash Nothing, and its role is an ordinary `User`.
+  It has 9 memberships, 34 User2Mod chats and no User2User chats, and has sent 23,818 chat messages
+  since June 2021, about 12 a day on average. Its `messages` rows are only the 10 notices in Q11's
+  window, so it has no posts. `addEmailToUser` did not put the address there, so Q13 is not needed.
+- **So moderators see TN's notices as coming from Trash Nothing,** which is right, and there is
+  nothing to fix. The one open question is whose TN user id it holds. No member's mail in Q4c named
+  it as the holder of their id. If it is TN's own system id, notices in the feed would carry that id
+  and file on this account under the ordinary rule (3.1).
+- **The other six rows are members' own addresses mistyped with a TN domain,** such as a personal
+  address with `user.trashnothing.com` run onto the end. They are not TN's. The first version of
+  Q12 printed them; it now prints only known system names. They are left out of this plan.
+- **They stay on email for now.** The gate matches only mail From `user.trashnothing.com` (4.3), so
+  these keep routing as today. Whether the feed carries them, and as which sender, is a question
+  for Andrew (7.1) and a decision (section 8).
+
+**A snapshot keeps about two days of chat mail.** `purge:messages` (daily at 02:30) runs
+`PurgeService::purgeStrandedMessages`. That deletes a `messages` row more than two days old that
+has no `messages_groups` row, is not a `refmsgid` and is not a draft. It does not count
+`chat_messages_byemail` as a reference, so it takes every chat email's raw row, and the link row
+goes with it (cascade). Q7 shows the cut: the first day in the snapshot starts at about 02:30, two
+days before the purge that ran shortly before the backup. Two consequences:
+
+- For this plan, the database only answers for about the last two days of each snapshot. For a
+  longer sample, run the queries on several of the seven LVM snapshots. For 30-day volumes, use
+  Loki.
+- Separately, moderators lose "View original email" in chat review after two days, for all email
+  chat, not only TN. That may not be intended; raise it on its own.
 
 ### Measure before building, on yesterday
 
@@ -40,9 +316,9 @@ The yesterday server restores production's database and its Loki every night, so
 this plan needs to know can be answered before TN builds anything. It has two sources, and they
 see different mail.
 
-**The database** has every TN chat mail that became a chat message. The raw mail is kept in
-`messages` and linked through `chat_messages_byemail`, with the address it was sent to, its From
-and, for 30 days, its headers. The queries are in
+**The database** has, for about two days, every TN chat mail that became a chat message. The raw
+mail is kept in `messages` and linked through `chat_messages_byemail`, with the address it was
+sent to, its From and its headers. The queries are in
 [2026-11-12-tn-api-chat-ingestion-queries.sql](2026-11-12-tn-api-chat-ingestion-queries.sql):
 
 | Query | Answers |
@@ -51,9 +327,18 @@ and, for 30 days, its headers. The queries are in
 | Q2 | Which headers TN chat mail carries: the secret, the TN user id, `X-FD-MsgId`, any per-message TN id. Also how many are automated, carry images, or carry HTML |
 | Q3 | The shape of TN's Message-IDs, which is the parity join key (5.2) |
 | Q4 | How often the API path's identity rule (3.1) would pick a different account from the email path's, or none |
-| Q5 | How many TN chat messages carry images |
-| Q6 | Whether `chats:process-incoming` overwrites the review flags set on arrival (end of section 2) |
-| Q7 | Messages a day |
+| Q4b | For Q4's mismatches: whether the API path would file each on the account holding the TN id, or skip it |
+| Q4c | The accounts behind those mismatches, by id, for a person to split before cutover |
+| Q5 | How many TN chat messages carry images. Not needed: Q2 found no image parts |
+| Q6 | Whether `chats:process-incoming` overwrites the review flags set on arrival (it no longer does; end of section 2) |
+| Q7 | Messages a day and in the busiest hour, and how far back the snapshot's chat mail really goes |
+| Q8 | Whether one message to the volunteers goes to several communities (none does) |
+| Q9 | What TN puts in the decoded text: the automated note, photo links, TN links and signatures, quoted history, and how much the email path strips (clean text; photos as links) |
+| Q10 | Whether `X-Trash-Nothing-Log-Id` is unique to one mail (it is), and what `X-Trash-Nothing-Meta` holds, by route (TN host names) |
+| Q11 | Who sends the TN mail that has no TN user id header: the From domain, and TN's secret and meta headers |
+| Q12 | Which accounts hold a TN address that is not a member's, such as `noreply@trashnothing.com`, and since when |
+| Q12b | What the account holding `noreply@trashnothing.com` looks like: when it was made, its memberships, posts and chats (TN's own account) |
+| Q13 | The envelope-from on TN chat mail, which `addEmailToUser` attaches to an account. Not needed after Q12b |
 
 **Loki** has the mail the email path dropped, which left no rows. Each inbound email has one routed
 entry (`source="incoming_mail"`, `type="routed"`, written by `IncomingMailController` after
@@ -81,32 +366,49 @@ was not available to test them on, so check a few raw lines on yesterday first. 
 time, at the snapshot's time rather than now. A day's `ToUser` plus `ToVolunteers` count should
 match Q7 for the same day.
 
-Q2 can only test for header names we already know. To list every `X-` header name on TN chat mail,
-run a few lines of tinker using the parser the email path uses. It prints counts only:
+Q2 can only test for header names we already know. The header scan lists every `X-` header name on
+TN chat mail, using the parser the email path uses. For TN's own headers it also prints the shape
+of each value, such as `digits(8)` or `hex(32)`, to show which could be an id. It never prints a
+value, and it skips the secret. Run it from `/var/www/FreegleDocker` on yesterday; the one-off
+container skips the batch entrypoint (5.7):
 
-```php
-$until = DB::table('messages')->max('arrival');
+```bash
+cd /var/www/FreegleDocker && docker compose run --rm --no-deps -T --entrypoint php batch artisan tinker --execute='
+$until = DB::table("messages")->max("arrival");
 $parser = app(\App\Services\Mail\Incoming\MailParserService::class);
-$tally = [];
-DB::table('messages as m')->join('chat_messages_byemail as cme', 'cme.msgid', '=', 'm.id')
-    ->where('m.arrival', '>=', \Carbon\Carbon::parse($until)->subDays(30))
-    ->where('m.fromaddr', 'like', '%trashnothing.com')
-    ->whereRaw('LENGTH(m.message) > 0')
-    ->select('m.id', 'm.message', 'm.envelopefrom', 'm.envelopeto')
-    ->orderBy('m.id')
-    ->chunk(500, function ($rows) use ($parser, &$tally) {
+$names = []; $shapes = []; $mails = 0;
+DB::table("messages as m")->join("chat_messages_byemail as cme", "cme.msgid", "=", "m.id")
+    ->where("m.arrival", ">=", \Carbon\Carbon::parse($until)->subDays(3))
+    ->where("m.fromaddr", "like", "%trashnothing.com")
+    ->whereRaw("LENGTH(m.message) > 0")
+    ->select("m.id", "m.message", "m.envelopefrom", "m.envelopeto")
+    ->orderBy("m.id")
+    ->chunk(500, function ($rows) use ($parser, &$names, &$shapes, &$mails) {
         foreach ($rows as $r) {
-            $parsed = $parser->parse($r->message, (string) $r->envelopefrom, (string) $r->envelopeto);
-            foreach (array_keys($parsed->getHeaders()) as $name) {
-                if (str_starts_with($name, 'x-')) {
-                    $tally[$name] = ($tally[$name] ?? 0) + 1;
+            $mails++;
+            $p = $parser->parse($r->message, (string) $r->envelopefrom, (string) $r->envelopeto);
+            foreach ($p->getHeaders() as $name => $value) {
+                if (!str_starts_with($name, "x-")) continue;
+                $names[$name] = ($names[$name] ?? 0) + 1;
+                if ($name === "x-trash-nothing-secret") continue;
+                if (str_starts_with($name, "x-trash-nothing-") || str_starts_with($name, "x-fd-")) {
+                    $v = trim((string) $value);
+                    $shape = ctype_digit($v) ? "digits(" . strlen($v) . ")" : (preg_match("/^[0-9a-f]+$/i", $v) ? "hex(" . strlen($v) . ")" : (preg_match("/^[0-9a-f-]{36}$/i", $v) ? "uuid" : "other(" . strlen($v) . ")"));
+                    $shapes["$name $shape"] = ($shapes["$name $shape"] ?? 0) + 1;
                 }
             }
         }
     });
-arsort($tally);
-$tally;
+arsort($names); ksort($shapes);
+echo "TN chat mails scanned: $mails\n\nX- headers (mails carrying each):\n";
+foreach ($names as $n => $c) echo str_pad($c, 7, " ", STR_PAD_LEFT), "  $n\n";
+echo "\nTN header value shapes (no values shown):\n";
+foreach ($shapes as $s => $c) echo str_pad($c, 7, " ", STR_PAD_LEFT), "  $s\n";
+'
 ```
+
+The parsing and value shapes were tested locally on the TN fixture email in a one-off container of
+the same form. That doesn't show whether yesterday's `replicas: 0` stops `docker compose run`.
 
 The answers decide:
 
@@ -130,13 +432,13 @@ does it by a different rule, deliberately), or **not applicable** (no email, so 
 |---|---|
 | Body is the text part, or the HTML part converted to text | Not applicable: TN sends text |
 | Subject put in front of the body when a direct message is not tied to a post (row 3) | Mirrored, from a `subject` field |
-| `StripQuotedService` strips quoted history and signatures, including TN's own ("Sent from the trash nothing! Mobile App", "Sent from my account on trashnothing.com", the automated-response note). Skipped for TN reports | Ask TN for the text as the member wrote it, without history or footer. Keep stripping TN's automated-response note, so row 6 reads the same |
+| `StripQuotedService` strips quoted history and signatures, including TN's own ("Sent from the trash nothing! Mobile App", "Sent from my account on trashnothing.com", the automated-response note). Skipped for TN reports | Ask TN for the text part it sends today. Q9 found it carries no quoted history or TN signature, and the email path keeps nearly all of it. Run the same stripping anyway, so anything TN adds is treated alike, and row 6 reads the same |
 | Spam check at ingestion: `SpamCheckService::checkMessage(forChatReply: true)`. For TN mail the IP and country checks are already skipped (`isFromTrashNothing()`), so what runs is content only: our domain in the From name, mention of a known spammer, spam and review keywords on the body | Mirrored on the display name and text |
 | `checkReview($body)`, then the "last message in this chat is held, so hold this one" rule, then `mapReportReason` | Mirrored |
 | `ChatMessage::create` with `platform = 0`, `processingrequired = 1`, `date = now()` | Mirrored. `platform = 0` matters: `ChatProcessService::updateSenderRoster` treats it as "came by email" and marks the message seen and mailed for its sender. `date` must be the time of ingestion, not TN's date (see 3.5) |
 | `spamscore` from SpamAssassin over the raw mail (row 2-3 only) | Not applicable, left null. It is stored, not acted on |
-| `storeChatEmailMessage` (:2277) keeps the raw mail in `messages` and links it in `chat_messages_byemail`, which is what ModTools chat review shows as the original email (`cme.msgid` in `chat/chatmessage.go`) | Not applicable. The message has no original email, like a message written in the app |
-| Each image attachment becomes its own `Image` message: uploaded to tusd, a `chat_images` row, the Freegle logo hashes suppressed, held for review as `SameImage` when the hash was used more than 20 times in 24 hours | Mirrored from image URLs in the feed, taking the largest size as `GroupPostIngestionService::bestPhotoUrl()` does |
+| `storeChatEmailMessage` (:2277) keeps the raw mail in `messages` and links it in `chat_messages_byemail`, which is what ModTools chat review shows as the original email (`cme.msgid` in `chat/chatmessage.go`). Only for two days: `purge:messages` then deletes both (section 1, Results so far) | Not applicable. The message has no original email, like a message written in the app |
+| Each image attachment becomes its own `Image` message: uploaded to tusd, a `chat_images` row, the Freegle logo hashes suppressed, held for review as `SameImage` when the hash was used more than 20 times in 24 hours | Not needed for parity: TN chat mail carries no image attachments (Q2). Built only if the feed carries photos (7.1), then from their URLs, taking the largest size as `GroupPostIngestionService::bestPhotoUrl()` does |
 | `users.lastaccess` set to now | Mirrored. `UserManagementService::forgetInactiveUsers` reads it (for accounts with no memberships and no recent logs), so leaving it stale would change who that sweep takes |
 | `trackEmailReply` marks our last chat notification to this member as replied, `replied_via = 'email'` | Mirrored with `replied_via = 'tn_api'` (a `varchar(50)`) |
 | `addEmailToUser($email->envelopeFrom)` attaches the sending address to the account | **Replaced: not done.** On row 1 the account comes from the notify address and is never looked up, so this attaches whatever address sent the mail to whichever account the address names. That is the address-decides-identity behaviour `.claude/rules/conventions.md` says the replacement must not repeat |
@@ -150,6 +452,8 @@ does it by a different rule, deliberately), or **not applicable** (no email, so 
   should flag anything automated (row 6).
 - The chat is found by id, following `chat_room_redirects` for merged rooms. **Mirrored**, from
   `fd_chat_id`.
+- The message gets no `refmsgid`, although TN names the post in `X-FD-MsgId` on 78% of these
+  replies (Q2). **Mirrored.**
 - A chat whose last message is more than 84 days old (`STALE_CHAT_DAYS`) drops a reply from an
   address not belonging to a chat member. **Replaced**: the sender is decided by TN user id, and
   must be a member of the chat.
@@ -199,16 +503,16 @@ the spammer check, banned-in-common, `chatmodstatus`, block keywords, the review
 roster, the push task and `latestmessage`. Then `ChatNotificationService` mails the other side. The
 API path writes rows of the same shape and leaves the rest to these.
 
-**Something to check, found while reading:** `ChatProcessService::processMessage` writes
-`reviewrequired` and `reportreason` from its own decision (`ChatProcessService.php:446`), starting
-from 0, without reading the values the row arrived with. If that is right, the review flags the
-email path sets at ingestion (spam check, `checkReview`, the "last held" rule) are overwritten a
-minute later, and for a User2Mod chat always cleared. Q6 in the yesterday queries checks this
-against production data, and a unit test should pin whichever answer it gives. It
-does not change what the API path should do (mirror the ingestion flags, so a fix covers both), but
-it means the parity job cannot compare those flags from the stored column; it has to compare the
-decision each path made at ingestion, from trace lines (5.3). Raise it separately; it is not part of
-this work.
+**Review flags set on arrival survive processing.** Until 12 November,
+`ChatProcessService::processMessage` wrote `reviewrequired` and `reportreason` from its own
+decision, starting from 0. So a hold the email path set on arrival (spam check, `checkReview`, the
+"last held" rule) was cleared a minute later. Edward fixed that in c5f270ece5: a message that arrives
+held stays held with its reason, and processing can add a hold but never clear one.
+
+Q6 confirms the fix in the data, on the 19 November snapshot. 3 processed email-path rows still
+carry "Known spam keyword", a reason only the email path writes on arrival. The API path mirrors the
+arrival holds, and processing then treats both paths' rows alike. This also lets the parity job
+compare holds from the stored rows (5.3).
 
 ---
 
@@ -228,21 +532,26 @@ that holds a different TN id.
 - **Row 1:** the account found must be the one the chat is for. If it is not (TN's id is on a
   different account from the one the notify address named), skip with `tn-sender-not-in-chat` and
   report it once a day to Sentry, like a skipped removal. Never write the message as the named
-  account.
+  account. Q4 found 5 such replies in two days, from 3 accounts. In all 5, Q4b found that no
+  account held the TN id, so they fall under the next case.
 - **No account at all:** skip with `tn-sender-unknown`, noted for the coverage check. Do not
   provision a new user as the posts path does. A replier has always been joined through the partner
   API first, which stamps their TN id, so an unknown id means an account we know only by address;
-  making a second account would split their chats from them.
+  making a second account would split their chats from them. Q4b found 8 in two days, all from
+  accounts that hold another TN member's id (section 1, Results so far).
 
 The parity job reports every case where the email path's account and the API path's differ. That
 list is useful in itself: each entry is a message the email path filed on an account that does not
 hold the sender's TN id. Q4 in the yesterday queries measures this now, from the TN user id header
-on the mail. It shows how often each case occurs before anything is built.
+on the mail. It shows how often each case occurs before anything is built. The header carries no
+secret on chat mail (Q2), so it is used here only to measure.
 
 ### 3.2 The chat and the post come from ids
 
 `fd_chat_id`, `fd_msgid`, `fd_recipient_user_id` and `fd_group_id` replace parsing addresses and
 headers, and fuzzy subject matching goes (row 3 keeps the subject in the body when there is no post).
+Q1 found one row 3 message in about two days against 1,788 that named a post, so dropping the
+match costs almost nothing.
 
 ### 3.3 No address is attached to the account
 
@@ -256,15 +565,19 @@ same record arrives more than once. A new table, `chat_messages_tn`:
 | column | |
 |---|---|
 | `id` | surrogate key (conventions: every table gets one) |
-| `chatmsgid` | FK to `chat_messages.id`, cascade delete: the first message written for the record (the text, or the first image when there is no text) |
-| `tnmessageid` | TN's id for the message, **unique** |
+| `chatmsgid` | FK to `chat_messages.id`, cascade delete: the message written for the record |
+| `tnmessageid` | TN's id for the message, **unique**. Ideally the `X-Trash-Nothing-Log-Id` of the email TN sends for it, so the coverage check can join on it (5.2, 5.4) |
 | `tndate` | TN's date for the message |
 | `created` | |
 
+If TN's ids cannot be its log ids, add a nullable, indexed `tnlogid` column, filled from the
+feed's `email_log_id` while TN still emails, and join on that instead.
+
 A new table rather than a column on `chat_messages`, which is very large and would need a
-node-by-node ALTER. The text message, its image messages and this row are written in one
-transaction, and the unique key decides a race. Image uploads to tusd happen before the
-transaction; a lost race orphans those blobs, which is acceptable.
+node-by-node ALTER. The message and this row are written in one transaction, and the unique key
+decides a race. If the feed later carries photos (7.1), their `Image` messages join the same
+transaction and `chatmsgid` names the first message written. The uploads to tusd then happen before
+the transaction, and a lost race orphans those blobs, which is acceptable.
 
 ### 3.5 `date` is the time of ingestion
 
@@ -311,8 +624,9 @@ Built like `UserChangesSyncer`, which reads the same partner API:
 
 ### 4.2 `ChatMessageIngestionService` (`app/Services/TrashNothing/Ingestion/`)
 
-A TN-only reimplementation of the four handlers in section 2 plus `createChatMessageFromEmail` and
-`addPhotosToChat`, working on a DTO instead of `ParsedEmail`. Same structure as
+A TN-only reimplementation of the four handlers in section 2 plus `createChatMessageFromEmail`,
+working on a DTO instead of `ParsedEmail`. `addPhotosToChat` is left out of the first version,
+because TN chat mail carries no images (Q2); it is added only if the feed carries photos (7.1). Same structure as
 `GroupPostIngestionService`: it decides the outcome and never touches Loki; it keeps a routing
 context with the email path's `dropped()` / `getLastRoutingContext()` semantics; drop reasons use the
 email path's exact strings where there is an equivalent (`Reply to non-existent chat`,
@@ -322,8 +636,8 @@ otherwise.
 One structural change from the posts service: split it into
 
 - `plan(TnChatMessage $record): ChatIngestPlan`, read-only and deterministic: chat, sender,
-  recipient, chat type, message type, `refmsgid`, final text, review decision and reason, image URLs,
-  or a drop with its reason; and
+  recipient, chat type, message type, `refmsgid`, final text, review decision and reason, or a drop
+  with its reason; and
 - `apply(ChatIngestPlan $plan)`, which writes.
 
 The parity job (section 5) then calls `plan()` against production without any write, which is safer
@@ -342,14 +656,32 @@ email path replayed at all.
   - schedules `tn:verify-chat-coverage` (5.4) and makes the `tn:sync (chat)` scheduled-outcome check
     live.
 - **The gate predicate must stay narrow.** A new `isTrashNothingChatMessage()` beside
-  `isTrashNothingGroupPost()`: a valid `X-Trash-Nothing-Secret` (compared with the configured secret;
-  the From domain alone can be forged), and an address that `route()` would hand to one of the
-  handlers the feed covers, mirroring `route()`'s phase order as `claimedByAnEarlierPhase()` does.
-  Gate each row of section 1 separately, so a kind of message the feed does not carry keeps arriving
-  by email. Skipping too widely loses real members' mail with no error.
-- **Drift guard.** Add the chat handlers, `createChatMessageFromEmail`, `addPhotosToChat` and
-  `findRefMessage` to `EmailPathMirrorDriftTest`, so an edit to the email side forces a decision about
-  the API side.
+  `isTrashNothingGroupPost()` matches mail that meets both conditions:
+  - It comes from a TN sender: From at `user.trashnothing.com`, envelope-from at TN's domain as
+    `ParsedEmail::isFromTrashNothing()` reads it.
+  - It goes to an address `route()` would hand to one of the handlers the feed covers. This mirrors
+    `route()`'s phase order, as `claimedByAnEarlierPhase()` does.
+
+  It must not take what those handlers drop or treat differently before writing anything: bounces,
+  read receipts and auto-replies. Gate each row of section 1 separately, so a kind of message the
+  feed does not carry keeps arriving by email. Skipping too widely loses real members' mail with no
+  error.
+
+  The gate cannot use TN's secret, which Q2 found on none of the 5,441 replies. The sender's domain
+  is enough here, because of which way a mistake goes:
+  - A Freegle member's mail never comes from a TN address, so it cannot be skipped by mistake.
+  - A forged mail from a TN address would be skipped, and so not delivered. That is safer than
+    today, when a reply to a notify address is written as whoever the address names, without
+    checking the sender unless the chat is more than 84 days old.
+
+  The parity job's layer 1 then shows that every mail the predicate matches has a feed record.
+
+  TN's own notices to volunteers (row 9) come From `noreply@trashnothing.com`, not from
+  `user.trashnothing.com`, so the predicate does not match them and they keep routing by email.
+  That is intended until the feed carries them (decision 7).
+- **Drift guard.** Add the chat handlers, `createChatMessageFromEmail` and `findRefMessage` to
+  `EmailPathMirrorDriftTest`, so an edit to the email side forces a decision about the API side. Add
+  `addPhotosToChat` too if the API path comes to handle photos.
 
 ### 4.4 Loki
 
@@ -378,19 +710,29 @@ way it prints ids, outcomes and hashes of the text, never the text itself.
 
 ### 5.2 The correlation key
 
-For posts it was `tnpostid`. For chat there is nothing shared today, so ask TN for both of these
-(section 7):
+For posts it was `tnpostid`. For chat it is TN's log id. Every TN chat mail carries
+`X-Trash-Nothing-Log-Id`, a UUID, and no two mails share one (the header scan and Q10, section 1).
+So ask TN for one thing (section 7):
 
-- **`email_message_id`** on each API record: the `Message-ID` of the email TN sent for the same
-  message. The email path stores that in `messages.messageid` and links it to the chat message
-  through `chat_messages_byemail`, so the join is exact and needs no change to the frozen email path.
-- **`X-Trash-Nothing-Chat-Message-Id`** on each chat email: TN's id for the message. It lets the job
-  ask TN about an email the feed did not return (5.3 layer 1), and is what the post-cutover check
-  joins on (5.4).
+- **The feed's `id` is the log id of the email TN sends for the same message.** It stays the same
+  kind of id once TN stops emailing.
 
-If TN can give neither, the fallback is a fuzzy join on (chat or sender/recipient pair, normalised
-text hash, time within ten minutes), which works but makes every layer noisier. Settle this before
-building.
+That makes three joins exact, with no change to the frozen email path and nothing new on TN's mail:
+- **the parity job** reads the log id from each email's headers and joins it to the record's `id`.
+  The archive has the raw mail; on yesterday, so does `messages.message`.
+- **the coverage check after cutover** joins an archived email's log id to
+  `chat_messages_tn.tnmessageid` (5.4);
+- **a miss** is looked up at TN by that id, with `GET /fd/api/chat-messages/{id}` (7.1).
+
+If TN's ids have to differ from its log ids, there are fallbacks, in order:
+- the record carries the log id as a separate field, `email_log_id`, stored in
+  `chat_messages_tn.tnlogid` while TN still emails (3.4);
+- the record carries the email's Message-ID instead, which the email path already stores in
+  `messages.messageid` (Q3);
+- a fuzzy join on (chat or sender/recipient pair, normalised text hash, time within ten minutes).
+  That works but makes every layer noisier.
+
+Settle this before building.
 
 ### 5.3 `tn:chat-parity-check`
 
@@ -413,20 +755,22 @@ settled, and well inside the 48-hour archive retention.
 Layers, modelled on the posts check:
 
 1. **Coverage (fails the run).** Every TN chat email has an API record. A miss is listed with its
-   Message-ID and the email path's outcome, after asking TN about it by id (deleted, or sent to us
-   by email only).
+   Message-ID and the email path's outcome, after asking TN about it by its log id (deleted,
+   or sent to us by email only).
 2. **Extras (reported).** API records with no email. Some are expected and each kind is named:
    row 8's misrouted replies, which the email path loses. Anything between two TN members fails the
    run, because it should never be in the feed.
 3. **Outcome (fails the run).** Both paths made a message, or both dropped it for an equivalent
    reason. Differences that 3.1 explains are reported in their own section, not failed.
 4. **Content (fails the run)**, where both made a message: chat id, sender, chat type, message
-   type, `refmsgid`, normalised text, number of images and their hashes, and the ingestion-time
-   review decision. The email side's review decision comes from its trace line, for the reason in
-   section 2. Expect to tune the text normalisation, as the posts work did with `OFFERED:` and
-   `OFFER:`: the email side went through HTML conversion and quote stripping, and the API side should
-   be cleaner. "The email had extra quoted or footer text" is reported apart from "the API is missing
-   text", which fails.
+   type, `refmsgid`, normalised text, number of images and their hashes, and the hold set on arrival.
+   The email side's hold is read from the stored row, since processing keeps it (section 2). A stored
+   hold whose reason only processing writes (`Last`, `Spam`, or one of its content checks) is
+   processing's own, and is left out of the comparison. Text needs little normalising: Q9 found the
+   email path keeps nearly all of TN's text part, which has no quoted history or signature. Compare
+   after trimming whitespace and line endings, and tune only if the parity run shows a need, as the
+   posts work did with `OFFERED:` and `OFFER:`. "The email had extra text" is reported apart from
+   "the API is missing text", which fails.
 5. **Loki (fails the run).** The two routed entries have the same labels apart from `source`, the
    same keys, and the same outcome and reason where layer 3 agreed.
 
@@ -434,14 +778,17 @@ The run ends with `logBatchJob('tn:chat-parity-check', …)` and a non-zero exit
 so a failure alerts through the scheduled-outcome checks.
 
 **Cutover gate:** fourteen consecutive days with layers 1, 3, 4 and 5 clean, apart from documented
-divergences, and every extra in layer 2 explained.
+divergences, and every extra in layer 2 explained. At the rate Q1 and Q7 found, that is about
+37,000 messages, but only about 90 from members to the volunteers and reports. TN's own notices
+(row 9) stay on email and are not counted. Check that each of rows 4 and 5 has been seen clean
+before cutting over.
 
 ### 5.4 After cutover: `tn:verify-chat-coverage`
 
 Ask TN to keep emailing chat messages for a soak period after cutover. The gate skips routing them
 but the archive keeps them, as for posts. The hourly check reads each archived TN chat email's
-`X-Trash-Nothing-Chat-Message-Id` and expects a `chat_messages_tn` row for it. A miss is looked up by
-id at TN and classified. Backfilling a genuine miss goes through the same `plan()`/`apply()`, behind
+`X-Trash-Nothing-Log-Id` and expects a `chat_messages_tn` row with that `tnmessageid`. A miss is
+looked up at TN by that id and classified. Backfilling a genuine miss goes through the same `plan()`/`apply()`, behind
 the rails the posts verifier uses (a per-run cap that alerts instead of backfilling en masse, an age
 guard, escalation when a backfilled message is still missing) and starts report-only.
 
@@ -458,16 +805,17 @@ Run the same job on yesterday against a past day's snapshot: first, before anyth
 batch-prod, and then daily through the parallel run. Yesterday has three advantages:
 
 - Nothing it does can touch production.
-- It can look much further back. Raw mail in `messages` lasts 30 days and Loki 31, against the
-  archive's 48 hours.
-- With the LVM snapshots, it can run against any of the last seven days.
+- It can look further back. Each snapshot holds about two days of chat mail in `messages` (section
+  1, Results so far), and there are seven snapshots, so together they cover about a week. Loki
+  keeps 31 days. The archive keeps 48 hours.
+- It can be run again on any of those snapshots.
 
 What to run there:
 
 - **Take the email side from the database, not the archive** (`--email-side=db`). TN chat mail
-  comes from `messages` and `chat_messages_byemail` for the window, joined to the feed on
-  `messages.messageid`. Drops come from yesterday's Loki and are compared as counts per reason,
-  because a dropped mail left no Message-ID behind. Choose windows that end before the snapshot was
+  comes from `messages` and `chat_messages_byemail` for the window, joined to the feed on the
+  `X-Trash-Nothing-Log-Id` in `messages.message`. Drops come from yesterday's Loki and are compared
+  as counts per reason, because a dropped mail left no row and so no log id behind. Choose windows that end before the snapshot was
   taken (`MAX(messages.arrival)`).
 - **Read TN's feed for the same window.** Reading is safe; the feed only answers GETs. It does need
   the partner key on yesterday. Agree that with Edward first, and keep the key out of any PR.
@@ -478,16 +826,18 @@ What to run there:
     yesterday run sets it.
   - Before an `--apply` run, check that `TUS_UPLOADER` in the container is the local tusd. The
     yesterday override points the API and the dev sites at `uploads.ilovefreegle.org`, and an image
-    upload there writes to production storage.
+    upload there writes to production storage. TN chat mail carries no images today (Q2), so this
+    only matters if the feed carries photos.
   - Running `chats:process-incoming` on the clone afterwards also compares the state after
     processing. It queues push tasks, but nothing on yesterday sends them while batch is off.
 - **Test the gate predicate on real mail.** Run `isTrashNothingChatMessage()` and the existing
-  `isTrashNothingGroupPost()` over every raw mail in `messages` for 30 days. The chat predicate must
-  match exactly the TN chat mail Q1 counts, row by row, and nothing from anyone else. A false match
-  is a member's mail the cutover would silently stop routing.
+  `isTrashNothingGroupPost()` over every raw mail a snapshot holds: about two days of chat mail,
+  and 30 days of group posts. The chat predicate must match exactly the TN chat mail Q1 counts, row
+  by row, and nothing from anyone else. A false match is a member's mail the cutover would silently
+  stop routing. Repeat on several snapshots.
 - **Check query plans.** Run `EXPLAIN` on production-sized tables for each query the ingestion
-  service and the parity job run: the "last message in the chat" read, the `SameImage` count over
-  `chat_images`, and the `chat_messages_tn` lookups. Run the `chat_messages_tn` migration on the
+  service and the parity job run: the "last message in the chat" read and the `chat_messages_tn`
+  lookups, plus the `SameImage` count over `chat_images` if photos are added. Run the `chat_messages_tn` migration on the
   clone to time it.
 - **Rehearse the cutover and the rollback.**
   1. In a one-off container on the clone, with the flag on, read a past day of the feed and write it.
@@ -520,10 +870,10 @@ What to run there:
 
 | Phase | What | Writes chat messages on production? |
 |---|---|---|
-| 0 | Run the section 1 queries and the header scan on yesterday. Settle the Q6 question. Agree the contract in section 7 with Andrew, cut down to what yesterday could not answer | No |
+| 0 | Run the section 1 queries and the header scan on yesterday. Agree the contract in section 7 with Andrew, cut down to what yesterday could not answer | No |
 | 1 | PR: `ChatMessageSyncer` (read-only), the DTO, fixtures, `ChatMessageIngestionService::plan()`, `tn:chat-parity-check` with both email sides (archive and `db`), the migration for `chat_messages_tn`, docs. Rehearse on yesterday first (5.6), then deploy and run the parity job hourly on batch-prod | No |
 | 2 | Parallel run: hourly on batch-prod, plus daily on yesterday over the previous day, with `--apply`. Fix what either finds, on the API side, and adjust the contract with TN if needed | No |
-| 3 | PR: `apply()`, the flag, the gate, `logIngestedChatMessage`, `tn:verify-chat-coverage`, the drift test, docs. Ships with the flag off. Rehearse the cutover and the rollback on yesterday, and run the gate over 30 days of real mail there | No (flag off) |
+| 3 | PR: `apply()`, the flag, the gate, `logIngestedChatMessage`, `tn:verify-chat-coverage`, the drift test, docs. Ships with the flag off. Rehearse the cutover and the rollback on yesterday, and run the gate over 30 days of real mail there. Split the shared accounts Q4c lists, on production, so the identity rule rarely skips | No (flag off) |
 | 4 | Cutover: turn the flag on. TN keeps emailing; the coverage check runs | Yes |
 | 5 | After the soak, TN stops emailing chat messages. Later, outbound | Yes |
 
@@ -554,32 +904,42 @@ Each record:
 
 | Field | Need | Why |
 |---|---|---|
-| `id` | required | TN's id for the message, unique and never reused. Idempotency (3.4) |
+| `id` | required | TN's id for the message, unique and never reused. Ideally the `X-Trash-Nothing-Log-Id` of the email TN sends for the message, so a record and its email carry the same value (5.2). Idempotency (3.4) |
 | `date` | required | When TN sent it to Freegle. **Must not change after the fact**: `/posts/all` filters on a `date` that moves when a post is edited or reposted, which pushed real posts out of every window (posts plan, section Q) |
 | `tn_user_id` | required | The sender (3.1) |
 | `fd_user_id` | if known | Our id for the sender, as on the user-changes feed |
-| `kind` | required | Which of section 1's rows: `chat_reply`, `post_reply`, `user_message`, `volunteers`, `report` |
+| `kind` | required | Which of section 1's rows: `chat_reply`, `post_reply`, `user_message`, `volunteers`, `report`, and `tn_notice` (row 9) if the feed carries TN's own notices (decision 7) |
 | `fd_chat_id` | for `chat_reply` | The chat, as in the notify address TN replied to |
-| `fd_msgid` | for `post_reply` | The Freegle post, as `X-FD-MsgId` today |
+| `fd_msgid` | for `post_reply`; for `chat_reply` where TN knows it | The Freegle post, as `X-FD-MsgId` today. TN sends that on 78% of chat replies too (Q2). We store it only on a post reply, as the email path does |
 | `fd_recipient_user_id` | for `post_reply`, `user_message` | The Freegle member written to |
 | `fd_group_id` | for `volunteers`, `report` | The community, by Freegle id rather than nameshort |
 | `reported_fd_user_id`, `reported_fd_msgid` | for `report` | Who or what is reported, if TN has them |
 | `subject` | where TN has one | Kept in the body for `user_message` with no post |
-| `text` | required | What the member wrote, plain UTF-8, without quoted history, TN footer or signature. For a report, the reason and the transcript |
+| `text` | required | The text part of the email TN sends today for the message, plain UTF-8. That includes "Possible collection times:" (on 90% of first replies) and any `trashnothing.com/pics/` photo links (Q9). For a report, the reason and the transcript |
 | `display_name` | required | The name TN shows for the sender; the spam check reads it |
-| `images` | if any | Each photo's sizes ordered smallest to largest, as on posts, with URLs that work without a login for at least a week |
-| `automated` | required | True for a message TN wrote on the member's behalf (row 6) |
-| `email_message_id` | during the parallel run and soak | The `Message-ID` of the email TN sent for the same message (5.2) |
+| `images` | later, optional | Not needed for parity. TN chat mail carries no attachments (Q2), and photos arrive as `trashnothing.com/pics/` links in the text, in about 1% of messages (Q9). If both paths later fetch them as attachments: each photo's sizes ordered smallest to largest, as on posts, with URLs that work without a login for at least a week |
+| `automated` | required | True for a message TN wrote on the member's behalf (row 6). None in two days (Q9); ask whether TN still sends them |
+| `email_log_id` | only if `id` is not the log id | The `X-Trash-Nothing-Log-Id` of the email TN sent for the same message, while TN still emails (5.2). If even that cannot be given, the email's Message-ID instead |
 
 Behaviour:
 
 - **The same set of messages TN emails us today, no more and no fewer.** Nothing between two TN
   members (conventions: those stay on TN).
+- **One record per email.** Each record matches one email TN sends today, by its log id (5.2). Q8
+  found no member message sent to several communities' volunteers, so this matters only if TN
+  starts doing that.
+- **TN's own notices to volunteers.** TN sends about 5 a day to communities' volunteers, From
+  `noreply@trashnothing.com` (row 9, Q11). Freegle files them under TN's own account, which holds a
+  TN user id (Q12b). Ask what the notices are, whether the feed should carry them, and whether
+  that account's TN id is TN's own system id. If it is, the feed can carry the notices with that id
+  as `tn_user_id`, and they file on that account under the ordinary rule. Until then they stay on
+  email.
 - Records in ascending `(date, id)` order, and the same record on every read of a window.
 - How far back the feed goes. At least seven days, so an outage of our sync or theirs can be caught
   up; longer is better.
 - `GET /fd/api/chat-messages/{id}` for a single message, for the coverage checks to classify a miss,
-  as `GET /posts/{id}` is used for posts.
+  as `GET /posts/{id}` is used for posts. A miss is an email with no record, so when `id` is the log
+  id, the email itself names the message to look up.
 - Whether TN members can edit or delete a chat message after sending, and if so what the feed shows.
   The email path never learns of either; the API path will do the same unless we decide otherwise.
 - The existing kick to start `tn:sync` straight away when a chat message is sent, if TN would like
@@ -588,22 +948,25 @@ Behaviour:
 
 ### 7.2 For testing and the switch
 
-Run Q2, Q3 and the header scan on yesterday before asking for the first two items. They may show
-that TN already sends what we need.
+Q2, Q3 and the header scan have answered part of this from production mail. Every TN chat mail
+carries TN's log id, and replies carry no secret.
 
-- **`X-Trash-Nothing-Chat-Message-Id`** on every chat email, with the value of `id` (5.2). Not
-  needed if the header scan finds a per-message TN id already, or if TN's Message-IDs carry one (Q3).
-- Chat mail carrying `X-Trash-Nothing-Secret` and `X-Trash-Nothing-User-Id`. The gate relies on the
-  secret, and the user-id header has only been measured on posts (trashnothing.md, "measured on
-  posts only"). Q2 answers this from production mail. Ask TN only about the routes where it shows
-  gaps.
+- **Not needed: a new id header on TN's mail.** `X-Trash-Nothing-Log-Id` is already on every chat
+  mail (5.2).
+- **A chat counterpart of `fd-post-log.csv`, if TN has one.** A log of the chat mail TN sent, keyed
+  by the log id, would list every message TN sent us, including any we dropped or never received.
+  Layer 1 of the parity job (5.3) would then not depend on our archive or Loki.
+- **Not needed: the secret on chat mail.** Q2 found it on none of the 5,441 replies, and the gate
+  does without it (4.3). The TN user id header is on all but two replies, which is enough for
+  measuring.
 - **Keep emailing chat messages** through the parallel run and the soak after cutover, until we say
   stop. Rollback (5.5) depends on it.
-- The OpenAPI description of the endpoint, and a sample response covering every `kind`, with and
-  without images, and an automated one. These become the fixtures.
+- The OpenAPI description of the endpoint, and a sample response covering every `kind` and an
+  automated message. These become the fixtures.
 - **Test accounts.** Two TN test members joined to a Freegle test community, so each row of section 1
   can be driven end to end and seen arrive both by email and in the feed: reply to a test post, reply
-  in the chat, write to the volunteers, report a member, send a photo, trigger an automated response.
+  in the chat, write to the volunteers, report a member, send a photo (it arrives as a link, Q9),
+  and trigger an automated response if TN still sends them.
   Say whether TN has a staging environment that can point at a Freegle dev server; if not, this
   happens on production with test accounts.
 - What TN does today when Freegle drops a message (the chat no longer exists, the member is not in
@@ -616,16 +979,40 @@ that TN already sends what we need.
 
 ## 8. Decisions needed
 
-1. **Unknown sender (3.1).** Recommended: skip and report. The alternative, provisioning a new user
-   as the posts path does, would split a member known only by address from their chats. Decide
-   with Q4's numbers. Its case c is the messages this decision is about, unless TN sends our id.
-   Cases d and e are the ones 3.1 files on another account or skips.
+1. **A sender the TN id puts on another account, or on none (3.1).** Recommended: skip and report.
+   The alternative for an unknown sender, provisioning a new user as the posts path does, would
+   split a member known only by address from their chats. Q4 and Q4b show how little is at stake:
+   - 5,436 of 5,458 messages in two days need no decision;
+   - 8, about 4 a day, would be skipped: their TN id is held by no account, and they arrive today on
+     an account holding another TN member's id;
+   - 1 would be filed on the account holding its TN id instead of the shared one.
+
+   The skips come from a handful of shared accounts: 4 on the second snapshot Q4c ran on. So split
+   those before cutover (`tn:split-shared-account`, from Q4c's list). After cutover each skip is
+   reported, so a person can split any new one the same way. First replies the email path filed on
+   the wrong account need nothing: the API path files them on the right one.
 2. **Separate cutover flag (4.3).** Recommended: separate from the posts flag.
 3. **Per-row gating (4.3).** Recommended: gate each row of section 1 on its own, so the cutover can
    start with the rows the feed carries and the rest stay on email.
 4. **Automated responses (row 6).** Recommended: keep them, with TN's note stripped, as the email
-   path does.
+   path does. Q2 and Q9 found none in two days, so this may never arise.
 5. **Checks that direct mail lacks** (post more than 42 days old, closed community, post with an
    outcome). Recommended: mirror direct mail now; add them to both paths together later.
-6. **The ingestion-time review flags** (end of section 2). Not part of this work, but someone should
-   decide whether `ChatProcessService` overwriting them is intended.
+6. **Resolved: the review flags set on arrival.** `ChatProcessService` used to clear them; Edward
+   fixed that on 12 November (c5f270ece5), and Q6 confirms it (end of section 2).
+7. **TN's own notices to volunteers (row 9).** Recommended: leave them on email for the first
+   cutover, which the gate already does. Bring them into the feed once Andrew has said what they
+   are and confirmed TN's account holds TN's own id. They then need their own `kind` (`tn_notice`)
+   and nothing else: they file on TN's existing account under the ordinary rule (3.1).
+
+## 9. Found along the way, outside this work
+
+Each of these turned up while measuring, affects more than TN chat, and needs its own decision:
+
+- **Raw chat mail lasts two days** (section 1, Results so far). `purgeStrandedMessages` does not
+  count `chat_messages_byemail` as a reference, so moderators lose "View original email" in chat
+  review after two days, for all email chat.
+- **TN's own account on Freegle holds a TN user id** (Q12, Q12b). It is the account TN's notices to
+  volunteers come from, named for Trash Nothing, and that is as it should be. Confirm with Andrew
+  that the id is TN's own system id. If it is a member's, that member's partner calls and API posts
+  would resolve to this account.
