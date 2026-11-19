@@ -1212,7 +1212,8 @@ rows, its latest row states its outcome.
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach. Two change feeds
-  drive it, one per direction, and neither uses a time window:
+  drive it, one per direction. The post side resumes from a mark; the member side looks back
+  60 minutes:
   - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
     mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
     time the pass started so a row written in the same second is caught next tick. A dry run
@@ -1230,10 +1231,24 @@ rows, its latest row states its outcome.
     drains the queue oldest first, partitioned by `MOD(userid, shards)`. A row that fails for its own
     reasons goes to the back of the queue; a routing outage stops the drain and keeps the rows.
     It asks `mailNewlyReachedForPost`
-    about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
+    about each candidate post scoped to that one member. A candidate is a post whose reach last
+    changed no earlier than `freegle.ripple.reach_member_window_minutes` (60, `RIPPLE_REACH_MEMBER_WINDOW_MINUTES`)
+    before the member was queued, so a member who joins or switches to immediate mail is told
+    about the last hour's posts and not about every open post that covers them. A drain that
+    runs late covers the same posts, up to twice the setting back from the drain. `ripple:reconcile-reach-members` runs
     daily at 04:36 UTC (after the backup drain, so the pass it sets off finishes before the digest) and re-queues anyone whose join or postcode change since yesterday has no ledger row
-    after it, so a missed hook costs a day, not the mail.
+    after it. A re-queued join is measured from the re-queue, so a missed hook costs the posts
+    of that day and they hear about the hour before the re-queue.
   The `rippling_reach_notified` ledger dedupes both feeds, so their overlap is harmless.
+  Neither feed tells a member about a post that arrived on their community before they became
+  eligible, measured against the copy's `messages_groups.arrival` plus the look-back, in
+  `mailNewlyReachedForPost`. A join is per community and is read from `memberships.added`. A move,
+  a return and a switch to immediate mail are about the member: the drain records the time from
+  the queue row in `rippling_reach_member_since` (the latest wins), and a waiting queue row counts
+  the same way until then. A queue row keeps a move, a return or a switch when a join follows it,
+  and its time only moves forward. A member with no row is not limited. Arrival is per community, so a
+  post that ripples into another of their communities later is new to them. The daily re-queue
+  of a missed move carries the time of the move.
 - **Held replies:** a reply from outside the post's current reach is parked in
   `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
   is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a

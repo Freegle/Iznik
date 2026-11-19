@@ -32,22 +32,16 @@ check program spatial-routing with path "/etc/monit/scripts/spatial-routing-heal
    # If the graph grows again, or host load rises, raise this again.
    if status != 0 for 30 cycles then exec "/usr/bin/docker restart freegledocker-spatial"
 
-# Routing loads the road graph only at startup (no live reload endpoint), so
-# restart it whenever a data refresh replaces the PBF. Also nudge the sysadmin
-# when the road-graph data goes stale (refresh cadence is every few months).
-#
-# MTIME, NOT TIMESTAMP (2026-08-18): "if changed timestamp" also tests ctime, and
-# ctime bumps on any metadata change - including gaining a hard link. The PBF is
-# 2.5GB, so `./freegle worktree create` hard-links it into the new worktree rather
-# than copying; that bumped ctime at 12:56:32 with mtime still Jun 14, monit read
-# it as a map-data refresh, and restarted routing 53 min into a graph build -
-# a ~25 min outage of proximity/ripple-schedule/catchment for a file whose
-# contents had not changed. Creating a worktree is a routine documented operation,
-# so this fired on ordinary use. mtime alone still catches a real PBF refresh
-# (a replaced file has a new mtime) without reacting to linking.
+# Staleness only. The routing server does not read this PBF at startup: it maps the
+# reach-engine artifacts under data/reach/, built from the PBF and switched in by
+# freegle-maint's reach profile (scripts/maintenance/lib/reach.sh), which recreates
+# the container itself. So a refresh replacing the PBF (weekly, spatial:update-data)
+# needs no restart here. A restart on a changed PBF would only reload the same
+# artifacts, take routing away for the load, and send an alert email each week. It
+# would also load the new deprivation CSV here while db2 and db3 keep the old one
+# until the switch, which moves the CSV with the artifacts on all three.
 check file spatial-pbf with path "/var/www/FreegleDocker/iznik-routing-go/data/uk-latest.osm.pbf"
    group spatial
-   if changed mtime then exec "/usr/bin/docker restart freegledocker-spatial"
    if timestamp > 180 days then alert
 
 # Deprivation (fairness) data staleness alert. ENABLE once the CSV is staged at
@@ -56,5 +50,4 @@ check file spatial-pbf with path "/var/www/FreegleDocker/iznik-routing-go/data/u
 #
 # check file spatial-deprivation with path "/var/www/FreegleDocker/iznik-routing-go/data/uk_lsoa_quintile.csv"
 #    group spatial
-#    if changed mtime then exec "/usr/bin/docker restart freegledocker-spatial"   # mtime, not timestamp - see above
 #    if timestamp > 365 days then alert

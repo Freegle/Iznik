@@ -15,7 +15,12 @@ use Illuminate\Support\Facades\Schema;
  * Loki does the counting. Flow, click and health figures are LogQL metric queries evaluated once
  * over the whole day, so no raw line is paged for them. Raw lines are paged only where a metric
  * cannot answer: impressions (the component names are map keys, which LogQL cannot group by),
- * distinct users and sessions, re-searches, and the sample session ids.
+ * distinct users and sessions, re-searches, the sample session ids, and the people counts.
+ *
+ * People are counted beside events (people_* columns) because an event count is moved by anything
+ * that sends events: one stuck page, one member clicking in anger. A person is a member id when
+ * the line has one, else the client address, else the session, and is counted once a day per row.
+ * Loki cannot count them: a distinct count is one series per person and its cap is 500.
  *
  * The day window is [00:00:00, 24:00:00) UTC, but a metric is evaluated at 23:59:59 over "[1d]",
  * so it takes in the last second of the previous day and drops the last second of this one. Loki
@@ -66,6 +71,12 @@ class UxRollupService
 
     private const FLOW_DIMS = ['device_class', 'logged_in', 'is_app', 'variant'];
 
+    /** Columns that count distinct people, added by 2026_11_16_000001_add_people_counts_to_ux_rollups. */
+    public const PEOPLE_COLUMNS = [
+        'ux_flow_daily' => ['people_entered', 'people_completed'],
+        'ux_component_daily' => ['people', 'people_trouble'],
+    ];
+
     private const IDLE_RESUME = ' | reason="idle"';
 
     public function __construct(private LokiService $loki)
@@ -97,6 +108,7 @@ class UxRollupService
 
                 continue;
             }
+            $rows = $this->withoutMissingPeopleColumns($table, $rows);
             DB::transaction(function () use ($table, $date, $rows) {
                 DB::table($table)->where('date', $date)->delete();
                 foreach (array_chunk($rows, 500) as $chunk) {
@@ -110,6 +122,51 @@ class UxRollupService
         }
 
         return true;
+    }
+
+    /**
+     * The people columns were added after the first release. Live before their migration has run, the
+     * day is still worth writing without them.
+     */
+    private function withoutMissingPeopleColumns(string $table, array $rows): array
+    {
+        foreach (self::PEOPLE_COLUMNS[$table] ?? [] as $column) {
+            if (! Schema::hasColumn($table, $column)) {
+                Log::warning("ux:rollup-daily: column {$table}.{$column} does not exist, left out");
+                $rows = array_map(function ($r) use ($column) {
+                    unset($r[$column]);
+
+                    return $r;
+                }, $rows);
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Who a telemetry line is from: the member when it carries an id, else the client address, else
+     * the session. '' when it carries none of them.
+     */
+    public static function person(array $line): string
+    {
+        $uid = $line['user_id'] ?? null;
+        if (is_numeric($uid) && (int) $uid > 0) {
+            return 'u'.(int) $uid;
+        }
+        $address = trim((string) ($line['client_ip'] ?? ''));
+        if ($address !== '') {
+            return 'a'.$address;
+        }
+        $session = trim((string) ($line['session_id'] ?? ''));
+
+        return $session !== '' ? 's'.$session : '';
+    }
+
+    /** A flag on a raw line, which may arrive as a JSON boolean or as the string LogQL sees. */
+    private static function flag(mixed $v): bool
+    {
+        return $v === true || $v === 'true';
     }
 
     /**
@@ -293,6 +350,32 @@ class UxRollupService
                 }
             }
 
+            // Distinct people per step, from the raw lines.
+            $seen = [];
+            $logql = sprintf('%s | json flow, action_name | flow="%s" | action_name=~"^(step_enter|step_complete)$"', $this->flowSelector(), $flow);
+            $this->eachLine($logql, $day, $day->copy()->addDay(), function (array $line) use (&$seen, &$flowRows, $flow, $dimKey) {
+                $person = self::person($line);
+                if ($person === '') {
+                    return;
+                }
+                $key = array_merge([$flow, mb_substr((string) ($line['step'] ?? ''), 0, 64)], $dimKey([
+                    'device_class' => (string) ($line['device_class'] ?? ''),
+                    'logged_in' => self::flag($line['logged_in'] ?? null) ? 'true' : 'false',
+                    'is_app' => self::flag($line['is_app'] ?? null) ? 'true' : 'false',
+                    'variant' => (string) ($line['variant'] ?? ''),
+                ]));
+                $column = ($line['action_name'] ?? '') === 'step_complete' ? 'people_completed' : 'people_entered';
+                $seen[implode('|', $key)][$column][$person] = true;
+                // Make sure the row exists even when the metric query for it was skipped.
+                $row = &$this->flowRow($flowRows, $key);
+                unset($row);
+            });
+            foreach ($seen as $k => $columns) {
+                foreach ($columns as $column => $people) {
+                    $flowRows[$k][$column] = count($people);
+                }
+            }
+
             // Per-flow outcomes.
             $outcomeColumns = [
                 'flow_start' => 'started', 'flow_submit' => 'submitted', 'flow_complete' => 'completed',
@@ -421,7 +504,7 @@ class UxRollupService
                 'is_app' => $key[4], 'variant' => $key[5],
                 'entered' => 0, 'reentered' => 0, 'completed' => 0, 'backed' => 0, 'abandoned' => 0,
                 'revisits' => 0, 'validation_failures' => 0, 'help_sought' => 0,
-                'dwell_p50_ms' => null, 'dwell_p90_ms' => null,
+                'dwell_p50_ms' => null, 'dwell_p90_ms' => null, 'people_entered' => 0, 'people_completed' => 0,
             ];
         }
 
@@ -460,6 +543,7 @@ class UxRollupService
             $rows[$k] ??= [
                 'page' => $page, 'component' => $component, 'device_class' => $device,
                 'impressions' => 0, 'clicks' => 0, 'dead_clicks' => 0, 'rage_clicks' => 0, 'repeated_intent' => 0,
+                'people' => 0, 'people_trouble' => 0,
             ];
 
             return $k;
@@ -476,6 +560,27 @@ class UxRollupService
                     $k = $row($labels['page_route'] ?? '', $labels['component'] ?? '', $labels['device_class'] ?? $device);
                     $rows[$k][$column] += $n;
                 }
+            }
+        }
+
+        // Distinct people who clicked each component, and who had a trouble click on it.
+        $seen = [];
+        $logql = $this->selector('interaction').' | json interaction_type | interaction_type="click"';
+        $this->eachLine($logql, $day, $day->copy()->addDay(), function (array $line) use (&$seen, $row) {
+            $person = self::person($line);
+            if ($person === '') {
+                return;
+            }
+            $k = $row((string) ($line['page_route'] ?? ''), (string) ($line['component'] ?? ''), (string) ($line['device_class'] ?? ''));
+            $seen[$k]['people'][$person] = true;
+            if (($line['interactive'] ?? null) === false || ($line['interactive'] ?? null) === 'false'
+                || self::flag($line['rage'] ?? null) || self::flag($line['repeat_no_api'] ?? null)) {
+                $seen[$k]['people_trouble'][$person] = true;
+            }
+        });
+        foreach ($seen as $k => $columns) {
+            foreach ($columns as $column => $people) {
+                $rows[$k][$column] = count($people);
             }
         }
 
@@ -794,6 +899,36 @@ class UxRollupService
         }
 
         return (int) round($total);
+    }
+
+    /**
+     * Hands every line a query matches in [start, end) to $each, a page at a time, paged like lines().
+     * A day of clicks is over a hundred thousand lines, which is too many to hold decoded at once.
+     *
+     * @param  callable(array<string, mixed>): void  $each
+     */
+    private function eachLine(string $logql, Carbon $start, Carbon $end, callable $each): void
+    {
+        $rows = $this->loki->queryRange($logql, $start, $end, self::LINE_LIMIT);
+        if ($rows === null) {
+            throw new UxLokiUnavailable('line query failed: '.substr($logql, 0, 200));
+        }
+
+        $span = $end->getTimestamp() - $start->getTimestamp();
+        if (count($rows) >= self::LINE_LIMIT && $span > 1) {
+            unset($rows);
+            $mid = $start->copy()->addSeconds(intdiv($span, 2));
+            $this->eachLine($logql, $start, $mid, $each);
+            $this->eachLine($logql, $mid, $end, $each);
+
+            return;
+        }
+        if (count($rows) >= self::LINE_LIMIT) {
+            Log::warning('ux:rollup-daily: more than '.self::LINE_LIMIT.' lines in one second, truncated: '.substr($logql, 0, 200));
+        }
+        foreach ($rows as $row) {
+            $each($row);
+        }
     }
 
     /**

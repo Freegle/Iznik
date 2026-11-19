@@ -173,7 +173,8 @@ const FIRST_PASS_METHOD =
 
 const FIRST_PASS_STYLE =
   `## Style of the answer and the draft\n` +
-  `The rules below were written for replies to a member; apply them to the draft to the moderator.\n` +
+  `The draft goes to the moderator. Open it "Hi" with no name. Give the cause in plain words, then what they could ` +
+  `tell the member or ask them. Keep it under about 100 words.\n` +
   REPLY_VOICE +
   REPLY_EVIDENCE +
   `- **Never promise.** Do not promise a fix, a date, a refund, an action or a result. Say what is known and what ` +

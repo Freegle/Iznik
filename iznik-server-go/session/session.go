@@ -568,6 +568,11 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error {
 	db := database.DBConn
 
+	// The address is checked before anything is looked up, the account once we know whose it is.
+	if held, err := loginHeldBack(c, ""); held {
+		return err
+	}
+
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
 	var userID uint64
@@ -579,13 +584,24 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		Scan(&userID)
 
 	if userID == 0 {
+		loginFailed(c, "")
+
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "We don't know that email address.",
 		})
 	}
 
+	// Counted against the member, not the address typed, so each of a member's addresses and their
+	// login link share one count, and two spellings the database treats as one address do too.
+	accountKey := loginUserKey(userID)
+	if held, err := loginHeldBack(c, accountKey); held {
+		return err
+	}
+
 	if !auth.VerifyPassword(userID, password) {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "The password is wrong.",
@@ -596,6 +612,8 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
+
+	loginSucceeded(accountKey)
 
 	return c.JSON(fiber.Map{
 		"ret":        0,
@@ -608,6 +626,11 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 // handleLinkLogin authenticates via userid + link key.
 func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	db := database.DBConn
+
+	accountKey := loginUserKey(uid)
+	if held, err := loginHeldBack(c, accountKey); held {
+		return err
+	}
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
@@ -624,6 +647,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	}
 
 	if target.ID == 0 {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -636,6 +661,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		Limit(1).Scan(&storedKey)
 
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(storedKey), []byte(key)) != 1 {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "Invalid key.",
@@ -659,6 +686,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
+
+	loginSucceeded(accountKey)
 
 	return c.JSON(fiber.Map{
 		"ret":        0,
