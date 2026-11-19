@@ -253,4 +253,28 @@ class TnEmailRoutingGateTest extends TestCase
         // Mail to an address that is not a member's on our domain.
         $this->assertNull($gate->trashNothingChatKind($this->chatMail('someone@example.com')));
     }
+
+    public function test_chat_flag_off_skips_no_chat_mail(): void
+    {
+        config(['freegle.trashnothing.ingest_chat_via_api' => false]);
+
+        $this->assertFalse($this->gate()->shouldSkipRouting($this->chatMail($this->userAddress('notify-123-456'))));
+    }
+
+    public function test_chat_flag_on_skips_tn_chat_mail_of_the_kinds_moved_and_nothing_else(): void
+    {
+        config([
+            'freegle.trashnothing.ingest_chat_via_api' => true,
+            'freegle.trashnothing.ingest_chat_kinds' => 'chat_reply,post_reply',
+        ]);
+        $gate = $this->gate();
+
+        $this->assertTrue($gate->shouldSkipRouting($this->chatMail($this->userAddress('notify-123-456'))));
+        $this->assertTrue($gate->shouldSkipRouting($this->chatMail($this->userAddress('poster-456'), ['X-FD-MsgId' => '1'])));
+        // Not moved yet: still routed.
+        $this->assertFalse($gate->shouldSkipRouting($this->chatMail($this->groupAddress('camdengroup-volunteers'))));
+        // A Freegle member's reply, and a TN group post with only the chat flag on.
+        $this->assertFalse($gate->shouldSkipRouting($this->chatMail($this->userAddress('notify-123-456'), [], ['from' => 'M <m@example.com>', 'envelopeFrom' => 'm@example.com'])));
+        $this->assertFalse($gate->shouldSkipRouting($this->parse($this->groupAddress('camdengroup'), ['X-Trash-Nothing-Post-Id' => '1'])));
+    }
 }

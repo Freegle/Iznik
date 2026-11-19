@@ -4,6 +4,7 @@ namespace App\Services\TrashNothing\Verify;
 
 use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\TrashNothing\Ingestion\TnChatMessage;
+use App\Services\TrashNothing\Sync\ChatMessageSyncer;
 
 /**
  * Decides whether an inbound email should skip the legacy routing path because
@@ -71,21 +72,28 @@ class TnEmailRoutingGate
     public const OUTCOME_SKIPPED = 'SkippedTnApi';
 
     /**
-     * True when this email is a TN group post AND the cutover flag is set.
+     * True when this email is a TN group post and the posts cutover flag is set, or a TN member's
+     * chat message of a kind the chat cutover has moved and that flag is set.
      *
-     * The flag is the same one that turns the API path on
-     * (FREEGLE_TN_INGEST_POSTS_VIA_API): switching the email path off is one half
-     * of a single cutover, and either half alone is wrong — email-off with the API
-     * off drops TN posts entirely, API-on with email still routing double-writes
-     * them.
+     * Each flag is the same one that turns its API path on (FREEGLE_TN_INGEST_POSTS_VIA_API,
+     * FREEGLE_TN_INGEST_CHAT_VIA_API): switching the email path off is one half of a single
+     * cutover, and either half alone is wrong — email-off with the API off drops the mail
+     * entirely, API-on with email still routing double-writes it. The chat kinds come from the
+     * same list ChatMessageSyncer writes (cutOverKinds()), for the same reason.
      */
     public function shouldSkipRouting(ParsedEmail $email): bool
     {
-        if (! config('freegle.trashnothing.ingest_posts_via_api', false)) {
+        if (config('freegle.trashnothing.ingest_posts_via_api', false) && $this->isTrashNothingGroupPost($email)) {
+            return true;
+        }
+
+        if (! config('freegle.trashnothing.ingest_chat_via_api', false)) {
             return false;
         }
 
-        return $this->isTrashNothingGroupPost($email);
+        $kind = $this->trashNothingChatKind($email);
+
+        return $kind !== null && in_array($kind, ChatMessageSyncer::cutOverKinds(), true);
     }
 
     /**
@@ -117,7 +125,8 @@ class TnEmailRoutingGate
 
     /**
      * Whether this is a TN member's chat message that TN's chat-messages feed carries: the
-     * flag-independent predicate of plans/2026-11-12-tn-api-chat-ingestion.md section 4.3.
+     * flag-independent predicate of plans/2026-11-12-tn-api-chat-ingestion.md section 4.3. Under the
+     * chat cutover flag, shouldSkipRouting() stops routing what it matches.
      */
     public function isTrashNothingChatMessage(ParsedEmail $email): bool
     {
