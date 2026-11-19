@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-15
+last_reviewed: 2026-11-19
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -125,6 +125,7 @@ variables like every other Freegle setting.
 | `support.first_pass.run_minutes` | `SUPPORT_FIRST_PASS_RUN_MINUTES` | `10` | One `support:first-pass` run stops taking new referrals after this long. |
 | `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
+| `trashnothing.read_chat_feed` | `FREEGLE_TN_READ_CHAT_FEED` | off | On, `tn:sync` reads TrashNothing's chat-messages feed and traces what it would write, writing nothing, and `tn:chat-parity-check` runs hourly against the incoming archive. Leave it off until TN serves the feed, or every run asks for one that is not there. See [trashnothing.md](trashnothing.md#chat-messages-via-the-api). |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's
 `env()` with one change: a variable that is unset, empty or only spaces is the default.
