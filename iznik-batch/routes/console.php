@@ -930,6 +930,16 @@ Schedule::command('tn:chat-parity-check')
     ->appendOutputTo(cronLog('tn:chat-parity-check'))
     ->runInBackground();
 
+// After the chat cutover: every archived TN chat email of a kind the cutover moved must have been
+// written from the feed or skipped on purpose. The email path no longer routes it, so a miss is a
+// message nobody received, and the run fails. See plans/2026-11-12-tn-api-chat-ingestion.md 5.4.
+Schedule::command('tn:verify-chat-coverage')
+    ->hourlyAt(23)
+    ->withoutOverlapping(60)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_chat_via_api', false))
+    ->appendOutputTo(cronLog('tn:verify-chat-coverage'))
+    ->runInBackground();
+
 // Give a recent TN API post's poster the membership ingestion failed to write. Each repair is
 // reported to Sentry, since it means a write failed. Only TN API posts are read, so it is gated
 // on the same switch as the API path.

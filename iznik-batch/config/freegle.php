@@ -486,6 +486,22 @@ return [
         // halves of the switch read this one list.
         'ingest_chat_kinds' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_KINDS', 'chat_reply,post_reply,user_message,volunteers,report'),
 
+        // After the chat cutover, tn:verify-chat-coverage: every TN chat email the archive kept, of a
+        // kind the cutover moved, must have been written from the feed. A chat message is written
+        // seconds after it is sent, so the window runs an hour behind, well inside the archive's
+        // 48 hours. Backfilling a miss is off until the misses seen are understood.
+        'verify_chat_coverage' => [
+            'lag_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_LAG_MINUTES', 60),
+            'window_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_WINDOW_MINUTES', 60),
+            'overlap_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_OVERLAP_MINUTES', 15),
+            'auto_ingest' => EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST', false),
+            // Above this many misses in one run, write none and alert: a mass miss means the sync
+            // is broken, and hours-late messages in bulk are worse than paging a person.
+            'auto_ingest_max' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST_MAX', 20),
+            // A message TN dates further back than this is not written late.
+            'max_age_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_MAX_AGE_HOURS', 24),
+        ],
+
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
         // key, so this is enforced once for the whole run by
@@ -1681,6 +1697,12 @@ return [
         'tn_posts_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
         // Minimum TN posts expected within that window.
         'tn_posts_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
+
+        // The same for TN chat messages written from the chat feed (chat_messages_tn). About 2,600
+        // a day, with mail in every hour of a whole day measured. Only evaluated when
+        // FREEGLE_TN_INGEST_CHAT_VIA_API is on.
+        'tn_chat_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_CHAT_MAX_AGE_HOURS', 6),
+        'tn_chat_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_CHAT_MIN', 1),
 
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
