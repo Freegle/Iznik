@@ -5,7 +5,9 @@ namespace App\Services\TrashNothing\Sync;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Ingestion\ChatIngestPlan;
 use App\Services\TrashNothing\Ingestion\ChatMessageIngestionService;
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Ingestion\TnChatMessage;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -14,7 +16,9 @@ use Illuminate\Support\Facades\Log;
  * record to ChatMessageIngestionService. See plans/2026-11-12-tn-api-chat-ingestion.md, 4.1.
  *
  * Until the cutover it only plans: each record is traced with what would be written, and nothing
- * is. The email path is still the one writing these messages.
+ * is. The email path is still the one writing these messages. Once it writes, each record gets one
+ * routed Loki entry, as each email does on the email path, and only the kinds the cutover has moved
+ * (cutOverKinds()) are written: the rest still arrive by email.
  *
  * A response is never logged whole, and no record's text is ever logged: these are private
  * conversations.
@@ -24,6 +28,12 @@ class ChatMessageSyncer
     use ReadsTnFeedByDay;
 
     private const PAGE_SIZE = 100;
+
+    /** A kind the cutover has not moved yet: it still arrives, and is written, by email. */
+    public const REASON_NOT_CUT_OVER = 'tn-kind-not-cut-over';
+
+    /** DeliberateSkips keys for chat records, apart from the posts that share the store. */
+    public const SKIP_KEY_PREFIX = 'chat:';
 
     private bool $fetchFailed = false;
 
@@ -41,6 +51,8 @@ class ChatMessageSyncer
         // Shared with the other TN syncers: TN rate-limits per key, across every feed.
         private readonly ?TrashNothingRateLimiter $rateLimiter = null,
         ?ChatMessageIngestionService $ingestion = null,
+        // Write what the feed carries: the cutover (freegle.trashnothing.ingest_chat_via_api).
+        private readonly bool $write = false,
     ) {
         $this->ingestion = $ingestion ?? new ChatMessageIngestionService($dryRun);
     }
@@ -78,6 +90,9 @@ class ChatMessageSyncer
 
             try {
                 $plan = $this->ingestion->plan($record);
+                if ($this->write) {
+                    $plan = $this->writePlan($plan);
+                }
                 $this->results[$plan->result] = ($this->results[$plan->result] ?? 0) + 1;
                 $this->trace($plan);
             } catch (\Throwable $e) {
@@ -118,6 +133,115 @@ class ChatMessageSyncer
         usort($records, fn (TnChatMessage $a, TnChatMessage $b) => strcmp($a->sortKey(), $b->sortKey()));
 
         return $records;
+    }
+
+    /**
+     * The kinds of TN chat message the cutover has moved, from freegle.trashnothing.ingest_chat_kinds.
+     * The gate reads the same list, so a kind is never both skipped by email and left unwritten.
+     *
+     * @return list<string>
+     */
+    public static function cutOverKinds(): array
+    {
+        $kinds = array_map('trim', explode(',', (string) config('freegle.trashnothing.ingest_chat_kinds', '')));
+
+        return array_values(array_intersect(TnChatMessage::KINDS, $kinds));
+    }
+
+    private function writePlan(ChatIngestPlan $plan): ChatIngestPlan
+    {
+        $record = $plan->record;
+
+        if ($plan->writes() && !in_array($record->kind, self::cutOverKinds(), true)) {
+            // The email path still routes this kind, so writing it here too would write it twice.
+            $plan = $plan->withResult(ChatIngestPlan::RESULT_SKIPPED, self::REASON_NOT_CUT_OVER);
+        } else {
+            $plan = $this->ingestion->apply($plan);
+        }
+
+        if ($plan->result === ChatIngestPlan::RESULT_DUPLICATE) {
+            return $plan;
+        }
+
+        // A record not written is noted with why, for tn:verify-chat-coverage, and the note keeps a
+        // window read again from logging it twice: a written one is kept from that by its row.
+        if (!$plan->writes()) {
+            $key = self::SKIP_KEY_PREFIX . $record->id;
+            if (DeliberateSkips::reasonFor($key) !== null) {
+                return $plan;
+            }
+            DeliberateSkips::record($key, (string) $plan->reason());
+
+            if ($plan->reason() === ChatMessageIngestionService::REASON_SENDER_NOT_IN_CHAT) {
+                $this->reportOncePerDay($plan);
+            }
+        }
+
+        $this->logRouted($plan);
+
+        return $plan;
+    }
+
+    /** One routed entry per record, as the email path writes one per email. */
+    private function logRouted(ChatIngestPlan $plan): void
+    {
+        $record = $plan->record;
+        $context = $plan->context + [
+            'tn_message_id' => $record->id,
+            'tn_user_id' => $record->tnUserId ?: null,
+            'kind' => $record->kind,
+        ];
+        if ($plan->chatMessageId !== null) {
+            $context['chat_message_id'] = $plan->chatMessageId;
+        }
+        if ($this->dryRun) {
+            $context['dry_run'] = true;
+        }
+
+        $this->loki->logIngestedChatMessage(
+            envelopeTo: $this->envelopeTo($plan),
+            subject: (string) ($record->subject ?? ''),
+            messageId: $record->id,
+            routingOutcome: $plan->outcome->value,
+            context: $context,
+        );
+    }
+
+    /** The address the email for this message goes to, where the record says what it is. */
+    private function envelopeTo(ChatIngestPlan $plan): string
+    {
+        $r = $plan->record;
+
+        if ($r->kind === TnChatMessage::KIND_CHAT_REPLY && $r->fdChatId !== null && $plan->senderId !== null) {
+            return "notify-{$r->fdChatId}-{$plan->senderId}@" . config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        }
+
+        $group = $plan->context['group_name'] ?? null;
+        if ($group) {
+            return $group . '-volunteers@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        }
+
+        return '';
+    }
+
+    /**
+     * Sentry hears once a day that a sender TN names is not in the chat TN names. The email path
+     * files such a message on an account that does not hold the sender's TN id, so it is most likely
+     * an account two members share, which a person can split with tn:split-shared-account.
+     */
+    private function reportOncePerDay(ChatIngestPlan $plan): void
+    {
+        $reason = (string) $plan->reason();
+        if (!Cache::add('tn-chat:reported:' . $reason . ':' . now()->format('Y-m-d'), true, now()->addDay())) {
+            return;
+        }
+
+        $message = "TN chat message skipped ({$reason}): user " . ($plan->context['user_id'] ?? '?')
+            . ' is not in chat ' . ($plan->context['chat_id'] ?? '?') . ', look for a shared account to split';
+        Log::warning($message, ['tn_message_id' => $plan->record->id]);
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($message);
+        }
     }
 
     private function trace(ChatIngestPlan $plan): void

@@ -15,6 +15,8 @@ use Tests\TestCase;
  */
 class ChatMessageSyncerTest extends TestCase
 {
+    use CapturesRoutedLokiEntries;
+
     private function syncer(bool $localTesting = false): ChatMessageSyncer
     {
         return new ChatMessageSyncer(
@@ -104,5 +106,44 @@ class ChatMessageSyncerTest extends TestCase
 
         $this->assertSame(3, $count);
         $this->assertSame('2026-11-17T10:02:00Z', $maxDate);
+    }
+
+    public function test_writing_logs_one_routed_entry_per_record_and_notes_skips(): void
+    {
+        $this->enableLokiCapture();
+        $poster = $this->createTestUser();
+        $member = $this->createTestUser(['tnuserid' => random_int(50_000_000, 99_999_999)]);
+        $chat = $this->createTestChatRoom($poster, $member);
+        Http::fake(['*/chat-messages*' => Http::response(['chat_messages' => [
+            ['id' => 'w1', 'date' => '2026-11-17T10:00:00Z', 'tn_user_id' => $member->tnuserid, 'kind' => 'chat_reply', 'fd_chat_id' => $chat->id, 'text' => 'Thanks.'],
+            ['id' => 'w2', 'date' => '2026-11-17T10:00:01Z', 'tn_user_id' => 1, 'kind' => 'chat_reply', 'fd_chat_id' => $chat->id, 'text' => 'Hello.'],
+        ]], 200)]);
+
+        $syncer = new ChatMessageSyncer(false, false, 'k', 'https://tn.example.invalid/fd/api', app(LokiService::class), write: true);
+        $syncer->sync('2026-11-17T09:00:00Z', '2026-11-17T11:00:00Z');
+
+        $entries = $this->routedEntries();
+        $this->assertCount(2, $entries);
+        $this->assertSame('tn_api', $entries[0]['labels']['source']);
+        $this->assertSame('ToUser', $entries[0]['labels']['subtype']);
+        $this->assertSame('w1', $entries[0]['message']['tn_message_id']);
+        $this->assertSame("notify-{$chat->id}-{$member->id}@" . config('freegle.mail.user_domain'), $entries[0]['message']['envelope_to']);
+        $this->assertSame('Dropped', $entries[1]['labels']['subtype']);
+        $this->assertSame('tn-sender-unknown', $entries[1]['message']['routing_reason']);
+        $this->assertSame('tn-sender-unknown', \App\Services\TrashNothing\Ingestion\DeliberateSkips::reasonFor('chat:w2'));
+
+        // A window read again writes nothing and logs nothing more.
+        $syncer->sync('2026-11-17T09:00:00Z', '2026-11-17T11:00:00Z');
+        $this->assertCount(2, $this->routedEntries());
+        $this->assertSame(1, \App\Models\ChatMessage::where('chatid', $chat->id)->count());
+
+        $this->tearDownLokiCapture();
+    }
+
+    public function test_cut_over_kinds_come_from_config_and_ignore_unknown_names(): void
+    {
+        config(['freegle.trashnothing.ingest_chat_kinds' => ' chat_reply, report ,bogus']);
+
+        $this->assertSame(['chat_reply', 'report'], ChatMessageSyncer::cutOverKinds());
     }
 }
