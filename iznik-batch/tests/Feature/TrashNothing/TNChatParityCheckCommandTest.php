@@ -63,7 +63,7 @@ class TNChatParityCheckCommandTest extends TestCase
             'message' => $this->rawReply($logId, $text),
             'fromuser' => $this->member->id,
             'fromaddr' => 'member-g1@user.trashnothing.com',
-            'envelopefrom' => 'bounce@trashnothing.com',
+            'envelopefrom' => 'member-g1@user.trashnothing.com',
             'envelopeto' => "notify-{$this->chat->id}-{$this->member->id}@" . config('freegle.mail.user_domain'),
             'messageid' => $logId . '@m2.trashnothing.com',
             'subject' => 'Re: OFFER: Bookcase (Town)',
@@ -226,7 +226,7 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->assertTrue(DB::table('chat_messages_tn')->where('tnmessageid', $logId)->exists());
     }
 
-    private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'bounce@trashnothing.com'): void
+    private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'member-g1@user.trashnothing.com'): void
     {
         $this->archiveChatMail($raw, $this->notifyAddress($this->chat->id, $this->member->id), $outcome, self::ARRIVAL, $envelopeFrom);
     }

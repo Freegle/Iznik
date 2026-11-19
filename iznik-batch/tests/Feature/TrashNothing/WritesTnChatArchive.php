@@ -35,7 +35,7 @@ trait WritesTnChatArchive
         return "notify-{$chatId}-{$userId}@" . config('freegle.mail.user_domain');
     }
 
-    private function archiveChatMail(string $raw, string $envelopeTo, string $outcome, string $arrival, string $envelopeFrom = 'bounce@trashnothing.com'): void
+    private function archiveChatMail(string $raw, string $envelopeTo, string $outcome, string $arrival, string $envelopeFrom = 'member-g1@user.trashnothing.com'): void
     {
         if ($this->chatArchiveDir === null) {
             $this->chatArchiveDir = storage_path('incoming-archive/test-tn-chat-' . uniqid('', true));

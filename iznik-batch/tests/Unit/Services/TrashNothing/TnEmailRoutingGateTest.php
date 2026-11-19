@@ -196,7 +196,7 @@ class TnEmailRoutingGateTest extends TestCase
         return $this->parse($envelopeTo, $headers, $overrides + [
             'subject' => 'Re: OFFER: Bookshelf (Camden)',
             'from' => 'Replier <replier-g123@user.trashnothing.com>',
-            'envelopeFrom' => 'bounce-replier@trashnothing.com',
+            'envelopeFrom' => 'replier-g123@user.trashnothing.com',
         ]);
     }
 
