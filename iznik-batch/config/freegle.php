@@ -467,6 +467,12 @@ return [
         // instead, neither of which needs the email path switched off.
         'ingest_posts_via_api' => EnvSetting::env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
+        // Read TN's chat-messages feed in tn:sync (plans/2026-11-12-tn-api-chat-ingestion.md).
+        // Read-only: each record is planned and traced, and nothing is written, because the
+        // email path still writes these messages. Off until TN serves the endpoint, since every
+        // tn:sync run would otherwise ask for a feed that is not there.
+        'read_chat_feed' => EnvSetting::env('FREEGLE_TN_READ_CHAT_FEED', false),
+
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
         // key, so this is enforced once for the whole run by
