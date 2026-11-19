@@ -11,8 +11,12 @@ use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\Mail\Incoming\SpamCheckService;
 use App\Services\Mail\Incoming\StripQuotedService;
+use App\Services\Ripple\RippleReplyService;
 use App\Services\TrashNothing\Sync\TnMemberMatch;
+use App\Support\TransactionPolicy;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Ingests a record of TrashNothing's chat-messages feed, mirroring what the email path does with
@@ -50,6 +54,10 @@ class ChatMessageIngestionService
     public const REASON_DELETED_SENDER = 'Volunteers message from deleted user';
 
     public const REASON_KNOWN_SPAMMER = 'Known spammer';
+
+    public const REASON_NO_USER_CHAT = 'Could not create chat for direct mail';
+
+    public const REASON_NO_USER2MOD_CHAT = 'Could not create User2Mod chat';
 
     // API-only routing_reason values. Stable strings: the parity check and dashboards group on them.
 
@@ -382,6 +390,195 @@ class ChatMessageIngestionService
             trackChatId: $trackChatId,
             touchLastAccess: $touchLastAccess,
         );
+    }
+
+    /**
+     * Write what plan() decided: the chat if it does not exist yet, the chat message and its
+     * chat_messages_tn row in one transaction, then what the email handler does after writing.
+     * The unique key on TN's id decides a race, and a lost race is a duplicate, not an error.
+     */
+    public function apply(ChatIngestPlan $plan): ChatIngestPlan
+    {
+        if ($plan->result !== ChatIngestPlan::RESULT_WRITE) {
+            return $plan;
+        }
+
+        if ($this->dryRun) {
+            return $plan;
+        }
+
+        $record = $plan->record;
+
+        try {
+            [$chatId, $chatMessageId] = TransactionPolicy::atomic(function () use ($plan, $record) {
+                $chatId = $this->chatFor($plan);
+                if ($chatId === null) {
+                    return [null, null];
+                }
+
+                $message = ChatMessage::create([
+                    'chatid' => $chatId,
+                    'userid' => $plan->senderId,
+                    'message' => $plan->text,
+                    'type' => $plan->messageType,
+                    'refmsgid' => $plan->refmsgid,
+                    // The time of ingestion, never TN's date: the notifier admits replies by date
+                    // inside a four-hour look-back (plan 3.5).
+                    'date' => now(),
+                    // As email: ChatProcessService marks it seen and mailed for its sender.
+                    'platform' => 0,
+                    'reviewrequired' => $plan->reviewRequired ? 1 : 0,
+                    'reportreason' => $plan->reportReason,
+                    'processingrequired' => 1,
+                    'replyreceived' => 0,
+                ]);
+
+                ChatMessageTn::create([
+                    'chatmsgid' => $message->id,
+                    'tnmessageid' => $record->id,
+                    'tndate' => $record->date !== null ? gmdate('Y-m-d H:i:s', strtotime($record->date) ?: time()) : null,
+                ]);
+
+                return [$chatId, (int) $message->id];
+            }, 'TN chat message and the record of which feed record it came from');
+        } catch (UniqueConstraintViolationException) {
+            return $plan->withResult(ChatIngestPlan::RESULT_DUPLICATE, self::REASON_DUPLICATE);
+        }
+
+        if ($chatId === null) {
+            return $plan->withResult(ChatIngestPlan::RESULT_DROPPED, $plan->chatType === ChatRoom::TYPE_USER2MOD
+                ? self::REASON_NO_USER2MOD_CHAT
+                : self::REASON_NO_USER_CHAT);
+        }
+
+        if ($plan->touchLastAccess) {
+            DB::table('users')->where('id', $plan->senderId)->update(['lastaccess' => now()]);
+        }
+
+        $sender = User::find($plan->senderId);
+
+        // The rippling hold, on a reply tied to a post, as handleDirectMail does for TN mail.
+        if ($plan->refmsgid !== null && $sender !== null) {
+            $this->holdReplyIfOutsideReach($chatId, $chatMessageId, $plan->refmsgid, $sender);
+        }
+
+        // Only the member handlers mark the notification replied; mail to volunteers does not.
+        if ($plan->outcome === RoutingResult::TO_USER) {
+            $this->trackReply($plan->trackChatId ?? $chatId, $plan->senderId);
+        }
+
+        $context = $plan->context;
+        if (array_key_exists('chat_id', $context) && $context['chat_id'] === null) {
+            $context['chat_id'] = $chatId;
+        }
+
+        return $plan->withWritten($chatId, $chatMessageId, $context);
+    }
+
+    /** The chat to write into, made as the email handler would make it when there is none. */
+    private function chatFor(ChatIngestPlan $plan): ?int
+    {
+        if ($plan->chatType === ChatRoom::TYPE_USER2MOD && $plan->groupId !== null) {
+            // As handleVolunteersMessage: this also brings latestmessage and the roster up to date.
+            return ChatRoom::getOrCreateUser2Mod($plan->senderId, $plan->groupId)?->id;
+        }
+
+        if ($plan->chatId !== null) {
+            return $plan->chatId;
+        }
+
+        if ($plan->recipientId === null) {
+            return null;
+        }
+
+        return $this->getOrCreateUserChat($plan->senderId, $plan->recipientId)?->id;
+    }
+
+    /** IncomingMailService::getOrCreateUserChat(). */
+    private function getOrCreateUserChat(int $userId1, int $userId2): ?ChatRoom
+    {
+        $chat = $this->findUserChat($userId1, $userId2);
+        if ($chat !== null) {
+            return $chat;
+        }
+
+        if ($userId1 > $userId2) {
+            [$userId1, $userId2] = [$userId2, $userId1];
+        }
+
+        $chat = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $userId1,
+            'user2' => $userId2,
+        ]);
+
+        // Without roster rows the members are never mailed about the chat.
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $userId1]);
+        DB::table('chat_roster')->insertOrIgnore(['chatid' => $chat->id, 'userid' => $userId2]);
+
+        return $chat;
+    }
+
+    /** IncomingMailService::trackEmailReply(), recording that the reply came by the TN API. */
+    private function trackReply(int $chatId, int $userId): void
+    {
+        try {
+            DB::table('email_tracking')
+                ->where('email_type', 'ChatNotification')
+                ->where('userid', $userId)
+                ->where('replied_at', null)
+                ->whereJsonContains('metadata->chat_id', $chatId)
+                ->orderByDesc('sent_at')
+                ->limit(1)
+                ->update([
+                    'replied_at' => now(),
+                    'replied_via' => self::REPLIED_VIA,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to track TN chat reply', ['chat_id' => $chatId, 'user_id' => $userId, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** IncomingMailService::holdReplyIfOutsideReach(), with the source TN mail gives it. */
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    {
+        $latlng = $this->resolveReplierLatLng($replier);
+        if ($latlng === null) {
+            return;
+        }
+
+        [$lat, $lng] = $latlng;
+        $service = app(RippleReplyService::class);
+        $band = $replier->settings['browseDensityBand'] ?? null;
+
+        if ($service->shouldHold($msgid, $lat, $lng, is_string($band) ? $band : null)) {
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, 'tn');
+            Log::info('ripple:held-external-reply', [
+                'msgid' => $msgid,
+                'chatid' => $chatId,
+                'chatmsgid' => $chatMsgId,
+                'replieruserid' => $replier->id,
+                'source' => 'tn',
+            ]);
+        }
+    }
+
+    /** IncomingMailService::resolveReplierLatLng(). */
+    private function resolveReplierLatLng(User $replier): ?array
+    {
+        $chosen = User::chosenLatLng($replier->settings, $replier->tnuserid);
+        if ($chosen) {
+            return $chosen;
+        }
+
+        if ($replier->lastlocation) {
+            $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**

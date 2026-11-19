@@ -385,4 +385,118 @@ class ChatMessageIngestionServiceTest extends TestCase
         $this->assertSame('a', TnChatMessage::fromArray(['id' => 'a'])->logId());
         $this->assertSame('b', TnChatMessage::fromArray(['id' => 'a', 'email_log_id' => 'b'])->logId());
     }
+
+    // =========================================================================
+    // apply()
+    // =========================================================================
+
+    public function test_apply_writes_a_chat_reply_as_the_email_path_would(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->tnUser(['lastaccess' => now()->subDays(30)]);
+        $chat = $this->createTestChatRoom($poster, $member);
+        DB::table('email_tracking')->insert([
+            'tracking_id' => substr(md5(uniqid('', true)), 0, 32), 'email_type' => 'ChatNotification',
+            'userid' => $member->id, 'recipient_email' => 'x@example.com',
+            'metadata' => json_encode(['chat_id' => $chat->id]), 'sent_at' => now()->subHour(),
+        ]);
+        $record = $this->record([
+            'kind' => 'chat_reply', 'tn_user_id' => $member->tnuserid, 'fd_chat_id' => $chat->id,
+            'date' => '2026-11-17T10:00:05Z',
+        ]);
+
+        $plan = $this->service->apply($this->service->plan($record));
+
+        $this->assertSame(ChatIngestPlan::RESULT_WRITTEN, $plan->result);
+        $message = ChatMessage::find($plan->chatMessageId);
+        $this->assertSame($chat->id, (int) $message->chatid);
+        $this->assertSame($member->id, (int) $message->userid);
+        $this->assertSame(0, (int) $message->platform);
+        $this->assertSame(1, (int) $message->processingrequired);
+        $this->assertSame('Yes please, I could collect tomorrow evening.', $message->message);
+        // Ingestion time, not TN's date.
+        $this->assertTrue($message->date->gt(now()->subMinute()));
+
+        $tn = ChatMessageTn::where('tnmessageid', $record->id)->first();
+        $this->assertSame($message->id, (int) $tn->chatmsgid);
+        $this->assertSame('2026-11-17 10:00:05', $tn->tndate->format('Y-m-d H:i:s'));
+
+        $this->assertTrue($member->fresh()->lastaccess->gt(now()->subMinute()));
+        $this->assertSame('tn_api', DB::table('email_tracking')->where('userid', $member->id)->value('replied_via'));
+    }
+
+    public function test_apply_creates_the_user2user_chat_with_both_on_the_roster(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $group);
+        $member = $this->tnUser();
+
+        $plan = $this->service->apply($this->service->plan($this->record([
+            'kind' => 'post_reply', 'tn_user_id' => $member->tnuserid, 'fd_msgid' => $post->id,
+        ])));
+
+        $chat = ChatRoom::find($plan->chatId);
+        $this->assertSame(ChatRoom::TYPE_USER2USER, $chat->chattype);
+        $this->assertEqualsCanonicalizing([$poster->id, $member->id], [(int) $chat->user1, (int) $chat->user2]);
+        $this->assertEqualsCanonicalizing([$poster->id, $member->id], DB::table('chat_roster')->where('chatid', $chat->id)->pluck('userid')->map(fn ($id) => (int) $id)->all());
+        $this->assertSame($chat->id, $plan->context['chat_id']);
+
+        $message = ChatMessage::find($plan->chatMessageId);
+        $this->assertSame(ChatMessage::TYPE_INTERESTED, $message->type);
+        $this->assertSame($post->id, (int) $message->refmsgid);
+        // handleDirectMail leaves lastaccess alone.
+        $this->assertFalse($plan->touchLastAccess);
+    }
+
+    public function test_apply_puts_a_volunteers_message_in_the_user2mod_chat_with_the_moderators(): void
+    {
+        $group = $this->createTestGroup();
+        $moderator = $this->createTestUser();
+        $this->createMembership($moderator, $group, ['role' => 'Moderator']);
+        $member = $this->tnUser();
+
+        $plan = $this->service->apply($this->service->plan($this->record([
+            'kind' => 'volunteers', 'tn_user_id' => $member->tnuserid, 'fd_group_id' => $group->id,
+        ])));
+
+        $chat = ChatRoom::find($plan->chatId);
+        $this->assertSame(ChatRoom::TYPE_USER2MOD, $chat->chattype);
+        $this->assertSame($member->id, (int) $chat->user1);
+        $this->assertTrue(DB::table('chat_roster')->where('chatid', $chat->id)->where('userid', $moderator->id)->exists());
+        $this->assertSame(RoutingResult::TO_VOLUNTEERS, $plan->outcome);
+    }
+
+    public function test_a_record_written_twice_is_written_once(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->tnUser();
+        $chat = $this->createTestChatRoom($poster, $member);
+        $record = $this->record(['kind' => 'chat_reply', 'tn_user_id' => $member->tnuserid, 'fd_chat_id' => $chat->id]);
+
+        // Two plans made before either is written: the unique key decides.
+        $first = $this->service->plan($record);
+        $second = $this->service->plan($record);
+
+        $this->assertSame(ChatIngestPlan::RESULT_WRITTEN, $this->service->apply($first)->result);
+        $this->assertSame(ChatIngestPlan::RESULT_DUPLICATE, $this->service->apply($second)->result);
+        $this->assertSame(ChatIngestPlan::RESULT_DUPLICATE, $this->service->plan($record)->result);
+        $this->assertSame(1, ChatMessage::where('chatid', $chat->id)->count());
+    }
+
+    public function test_apply_in_a_dry_run_and_on_a_plan_that_writes_nothing_writes_nothing(): void
+    {
+        $poster = $this->createTestUser();
+        $member = $this->tnUser();
+        $chat = $this->createTestChatRoom($poster, $member);
+        $record = $this->record(['kind' => 'chat_reply', 'tn_user_id' => $member->tnuserid, 'fd_chat_id' => $chat->id]);
+
+        $dry = new ChatMessageIngestionService(dryRun: true);
+        $this->assertSame(ChatIngestPlan::RESULT_WRITE, $dry->apply($dry->plan($record))->result);
+
+        $dropped = $this->service->plan($this->record(['kind' => 'tn_notice']));
+        $this->assertSame($dropped, $this->service->apply($dropped));
+
+        $this->assertSame(0, ChatMessage::where('chatid', $chat->id)->count());
+    }
 }
