@@ -44,6 +44,7 @@ class TNSyncCommand extends Command
     // The feeds whose failure holds the stored date, as the alert names them.
     private const FEED_RATINGS = 'ratings';
     private const FEED_USER_CHANGES = 'user changes';
+    private const FEED_CHAT_MESSAGES = 'chat messages';
 
     // A feed that cannot be read holds the stored date. Sentry hears once the hold has lasted
     // FEED_HOLD_ALERT_MINUTES, and the hold is given up after FEED_HOLD_MAX_MINUTES: the date
@@ -178,11 +179,13 @@ class TNSyncCommand extends Command
                     Log::info('TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off');
                 }
 
-                // Chat messages (plans/2026-11-12-tn-api-chat-ingestion.md). Read-only: each record
-                // is planned and traced, and the email path still writes the message. So a page that
-                // cannot be read loses nothing and does not hold the stored date.
+                // Chat messages (plans/2026-11-12-tn-api-chat-ingestion.md). Before the cutover it
+                // only plans and traces, and the email path writes the message, so a page that cannot
+                // be read loses nothing and does not hold the stored date. After it, this is the only
+                // path, and an unread page holds the date like any feed's.
                 $chatProcessed = 0;
-                if (config('freegle.trashnothing.read_chat_feed') || $this->localTesting) {
+                $chatWrites = (bool) config('freegle.trashnothing.ingest_chat_via_api');
+                if ($chatWrites || config('freegle.trashnothing.read_chat_feed') || $this->localTesting) {
                     $chatSyncer = app()->makeWith(ChatMessageSyncer::class, [
                         'dryRun' => $this->dryRun,
                         'localTesting' => $this->localTesting,
@@ -190,8 +193,12 @@ class TNSyncCommand extends Command
                         'apiKey' => $this->apiKey,
                         'apiBaseUrl' => $this->apiBaseUrl,
                         'loki' => $this->loki,
+                        'write' => $chatWrites,
                     ]);
                     [$chatProcessed, $chatMaxDate] = $chatSyncer->sync($from, $to);
+                    if ($chatWrites && $chatSyncer->fetchFailed()) {
+                        $failedFeeds[] = self::FEED_CHAT_MESSAGES;
+                    }
                     if ($chatMaxDate && (!$maxChangeDate || strtotime($chatMaxDate) > strtotime($maxChangeDate))) {
                         $maxChangeDate = gmdate('Y-m-d\TH:i:s\Z', strtotime($chatMaxDate));
                     }

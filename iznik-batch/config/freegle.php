@@ -473,6 +473,19 @@ return [
         // tn:sync run would otherwise ask for a feed that is not there.
         'read_chat_feed' => EnvSetting::env('FREEGLE_TN_READ_CHAT_FEED', false),
 
+        // CUTOVER SWITCH for TN members' chat messages, separate from the posts one so the two
+        // cut over and roll back on their own. One switch for both halves, because neither is safe
+        // alone: on, tn:sync writes what the chat feed carries (ChatMessageSyncer), the email path
+        // stops routing the same mail (TnEmailRoutingGate; still archived), tn:verify-chat-coverage
+        // runs, and the tn:sync (chat) scheduled-outcome check is live. Off again, the email path
+        // routes TN chat mail at once, which is why TN keeps emailing through the soak.
+        'ingest_chat_via_api' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_VIA_API', false),
+
+        // Which kinds of TN chat message the cutover moves (TnChatMessage::KINDS, comma separated),
+        // so it can start with some rows of the plan's section 1 and leave the rest on email. Both
+        // halves of the switch read this one list.
+        'ingest_chat_kinds' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_KINDS', 'chat_reply,post_reply,user_message,volunteers,report'),
+
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
         // key, so this is enforced once for the whole run by
