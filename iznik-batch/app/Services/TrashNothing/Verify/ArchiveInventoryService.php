@@ -69,31 +69,7 @@ class ArchiveInventoryService
             return ['posts' => $posts, 'stats' => $stats];
         }
 
-        $slop = $this->filenameSlopSeconds();
-
-        foreach ($this->archive->files(...$this->dateRange($from, $to)) as $path) {
-            // Prefilter on the filename before touching the file. The archive
-            // holds ALL inbound mail, not just TN posts, so at production
-            // volume the alternative is reading and base64-decoding tens of
-            // thousands of unrelated emails every hour to find a window an
-            // hour wide.
-            if (! $this->filenameCouldBeInWindow($path, $from, $to, $slop)) {
-                continue;
-            }
-
-            $stats['files_scanned']++;
-
-            $record = $this->archive->read($path);
-            if ($record === null) {
-                $stats['files_unreadable']++;
-                continue;
-            }
-
-            $timestamp = $this->archive->recordTimestamp($record);
-            if ($timestamp === null || $timestamp->lt($from) || $timestamp->gt($to)) {
-                continue;
-            }
-
+        foreach ($this->archive->recordsBetween($from, $to, $stats) as [$path, $record, $timestamp]) {
             $entry = $this->extractTnPost($record, $timestamp, $path);
             if ($entry !== null) {
                 $this->addEntry($posts, $stats, $entry);
@@ -103,20 +79,6 @@ class ArchiveInventoryService
         $stats['tn_posts'] = count($posts);
 
         return ['posts' => $posts, 'stats' => $stats];
-    }
-
-    /**
-     * Date-directory bounds for the window, widened by a day either side.
-     *
-     * The padding covers the app-timezone/UTC mismatch described on
-     * filenameSlopSeconds(); the authoritative filter is the record's own
-     * timestamp, applied in collect().
-     *
-     * @return array{string, string}
-     */
-    private function dateRange(CarbonImmutable $from, CarbonImmutable $to): array
-    {
-        return [$from->subDay()->format('Y-m-d'), $to->addDay()->format('Y-m-d')];
     }
 
     /**
@@ -138,43 +100,6 @@ class ArchiveInventoryService
         if ($entry['timestamp'] < $posts[$postId]['timestamp']) {
             $posts[$postId] = $entry;
         }
-    }
-
-    /**
-     * How far a filename's implied time may sit from the record's own UTC
-     * timestamp.
-     *
-     * IncomingArchiveService names files with date()/His (app timezone) but
-     * stamps records with gmdate() (UTC), so the two differ by the app's UTC
-     * offset — zero today, since config('app.timezone') is UTC. Deriving the
-     * slop from the configured timezone rather than assuming keeps the
-     * prefilter correct if that ever changes, and the extra hour covers DST
-     * plus the gap between naming a file and writing it.
-     */
-    private function filenameSlopSeconds(): int
-    {
-        $offsetMinutes = CarbonImmutable::now(config('app.timezone', 'UTC'))->utcOffset();
-
-        return abs($offsetMinutes) * 60 + 3600;
-    }
-
-    /**
-     * Cheap window test from the path alone.
-     *
-     * Deliberately inclusive: a file whose name cannot be parsed is kept, so a
-     * naming change upstream degrades performance rather than silently dropping
-     * posts from the inventory. collect() applies the authoritative test.
-     */
-    private function filenameCouldBeInWindow(string $path, CarbonImmutable $from, CarbonImmutable $to, int $slop): bool
-    {
-        $stamp = $this->archive->filenameTimestamp($path);
-
-        if ($stamp === null) {
-            return true;
-        }
-
-        return $stamp->getTimestamp() >= $from->getTimestamp() - $slop
-            && $stamp->getTimestamp() <= $to->getTimestamp() + $slop;
     }
 
     /**

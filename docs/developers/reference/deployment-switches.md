@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-15
+last_reviewed: 2026-11-19
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -125,6 +125,12 @@ variables like every other Freegle setting.
 | `support.first_pass.run_minutes` | `SUPPORT_FIRST_PASS_RUN_MINUTES` | `10` | One `support:first-pass` run stops taking new referrals after this long. |
 | `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
+| `trashnothing.read_chat_feed` | `FREEGLE_TN_READ_CHAT_FEED` | off | On, `tn:sync` reads TrashNothing's chat-messages feed and traces what it would write, writing nothing, and `tn:chat-parity-check` runs hourly against the incoming archive. Leave it off until TN serves the feed, or every run asks for one that is not there. See [trashnothing.md](trashnothing.md#chat-messages-via-the-api). |
+| `trashnothing.ingest_chat_via_api` | `FREEGLE_TN_INGEST_CHAT_VIA_API` | off | The chat cutover. On, `tn:sync` writes TN members' chat messages from the feed, the email path stops routing the same mail (it is still archived), `tn:verify-chat-coverage` runs hourly and the `tn:sync (chat)` scheduled-outcome check is live. Off again, the email path routes it at once. Run `2026_11_19_000002_add_tn_api_to_email_tracking_replied_via_migration.sql` first. See [trashnothing.md](trashnothing.md#chat-messages-via-the-api). |
+| `trashnothing.ingest_chat_kinds` | `FREEGLE_TN_INGEST_CHAT_KINDS` | `chat_reply,post_reply,user_message,volunteers,report` | Which kinds of TN chat message the cutover moves. Both halves of the switch read it, so a kind left out stays on email. |
+| `trashnothing.verify_chat_coverage.*` | `FREEGLE_TN_VERIFY_CHAT_LAG_MINUTES`, `_WINDOW_MINUTES`, `_OVERLAP_MINUTES`, `_AUTO_INGEST`, `_AUTO_INGEST_MAX`, `_MAX_AGE_HOURS` | `60`, `60`, `15`, off, `20`, `24` | `tn:verify-chat-coverage`: how far behind real time it checks, over what window, and whether it writes a miss TN still has (none above the cap in one run, none older than the age limit). |
+| `trashnothing.parity_allow_writes` | `FREEGLE_TN_PARITY_ALLOW_WRITES` | off | Lets `tn:chat-parity-check --apply` write chat messages. Set only on yesterday's discardable clone. |
+| `monitoring.tn_chat_max_age_hours`, `monitoring.tn_chat_min_expected` | `FREEGLE_MONITORING_TN_CHAT_MAX_AGE_HOURS`, `FREEGLE_MONITORING_TN_CHAT_MIN` | `6`, `1` | The `tn:sync (chat)` check: fewer than this many TN chat messages written from the feed in this many hours alerts, once the chat cutover is on. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's
 `env()` with one change: a variable that is unset, empty or only spaces is the default.
