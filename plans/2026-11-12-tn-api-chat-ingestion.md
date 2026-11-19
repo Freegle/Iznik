@@ -877,6 +877,39 @@ What to run there:
 | 4 | Cutover: turn the flag on. TN keeps emailing; the coverage check runs | Yes |
 | 5 | After the soak, TN stops emailing chat messages. Later, outbound | Yes |
 
+### Implementation status (19 November)
+
+The code for phases 1 and 3 is on branch `tn-chat-api`, against the contract in section 7.1 as
+proposed: TN has not built the endpoint, so it is tested on fixtures only. Both flags are off.
+
+Built: `chat_messages_tn`; `TnChatMessage`; `ChatMessageIngestionService::plan()` and `apply()`;
+`ChatMessageSyncer` in `tn:sync`; `TnEmailRoutingGate::trashNothingChatKind()` and the skip;
+`LokiService::logIngestedChatMessage`; `tn:chat-parity-check` (archive and `db` sides, `--apply`);
+`tn:verify-chat-coverage`; the `tn:sync (chat)` scheduled-outcome check; the drift test; docs.
+
+Decided while building, for review:
+
+- **A read-only flag of its own, `FREEGLE_TN_READ_CHAT_FEED`.** Reading the feed in `tn:sync` before
+  TN serves it would ask for a missing endpoint every ten seconds. While only reading, an unreadable
+  page does not hold the stored date (the email path still writes the messages); after the cutover
+  it does.
+- **Per-kind cutover (decision 3) is `FREEGLE_TN_INGEST_CHAT_KINDS`**, read by both the gate and the
+  syncer.
+- **`email_tracking.replied_via` is `enum('amp','website','email')`, not a varchar**, so `tn_api`
+  needed a migration (appending an enum value, `ALGORITHM=INSTANT`).
+- **The gate leaves every auto-reply to email**, as 4.3 says, although the email path drops a chat
+  reply's auto-reply only when the chat had a message in the last five hours. A message that reads
+  like an auto-reply, in an older chat, would be written by both paths. The parity run will show
+  whether that happens.
+- **Records not written are noted in `DeliberateSkips`** (`chat:{id}`), which also keeps a re-read
+  window from logging them twice and tells the coverage check they were decided.
+- **Not built yet:** parity layer 5 (comparing Loki entries), the `db` side's drop counts from Loki,
+  and photos.
+
+To check on yesterday before relying on the gate: that `ParsedEmail::isFromTrashNothing()` is true
+for TN chat mail, i.e. its envelope-from is at `trashnothing.com` (Q13). If not, the gate matches
+nothing, the parity check sees no email side, and every record looks like an extra.
+
 **Tests**, for each PR: the ingestion service per row of section 1 and per drop reason; the
 syncer's paging, day windows, ordering, `fetchFailed()` and the stored-date hold; idempotency on a
 re-read window; a test that feeds the same message through `route()` and through the API path and
