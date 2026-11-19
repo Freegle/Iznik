@@ -4,11 +4,6 @@ namespace Tests\Feature\TrashNothing;
 
 use App\Models\ChatRoom;
 use App\Models\User;
-use App\Services\Mail\Incoming\IncomingArchiveReader;
-use App\Services\Mail\Incoming\MailParserService;
-use App\Services\TrashNothing\Verify\ChatEmailInventory;
-use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
-use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -21,6 +16,8 @@ use Tests\TestCase;
  */
 class TNChatParityCheckCommandTest extends TestCase
 {
+    use WritesTnChatArchive;
+
     private const WINDOW = ['--date-min' => '2026-11-17T10:00:00Z', '--date-max' => '2026-11-17T11:00:00Z'];
 
     private const ARRIVAL = '2026-11-17 10:30:00';
@@ -30,8 +27,6 @@ class TNChatParityCheckCommandTest extends TestCase
     private User $member;
 
     private ChatRoom $chat;
-
-    private ?string $archiveDir = null;
 
     protected function setUp(): void
     {
@@ -48,31 +43,13 @@ class TNChatParityCheckCommandTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->archiveDir !== null) {
-            foreach (glob($this->archiveDir . '/*/*') ?: [] as $f) {
-                @unlink($f);
-            }
-            foreach (glob($this->archiveDir . '/*') ?: [] as $d) {
-                @rmdir($d);
-            }
-            @rmdir($this->archiveDir);
-        }
+        $this->removeChatArchive();
         parent::tearDown();
     }
 
     private function rawReply(string $logId, string $text): string
     {
-        $to = "notify-{$this->chat->id}-{$this->member->id}@" . config('freegle.mail.user_domain');
-
-        return implode("\r\n", [
-            'From: Member <member-g1@user.trashnothing.com>',
-            'To: ' . $to,
-            'Subject: Re: OFFER: Bookcase (Town)',
-            'Message-ID: <' . $logId . '@m2.trashnothing.com>',
-            'Date: Tue, 17 Nov 2026 10:30:00 +0000',
-            'X-Trash-Nothing-Log-Id: ' . $logId,
-            'X-Trash-Nothing-User-Id: ' . $this->member->tnuserid,
-        ]) . "\r\n\r\n" . $text . "\r\n";
+        return $this->tnChatReply($this->chat->id, $this->member->id, $this->member->tnuserid, $logId, $text);
     }
 
     /** The email path's work: the chat message, and its raw mail kept beside it. */
@@ -228,28 +205,6 @@ class TNChatParityCheckCommandTest extends TestCase
 
     private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'bounce@trashnothing.com'): void
     {
-        if ($this->archiveDir === null) {
-            $this->archiveDir = storage_path('incoming-archive/test-chat-parity-' . uniqid('', true));
-            $dir = $this->archiveDir;
-            $this->app->bind(ChatEmailInventory::class, fn () => new ChatEmailInventory(
-                new IncomingArchiveReader(app(MailParserService::class), $dir),
-                app(MailParserService::class),
-                new TnEmailRoutingGate,
-            ));
-        }
-
-        $ts = CarbonImmutable::parse(self::ARRIVAL, 'UTC');
-        $dateDir = $this->archiveDir . '/' . $ts->format('Y-m-d');
-        if (!is_dir($dateDir)) {
-            mkdir($dateDir, 0755, true);
-        }
-
-        file_put_contents($dateDir . '/' . $ts->format('His') . '_' . random_int(100000, 999999) . '.json', json_encode([
-            'version' => 3,
-            'timestamp' => $ts->format('Y-m-d\TH:i:s\Z'),
-            'envelope' => ['from' => $envelopeFrom, 'to' => "notify-{$this->chat->id}-{$this->member->id}@" . config('freegle.mail.user_domain')],
-            'raw_email' => base64_encode($raw),
-            'routing_outcome' => $outcome,
-        ]));
+        $this->archiveChatMail($raw, $this->notifyAddress($this->chat->id, $this->member->id), $outcome, self::ARRIVAL, $envelopeFrom);
     }
 }
