@@ -136,6 +136,17 @@ class ChatMessageSyncer
     }
 
     /**
+     * Plan one record and, when this syncer writes, write it as sync() would: the coverage check's
+     * backfill, so a late message gets the same checks, note and routed entry as any other.
+     */
+    public function ingestOne(TnChatMessage $record): ChatIngestPlan
+    {
+        $plan = $this->ingestion->plan($record);
+
+        return $this->write ? $this->writePlan($plan) : $plan;
+    }
+
+    /**
      * The kinds of TN chat message the cutover has moved, from freegle.trashnothing.ingest_chat_kinds.
      * The gate reads the same list, so a kind is never both skipped by email and left unwritten.
      *
@@ -261,6 +272,37 @@ class ChatMessageSyncer
         }
 
         Log::info($line);
+    }
+
+    /**
+     * One record by TN's id (GET /fd/api/chat-messages/{id}), for the coverage check to ask TN
+     * about a message that arrived by email and was never written.
+     *
+     * @return array{0: string, 1: TnChatMessage|null}  'found' with the record, 'absent' when TN has
+     *                                                 none, or 'error' when TN could not be asked.
+     */
+    public function fetchRecord(string $id): array
+    {
+        ($this->rateLimiter ?? app(TrashNothingRateLimiter::class))->await();
+
+        $response = Http::get("{$this->apiBaseUrl}/chat-messages/" . rawurlencode($id), ['key' => $this->apiKey]);
+
+        if ($response->status() === 404) {
+            return ['absent', null];
+        }
+
+        $row = $response->successful() ? ($response->json('chat_message') ?? $response->json()) : null;
+        if (!is_array($row)) {
+            Log::warning('TN sync: chat-messages lookup failed', ['tn_message_id' => $id, 'status' => $response->status()]);
+
+            return ['error', null];
+        }
+
+        try {
+            return ['found', TnChatMessage::fromArray($row)];
+        } catch (\InvalidArgumentException) {
+            return ['error', null];
+        }
     }
 
     /**
