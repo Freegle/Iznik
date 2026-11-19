@@ -226,6 +226,45 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->assertTrue(DB::table('chat_messages_tn')->where('tnmessageid', $logId)->exists());
     }
 
+    public function test_a_feed_built_from_the_email_needs_no_tn_and_agrees_with_the_email_path(): void
+    {
+        Http::preventStrayRequests();
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+
+        $this->check('db', ['--feed' => 'email'])
+            ->expectsOutputToContain('Feed: built from the email, 1 records')
+            ->expectsOutputToContain('[ok]   Layer 4, both wrote but differ: 0')
+            ->assertExitCode(0);
+    }
+
+    public function test_a_feed_built_from_the_email_shows_the_tn_id_rule_on_a_shared_account(): void
+    {
+        Http::preventStrayRequests();
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+        // The mail names a TN id no account holds, as on an account two members share.
+        DB::table('messages')->where('messageid', $logId . '@m2.trashnothing.com')->update([
+            'message' => str_replace('X-Trash-Nothing-User-Id: ' . $this->member->tnuserid, 'X-Trash-Nothing-User-Id: 1', $this->rawReply($logId, 'See you at six.')),
+        ]);
+
+        $this->check('db', ['--feed' => 'email'])
+            ->expectsOutputToContain('[note] Explained by the TN id rule (3.1): 1')
+            ->assertExitCode(0);
+    }
+
+    public function test_a_feed_built_from_the_email_can_be_applied(): void
+    {
+        config(['freegle.trashnothing.parity_allow_writes' => true]);
+        Http::preventStrayRequests();
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+
+        $this->check('db', ['--feed' => 'email', '--apply' => true])
+            ->expectsOutputToContain('Applied: 1 written of 1 records')
+            ->assertExitCode(0);
+    }
+
     private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'member-g1@user.trashnothing.com'): void
     {
         $this->archiveChatMail($raw, $this->notifyAddress($this->chat->id, $this->member->id), $outcome, self::ARRIVAL, $envelopeFrom);

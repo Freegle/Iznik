@@ -960,7 +960,9 @@ allowed when its reason is one `chats:process-incoming` writes, since processing
 never clear one. Differences the TN id rule explains are listed apart. On batch-prod it reads the
 incoming archive (`--email-side=archive`); on yesterday it reads the raw mail kept beside each chat
 message (`--email-side=db`), which lasts about two days, and `--apply` there writes the API rows
-for real to compare them (refused unless `FREEGLE_TN_PARITY_ALLOW_WRITES` is set). It prints ids,
+for real to compare them (refused unless `FREEGLE_TN_PARITY_ALLOW_WRITES` is set). `--feed=email`
+builds, from each email, the record TN's feed should give for it (`SyntheticChatFeed`), so our side can
+be tested on real mail before TN serves the feed. It prints ids,
 kinds and field names, never what anyone wrote. It does not yet compare the two paths' Loki entries.
 
 **After the cutover.** `tn:verify-chat-coverage` checks that every archived TN chat email of a moved

@@ -41,6 +41,7 @@ class TNChatParityCheckCommand extends Command
                             {--date-min= : Start of the window (ISO-8601, UTC). Default: two hours before the end of the email side}
                             {--date-max= : End of the window (ISO-8601, UTC). Default: an hour before the end of the email side}
                             {--email-side=archive : Where the email side comes from: "archive" (batch-prod) or "db" (yesterday: the raw mail kept beside each chat message)}
+                            {--feed=tn : Where the API side comes from: "tn" (TN\'s chat-messages feed) or "email" (the record TN should send, built from each email, to test our side before TN serves the feed)}
                             {--apply : Write the API path\'s messages for real first, and compare written rows. Yesterday only: refused unless FREEGLE_TN_PARITY_ALLOW_WRITES is set}
                             {--json : Print the whole report as JSON}';
 
@@ -61,31 +62,44 @@ class TNChatParityCheckCommand extends Command
             return Command::FAILURE;
         }
 
+        $feed = (string) $this->option('feed');
+        if (!in_array($feed, ['tn', 'email'], true)) {
+            $this->error('--feed must be "tn" or "email".');
+
+            return Command::FAILURE;
+        }
+
         [$from, $to] = $this->window($side);
         $this->info("TN chat parity, {$side} side, {$from->toIso8601ZuluString()} to {$to->toIso8601ZuluString()}");
 
-        $emails = $side === 'db' ? $inventory->fromDatabase($from, $to) : $inventory->fromArchive($from, $to);
+        $synthesize = $feed === 'email';
+        $emails = $side === 'db' ? $inventory->fromDatabase($from, $to, $synthesize) : $inventory->fromArchive($from, $to, $synthesize);
         if ($side === 'archive' && !$emails['stats']['archive_present']) {
             $this->error('The incoming archive is missing, so there is nothing to compare against.');
 
             return Command::FAILURE;
         }
 
-        $syncer = new ChatMessageSyncer(
-            dryRun: true,
-            localTesting: false,
-            apiKey: (string) config('freegle.trashnothing.api_key', ''),
-            apiBaseUrl: (string) config('freegle.trashnothing.api_base_url', ''),
-            loki: $loki,
-        );
-        $records = $syncer->records(
-            $from->subMinutes(self::FEED_SLOP_MINUTES)->toIso8601ZuluString(),
-            $to->addMinutes(self::FEED_SLOP_MINUTES)->toIso8601ZuluString(),
-        );
-        if ($syncer->fetchFailed()) {
-            $this->error('TN\'s chat-messages feed could not be read in full, so the comparison would be wrong.');
+        if ($synthesize) {
+            $records = array_values(array_filter(array_column($emails['entries'], 'record')));
+            $this->line('Feed: built from the email, ' . count($records) . ' records. This tests our side only.');
+        } else {
+            $syncer = new ChatMessageSyncer(
+                dryRun: true,
+                localTesting: false,
+                apiKey: (string) config('freegle.trashnothing.api_key', ''),
+                apiBaseUrl: (string) config('freegle.trashnothing.api_base_url', ''),
+                loki: $loki,
+            );
+            $records = $syncer->records(
+                $from->subMinutes(self::FEED_SLOP_MINUTES)->toIso8601ZuluString(),
+                $to->addMinutes(self::FEED_SLOP_MINUTES)->toIso8601ZuluString(),
+            );
+            if ($syncer->fetchFailed()) {
+                $this->error('TN\'s chat-messages feed could not be read in full, so the comparison would be wrong.');
 
-            return Command::FAILURE;
+                return Command::FAILURE;
+            }
         }
 
         if ($this->option('apply')) {
@@ -99,6 +113,7 @@ class TNChatParityCheckCommand extends Command
 
         $loki->logBatchJob('tn:chat-parity-check', $report->failed() ? 'failed' : 'completed', $report->summary() + [
             'email_side' => $side,
+            'feed' => $feed,
             'date_min' => $from->toIso8601ZuluString(),
             'date_max' => $to->toIso8601ZuluString(),
         ]);

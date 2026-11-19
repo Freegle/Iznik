@@ -39,7 +39,7 @@ class ChatEmailInventory
     /**
      * @return array{entries: array<string, array>, stats: array<string, int|bool>}
      */
-    public function fromArchive(CarbonImmutable $from, CarbonImmutable $to): array
+    public function fromArchive(CarbonImmutable $from, CarbonImmutable $to, bool $synthesize = false): array
     {
         $entries = [];
         $stats = ['archive_present' => $this->archive->exists(), 'files_scanned' => 0, 'files_unreadable' => 0, 'no_log_id' => 0, 'duplicates' => 0];
@@ -65,7 +65,7 @@ class ChatEmailInventory
             }
 
             $outcome = isset($record['routing_outcome']) ? (string) $record['routing_outcome'] : null;
-            $this->add($entries, $stats, $email, $timestamp, $outcome, fn () => $this->chatMessageForMessageId($email->messageId));
+            $this->add($entries, $stats, $email, $timestamp, $outcome, fn () => $this->chatMessageForMessageId($email->messageId), $synthesize);
         }
 
         return ['entries' => $entries, 'stats' => $stats];
@@ -77,7 +77,7 @@ class ChatEmailInventory
      *
      * @return array{entries: array<string, array>, stats: array<string, int|bool>}
      */
-    public function fromDatabase(CarbonImmutable $from, CarbonImmutable $to): array
+    public function fromDatabase(CarbonImmutable $from, CarbonImmutable $to, bool $synthesize = false): array
     {
         $entries = [];
         $stats = ['rows' => 0, 'no_log_id' => 0, 'duplicates' => 0];
@@ -92,7 +92,7 @@ class ChatEmailInventory
             // One raw mail can be linked to more than one chat message; the first is the text.
             ->orderBy('m.id')
             ->orderBy('cme.chatmsgid')
-            ->chunk(500, function ($rows) use (&$entries, &$stats, &$lastMsgId) {
+            ->chunk(500, function ($rows) use (&$entries, &$stats, &$lastMsgId, $synthesize) {
                 foreach ($rows as $row) {
                     if ($row->id === $lastMsgId) {
                         continue;
@@ -110,7 +110,7 @@ class ChatEmailInventory
                     $outcome = $chatMessage === null ? null
                         : ($chatMessage['chat_type'] === 'User2Mod' ? RoutingResult::TO_VOLUNTEERS->value : RoutingResult::TO_USER->value);
 
-                    $this->add($entries, $stats, $email, CarbonImmutable::parse($row->arrival, 'UTC'), $outcome, fn () => $chatMessage);
+                    $this->add($entries, $stats, $email, CarbonImmutable::parse($row->arrival, 'UTC'), $outcome, fn () => $chatMessage, $synthesize);
                 }
             });
 
@@ -166,8 +166,11 @@ class ChatEmailInventory
         ];
     }
 
-    /** @param callable(): ?array $chatMessage  Looked up only for TN chat mail. */
-    private function add(array &$entries, array &$stats, ParsedEmail $email, CarbonImmutable $timestamp, ?string $outcome, callable $chatMessage): void
+    /**
+     * @param  callable(): ?array  $chatMessage  Looked up only for TN chat mail.
+     * @param  bool  $synthesize  Also give each entry the record TN's feed should give for it (SyntheticChatFeed).
+     */
+    private function add(array &$entries, array &$stats, ParsedEmail $email, CarbonImmutable $timestamp, ?string $outcome, callable $chatMessage, bool $synthesize = false): void
     {
         $kind = $this->gate->trashNothingChatKind($email);
         if ($kind === null) {
@@ -195,5 +198,9 @@ class ChatEmailInventory
             'outcome' => $outcome,
             'chat_message' => $chatMessage(),
         ];
+
+        if ($synthesize) {
+            $entries[$logId]['record'] = SyntheticChatFeed::fromEmail($email, $kind, $timestamp);
+        }
     }
 }
