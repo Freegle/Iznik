@@ -180,4 +180,77 @@ class TnEmailRoutingGateTest extends TestCase
         $this->assertTrue($this->gate()->shouldSkipRouting($tnPost));
         $this->assertFalse($this->gate()->shouldSkipRouting($memberPost));
     }
+
+    // =========================================================================
+    // TN chat messages (plans/2026-11-12-tn-api-chat-ingestion.md, section 4.3)
+    // =========================================================================
+
+    private function userAddress(string $localPart): string
+    {
+        return $localPart . '@' . config('freegle.mail.user_domain');
+    }
+
+    /** @param array<string, string> $headers */
+    private function chatMail(string $envelopeTo, array $headers = [], array $overrides = []): \App\Services\Mail\Incoming\ParsedEmail
+    {
+        return $this->parse($envelopeTo, $headers, $overrides + [
+            'subject' => 'Re: OFFER: Bookshelf (Camden)',
+            'from' => 'Replier <replier-g123@user.trashnothing.com>',
+            'envelopeFrom' => 'bounce-replier@trashnothing.com',
+        ]);
+    }
+
+    public function test_chat_kinds_for_each_row_the_feed_carries(): void
+    {
+        $gate = $this->gate();
+
+        $this->assertSame('chat_reply', $gate->trashNothingChatKind($this->chatMail($this->userAddress('notify-123-456'))));
+        $this->assertSame('post_reply', $gate->trashNothingChatKind($this->chatMail($this->userAddress('poster-456'), ['X-FD-MsgId' => '123456789'])));
+        $this->assertSame('user_message', $gate->trashNothingChatKind($this->chatMail($this->userAddress('poster-456'))));
+        $this->assertSame('volunteers', $gate->trashNothingChatKind($this->chatMail($this->groupAddress('camdengroup-volunteers'), [], ['subject' => 'A question'])));
+        $this->assertSame('report', $gate->trashNothingChatKind($this->chatMail($this->groupAddress('camdengroup-volunteers'), [], ['subject' => 'Reporting member "x"'])));
+        $this->assertTrue($gate->isTrashNothingChatMessage($this->chatMail($this->userAddress('notify-123-456'))));
+    }
+
+    public function test_chat_gate_ignores_mail_not_from_a_tn_member(): void
+    {
+        $gate = $this->gate();
+
+        // A Freegle member replying by email.
+        $member = $this->chatMail($this->userAddress('notify-123-456'), [], ['from' => 'M <member@example.com>', 'envelopeFrom' => 'member@example.com']);
+        $this->assertNull($gate->trashNothingChatKind($member));
+
+        // TN's own notice to volunteers (row 9) stays on email until the feed carries it.
+        $notice = $this->chatMail($this->groupAddress('camdengroup-volunteers'), [], ['from' => 'Trash Nothing <noreply@trashnothing.com>', 'envelopeFrom' => 'noreply@trashnothing.com']);
+        $this->assertNull($gate->trashNothingChatKind($notice));
+
+        // A TN From with a non-TN envelope is not TN's mail.
+        $forged = $this->chatMail($this->userAddress('notify-123-456'), [], ['envelopeFrom' => 'someone@example.com']);
+        $this->assertNull($gate->trashNothingChatKind($forged));
+    }
+
+    public function test_chat_gate_leaves_what_an_earlier_phase_or_the_handler_claims_first(): void
+    {
+        $gate = $this->gate();
+
+        foreach (['digestoff-456-7', 'eventsoff-456', 'unsubscribe-456-abc-x', 'readreceipt-1-2-3', 'handover-9', 'bounce-456-1700000000', 'replyto-123-456'] as $local) {
+            $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->userAddress($local))), $local);
+        }
+
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->groupAddress('camdengroup-subscribe'))));
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->groupAddress('camdengroup-auto'))));
+        // A group post is not chat.
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->groupAddress('camdengroup'))));
+
+        // handleChatNotificationReply drops these before writing anything.
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->userAddress('notify-123-456'), ['Auto-Submitted' => 'auto-replied'])));
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->userAddress('notify-123-456'), [], ['subject' => 'Out of Office'])));
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->userAddress('notify-123-456'), ['Content-Type' => 'multipart/report; report-type=disposition-notification'])));
+
+        // route() drops an auto-reply before direct mail is reached.
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail($this->userAddress('poster-456'), [], ['subject' => 'Automatic reply'])));
+
+        // Mail to an address that is not a member's on our domain.
+        $this->assertNull($gate->trashNothingChatKind($this->chatMail('someone@example.com')));
+    }
 }
