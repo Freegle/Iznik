@@ -1,0 +1,29 @@
+# Non-default settings in /etc/monit/monitrc on the mail relay. The rest of that
+# file is the stock Debian monitrc (all comments), so restore by editing the
+# packaged file rather than replacing it.
+
+set daemon 60               # CYCLE LENGTH. Every "for N cycles" in conf.d/ is N*60s here.
+    with start delay 60     # first check 1 min after monit starts - see ops/hosts/README.md
+set logfile /var/log/monit.log
+set idfile /var/lib/monit/id
+set statefile /var/lib/monit/state
+set mailserver localhost
+set eventqueue
+    basedir /var/lib/monit/events
+    slots 100
+set mail-format {
+  from: monit-$HOST@__MAIL_DOMAIN__
+  subject: monit alert --  $EVENT $SERVICE
+  message: $EVENT Service $SERVICE
+                Date:        $DATE
+                Action:      $ACTION
+                Host:        $HOST
+                Description: $DESCRIPTION
+           Your faithful employee,
+           Monit
+}
+set alert __ALERT_EMAIL__ not on { instance, action } with reminder on 10 cycles
+set httpd port 2812 and
+   use address localhost
+   allow localhost
+include /etc/monit/conf.d/*

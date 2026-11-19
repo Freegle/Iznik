@@ -168,7 +168,8 @@ class ResumedReachTest extends TestCase
         $user = $this->createTestUser();
         $user->settings = ['mylocation' => ['lat' => $at[0], 'lng' => $at[1]]];
         $user->save();
-        $this->createMembership($user, $group);
+        // A long-standing member: reach mail leaves out a post from before the member joined.
+        $this->createMembership($user, $group, ['added' => now()->subDays(30)]);
 
         return $user->fresh();
     }

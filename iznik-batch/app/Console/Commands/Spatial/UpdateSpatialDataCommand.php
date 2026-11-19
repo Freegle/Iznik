@@ -74,9 +74,9 @@ class UpdateSpatialDataCommand extends Command
                 $this->info("  Written to: {$csvPath}");
             }
 
-            // No reload call: the routing server has no reload endpoint. monit's spatial-pbf
-            // check restarts it when uk-latest.osm.pbf changes, and the restart reads both
-            // files.
+            // No reload call: the routing servers serve the reach-engine artifacts, not
+            // this PBF. freegle-maint's reach profile rebuilds those from it and switches
+            // them in, recreating the routing containers, which also reads this CSV.
 
             $this->newLine();
             $this->info('Spatial data update complete.');

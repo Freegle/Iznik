@@ -73,6 +73,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Advertising | [./reference/ads.md](./reference/ads.md) |
 | Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
 | Merging two accounts | [./reference/account-merge.md](./reference/account-merge.md) |
+| Waiting after failed logins | [./reference/login-backoff.md](./reference/login-backoff.md) |
 | The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
 | Impact figures on the stats pages (benefit, fly-tipping, inflation) | [./reference/impact-figures.md](./reference/impact-figures.md) |
