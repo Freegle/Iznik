@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-16
+last_reviewed: 2026-11-18
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -286,17 +286,40 @@ Style section asks for them in the second person ("you haven't verified your ema
 never "she hasn't"), with no internal names, under a **Suggested reply** heading in a
 blockquote. The draft can then be copied out as-is and the analysis left behind.
 
-**The tone.** The prompt asks for a reply that sounds like a kind, capable volunteer wrote it: a
-greeting, a warm line showing the problem was understood, short sentences, plain words and
-contractions, one apology at most, one or two clear next steps, and none of the stock phrases
-that mark machine writing. It is under about 120 words unless the problem needs more.
+**The tone.** The prompt asks for a reply that reads like the ones the support volunteers write
+themselves (`REPLY_VOICE` in `prompt.js`). It was set from 419 replies sent from the support@ and
+info@ mailboxes to people outside Freegle in the four months to November 2026:
+
+| | Volunteers' replies | The helper's drafts before |
+|---|---|---|
+| Median length | about 55 words with the sign-off | 110 words |
+| Middle half | 37 to 94 words | 92 to 140 words |
+| Greeting | "Hi" (half), "Good morning" and the like (a quarter) | "Hi" or "Hello" |
+| Sign-off | "Best wishes" or "With warm wishes", then a first name (six in seven) | "Thanks, and best wishes" |
+
+So the prompt asks for the answer first, directions that name what is on the screen, one question
+when the cause is not known, one short apology only when something went wrong, and "Best wishes" as
+the last line. The helper cannot pass a fault on, so a draft never says that it has: the analysis
+tells the volunteer, who adds the line. Those rules (`REPLY_VOICE`) are shared with the first pass.
+
+A reply to a member has more (`MEMBER_REPLY_SHAPE`): 30 to 80 words, "Hi" and a first name on its
+own line (no time of day, as nobody knows when it will be sent), what happened and what to do
+without how Freegle works inside, and three made-up replies as examples of length and shape. The
+first pass writes to a moderator, who needs the cause, so its draft opens "Hi" with no name and
+runs to about 100 words. The few volunteer replies over 170 words in the sample were helper drafts
+that had been pasted.
+
+To measure again, sample `in:sent` in both mailboxes read-only (the reader in `mail-history.js`
+opens with EXAMINE and fetches with BODY.PEEK), cut each mail at the quoted trail and count
+words. Keep the mail out of the repository.
 
 **The review pass.** When an answer contains a **Suggested reply**, `support-agent.js` makes a
 second model turn before the volunteer sees anything (`reviewPrompt()` in `prompt.js`). It
 resumes the same session, so every tool result the draft relied on is still in front of the
 model, and asks it to list each factual claim, confirm each against what the tools returned
 (querying again if unsure), remove or turn into a question anything it cannot support, drop
-promises of fixes, dates or refunds, and rewrite the tone if it is off. The answer comes back
+promises of fixes, dates or refunds, rewrite the tone if it is off, and cut a reply of over 80
+words. The answer comes back
 with a short **Fact check** section outside the blockquote. The second turn's tokens are added to
 the run. If the pass fails or returns no reply, the first draft is shown with **Not fact-checked**
 under it, so the volunteer knows to check it by hand.
