@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-09
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/sysadmin/index.vue
@@ -236,7 +236,8 @@ key). Where each sentence is made:
   back.` or `Nobody asked for help.` when the steps with enough visits had none
   (`stepWithMost` in `useUxFunnel.js`). Friction names the component whose trouble clicks changed
   most, either way, not the one with the most trouble: the server ranks by trouble clicks gained or
-  lost against the period before, each device compared with itself, as `ux:weekly-report` does.
+  lost against the period before, each device compared with itself. (`ux:weekly-report` compares
+  devices the same way, but counts people and ranks by how sure the change is.)
 - Second thoughts and Help say whether the people who showed a sign went on to finish
   (`useUxThenFinished.js`). A row gets `Then finished` (the share of those visits that finished the
   funnel, with the count), `Others finished` (the same for the other visits at that step) and `What it
