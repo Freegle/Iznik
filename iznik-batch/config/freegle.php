@@ -486,6 +486,10 @@ return [
         // halves of the switch read this one list.
         'ingest_chat_kinds' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_KINDS', 'chat_reply,post_reply,user_message,volunteers,report'),
 
+        // Lets tn:chat-parity-check --apply write the API path's messages for real, to compare
+        // written rows with the email path's. Only a run on yesterday's discardable clone sets it.
+        'parity_allow_writes' => EnvSetting::env('FREEGLE_TN_PARITY_ALLOW_WRITES', false),
+
         // After the chat cutover, tn:verify-chat-coverage: every TN chat email the archive kept, of a
         // kind the cutover moved, must have been written from the feed. A chat message is written
         // seconds after it is sent, so the window runs an hour behind, well inside the archive's

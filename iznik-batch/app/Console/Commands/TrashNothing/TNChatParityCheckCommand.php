@@ -3,7 +3,9 @@
 namespace App\Console\Commands\TrashNothing;
 
 use App\Services\LokiService;
+use App\Services\TrashNothing\Ingestion\ChatIngestPlan;
 use App\Services\TrashNothing\Ingestion\ChatMessageIngestionService;
+use App\Services\TrashNothing\Ingestion\TnChatMessage;
 use App\Services\TrashNothing\Sync\ChatMessageSyncer;
 use App\Services\TrashNothing\Verify\ChatEmailInventory;
 use App\Services\TrashNothing\Verify\ChatParityChecker;
@@ -39,6 +41,7 @@ class TNChatParityCheckCommand extends Command
                             {--date-min= : Start of the window (ISO-8601, UTC). Default: two hours before the end of the email side}
                             {--date-max= : End of the window (ISO-8601, UTC). Default: an hour before the end of the email side}
                             {--email-side=archive : Where the email side comes from: "archive" (batch-prod) or "db" (yesterday: the raw mail kept beside each chat message)}
+                            {--apply : Write the API path\'s messages for real first, and compare written rows. Yesterday only: refused unless FREEGLE_TN_PARITY_ALLOW_WRITES is set}
                             {--json : Print the whole report as JSON}';
 
     protected $description = 'Compare TN chat messages the email path wrote with what the API path would write from TN\'s feed.';
@@ -48,6 +51,12 @@ class TNChatParityCheckCommand extends Command
         $side = (string) $this->option('email-side');
         if (!in_array($side, ['archive', 'db'], true)) {
             $this->error('--email-side must be "archive" or "db".');
+
+            return Command::FAILURE;
+        }
+
+        if ($this->option('apply') && !config('freegle.trashnothing.parity_allow_writes')) {
+            $this->error('--apply writes chat messages, so it runs only where FREEGLE_TN_PARITY_ALLOW_WRITES is set: a yesterday clone.');
 
             return Command::FAILURE;
         }
@@ -79,6 +88,10 @@ class TNChatParityCheckCommand extends Command
             return Command::FAILURE;
         }
 
+        if ($this->option('apply')) {
+            $this->applyAll($records, $emails['entries']);
+        }
+
         $report = (new ChatParityChecker(new ChatMessageIngestionService(true)))
             ->check($emails['entries'], $records, [$from->toIso8601ZuluString(), $to->toIso8601ZuluString()]);
 
@@ -91,6 +104,25 @@ class TNChatParityCheckCommand extends Command
         ]);
 
         return $report->failed() ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * Write every record as the API path would, each as of its email copy, so the comparison is
+     * of written rows (plan 5.6). The checker then finds each as already written.
+     *
+     * @param  list<TnChatMessage>  $records
+     */
+    private function applyAll(array $records, array $emails): void
+    {
+        $ingestion = new ChatMessageIngestionService;
+        $written = 0;
+        foreach ($records as $record) {
+            $asOf = $emails[$record->logId()]['chat_message']['id'] ?? null;
+            if ($ingestion->apply($ingestion->plan($record, $asOf))->result === ChatIngestPlan::RESULT_WRITTEN) {
+                $written++;
+            }
+        }
+        $this->line("Applied: {$written} written of " . count($records) . ' records');
     }
 
     /** @return array{CarbonImmutable, CarbonImmutable} */

@@ -203,6 +203,29 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->check('archive')->expectsOutputToContain('[FAIL] Layer 3, one path wrote and the other did not: 1')->assertExitCode(1);
     }
 
+    public function test_apply_is_refused_without_the_yesterday_setting(): void
+    {
+        $this->feed([]);
+
+        $this->check('db', ['--apply' => true])->expectsOutputToContain('FREEGLE_TN_PARITY_ALLOW_WRITES')->assertExitCode(1);
+    }
+
+    public function test_apply_writes_the_api_rows_and_compares_them(): void
+    {
+        config(['freegle.trashnothing.parity_allow_writes' => true]);
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+        $this->feed([$this->record($logId)]);
+
+        $this->check('db', ['--apply' => true])
+            ->expectsOutputToContain('Applied: 1 written of 1 records')
+            ->expectsOutputToContain('[ok]   Layer 4, both wrote but differ: 0')
+            ->assertExitCode(0);
+
+        $this->assertSame(2, DB::table('chat_messages')->where('chatid', $this->chat->id)->count());
+        $this->assertTrue(DB::table('chat_messages_tn')->where('tnmessageid', $logId)->exists());
+    }
+
     private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'bounce@trashnothing.com'): void
     {
         $this->archiveChatMail($raw, $this->notifyAddress($this->chat->id, $this->member->id), $outcome, self::ARRIVAL, $envelopeFrom);
