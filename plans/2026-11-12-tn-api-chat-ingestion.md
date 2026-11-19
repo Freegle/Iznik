@@ -906,9 +906,11 @@ Decided while building, for review:
 - **Not built yet:** parity layer 5 (comparing Loki entries), the `db` side's drop counts from Loki,
   and photos.
 
-To check on yesterday before relying on the gate: that `ParsedEmail::isFromTrashNothing()` is true
-for TN chat mail, i.e. its envelope-from is at `trashnothing.com` (Q13). If not, the gate matches
-nothing, the parity check sees no email side, and every record looks like an extra.
+**Q13 settles the gate's envelope test.** Every TN member's chat mail on the second snapshot has the
+member's own `@user.trashnothing.com` address as its envelope-from: 3,577 replies in a chat, 1,691
+first and other replies, 11 to the volunteers. So `ParsedEmail::isFromTrashNothing()` is true for all
+of it and the gate matches it. TN's 10 notices come from `noreply@trashnothing.com`, envelope and
+From, and the gate leaves them alone because their From is not a member's address.
 
 **Tests**, for each PR: the ingestion service per row of section 1 and per drop reason; the
 syncer's paging, day windows, ordering, `fetchFailed()` and the stored-date hold; idempotency on a
