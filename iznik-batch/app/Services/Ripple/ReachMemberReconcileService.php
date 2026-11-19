@@ -64,12 +64,15 @@ class ReachMemberReconcileService
                     ->whereColumn('n.userid', 'l.user')
                     ->whereColumn('n.notified_at', '>=', 'l.timestamp');
             })
-            ->distinct()
-            ->pluck('l.user');
+            ->orderBy('l.timestamp')
+            ->pluck('l.timestamp', 'l.user');
 
-        foreach ($moved as $userid) {
+        // Keyed by member and read oldest first, so each member's latest move is the one kept.
+        // Queued with the time of the move, not of this pass: reach mail leaves out posts from
+        // before the queue row's time, and those that arrived since the move are theirs.
+        foreach ($moved as $userid => $movedAt) {
             if (! $dryRun) {
-                ReachMemberQueueService::enqueue((int) $userid, ReachMemberQueueService::REASON_MOVED);
+                ReachMemberQueueService::enqueue((int) $userid, ReachMemberQueueService::REASON_MOVED, $movedAt);
             }
             $queued++;
         }

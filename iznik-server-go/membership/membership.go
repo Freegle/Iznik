@@ -1952,11 +1952,14 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Update whichever settings were provided.
 	if req.Emailfrequency != nil {
+		var previous int
+		db.Table("memberships").Select("emailfrequency").Where("userid = ? AND groupid = ?", userid, req.Groupid).Scan(&previous)
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("emailfrequency", int(*req.Emailfrequency))
 		// Reach mail goes to immediate members only, so switching to immediate is the moment
-		// a member becomes eligible for it.
-		if int(*req.Emailfrequency) == utils.FREQUENCY_IMMEDIATE {
+		// a member becomes eligible for it. The batch records that moment and leaves out posts
+		// from before it, so immediate saved over immediate is not a switch.
+		if int(*req.Emailfrequency) == utils.FREQUENCY_IMMEDIATE && previous != utils.FREQUENCY_IMMEDIATE {
 			reachqueue.QueueMember(db, userid, reachqueue.ReasonFrequency)
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
