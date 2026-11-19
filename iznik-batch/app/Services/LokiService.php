@@ -219,6 +219,34 @@ class LokiService
     }
 
     /**
+     * Log a routing event for a chat message ingested from the TN chat-messages feed. The same
+     * schema, file, labels and subtypes as logIncomingEmail(), differing only on the source label,
+     * like logIngestedPost(). See plans/2026-11-12-tn-api-chat-ingestion.md 4.4.
+     */
+    public function logIngestedChatMessage(
+        string $envelopeTo,
+        string $subject,
+        string $messageId,
+        string $routingOutcome,
+        array $context = [],
+    ): ?array {
+        if (! $this->enabled) {
+            return null;
+        }
+
+        $entry = $this->buildRoutedEntry(
+            self::SOURCE_TN_API,
+            $routingOutcome,
+            // No SMTP envelope on this path, and no From address: the sender is decided by TN id.
+            $this->buildRoutedMessage('', $envelopeTo, null, $subject, $messageId, $routingOutcome, $context),
+        );
+
+        $this->writeLog('incoming_mail.log', $entry);
+
+        return $entry;
+    }
+
+    /**
      * Build the message body of a type=routed entry. Shared by every ingestion
      * path so their Loki output cannot diverge in shape — see logIngestedPost().
      *
