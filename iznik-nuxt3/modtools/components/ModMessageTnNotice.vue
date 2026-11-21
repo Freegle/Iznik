@@ -5,7 +5,14 @@
     class="mt-1 mb-2"
     data-test="tn-unaddressed-warning"
   >
-    <span v-if="!live" data-test="tn-unaddressed-pending">
+    <span v-if="editreview" data-test="tn-unaddressed-edit">
+      This came from Trash Nothing. The person who posted it didn't choose
+      <strong>{{ groupName || 'this community' }}</strong> - we matched it here
+      from where they are. They have changed it, so it's
+      <strong>accept or reject</strong> their edit: you can't change it yourself
+      or message them.
+    </span>
+    <span v-else-if="!live" data-test="tn-unaddressed-pending">
       This came from Trash Nothing. The person who posted it didn't choose
       <strong>{{ groupName || 'this community' }}</strong> - we matched it here
       from where they are. So it's <strong>approve or delete</strong> on what
@@ -25,7 +32,7 @@
 <script setup>
 // The moderator-facing explanation for a TN post placed on a community its poster never
 // chose: what they can still do with it, and what they can't. Its own component because
-// it is self-contained copy with two states, and ModMessage is long enough already.
+// it is self-contained copy with three states, and ModMessage is long enough already.
 defineProps({
   // False for such a post. True (the default) for every ordinary post, which renders
   // nothing at all - see modmessaging in the Go API for how it is derived.
@@ -37,6 +44,12 @@ defineProps({
   // Whether the copy being administered is live on the community (Approved). Pending and
   // Spam are both still awaiting a decision, and read as not live.
   live: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // True on the Edits page, where the choice is to accept or reject the poster's edit.
+  editreview: {
     type: Boolean,
     required: false,
     default: false,
