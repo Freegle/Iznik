@@ -5,7 +5,9 @@
     {
       "name": "ask-photos-carry-on",
       "opened": "2026-10-21",
-      "pr": "https://github.com/Freegle/Iznik/pull/1854"
+      "pr": "https://github.com/Freegle/Iznik/pull/1854",
+      "keep_until": "2026-12-06",
+      "reason": "Merged but never started, so every member still gets the old version. Kept so it can be started."
     },
     {
       "name": "join-name-optional",
@@ -15,7 +17,9 @@
     {
       "name": "mobile-web-app-interstitial",
       "opened": "2026-10-22",
-      "pr": "https://github.com/Freegle/Iznik/pull/1865"
+      "pr": "https://github.com/Freegle/Iznik/pull/1865",
+      "keep_until": "2026-12-06",
+      "reason": "Merged but never started, so every member still gets the old version. Kept so it can be started."
     },
     {
       "name": "ask-description-optional",
