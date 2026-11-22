@@ -25,17 +25,43 @@ describe('NewsPreviews', () => {
   }
 
   describe('rendering', () => {
-    it('renders NewsPreview for each preview', () => {
+    /* A post with several links used to draw a full preview for each, which
+       pushed the rest of the feed off the screen. */
+    it('shows only the first preview to begin with', () => {
       const wrapper = createWrapper()
-      expect(wrapper.findAll('.news-preview')).toHaveLength(3)
+      const previews = wrapper.findAll('.news-preview')
+      expect(previews).toHaveLength(1)
+      expect(previews[0].attributes('data-id')).toBe('1')
     })
 
-    it('passes preview data to each NewsPreview', () => {
+    it('offers to show the rest, saying how many', () => {
       const wrapper = createWrapper()
+      expect(wrapper.find('.show-more-previews').text()).toBe(
+        'Show 2 more links'
+      )
+    })
+
+    it('says "link" when one is hidden', () => {
+      const wrapper = createWrapper({ previews: mockPreviews.slice(0, 2) })
+      expect(wrapper.find('.show-more-previews').text()).toBe(
+        'Show 1 more link'
+      )
+    })
+
+    it('has no button for a single preview', () => {
+      const wrapper = createWrapper({ previews: mockPreviews.slice(0, 1) })
+      expect(wrapper.findAll('.news-preview')).toHaveLength(1)
+      expect(wrapper.find('.show-more-previews').exists()).toBe(false)
+    })
+
+    it('shows every preview once asked, and drops the button', async () => {
+      const wrapper = createWrapper()
+      await wrapper.find('.show-more-previews').trigger('click')
       const previews = wrapper.findAll('.news-preview')
       expect(previews[0].attributes('data-id')).toBe('1')
       expect(previews[1].attributes('data-id')).toBe('2')
       expect(previews[2].attributes('data-id')).toBe('3')
+      expect(wrapper.find('.show-more-previews').exists()).toBe(false)
     })
 
     it('uses default size md', () => {
