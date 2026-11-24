@@ -167,7 +167,11 @@ func TestReplyConfirmOffer_AnOfferThatHasGoneIsNotAskedAbout(t *testing.T) {
 func TestReplyConfirmOffer_TheNewestPhotoCheckDecides(t *testing.T) {
 	f := newOfferFixture(t, "rco_newest", "OFFER: cabinet")
 	seedOfferEee(t, f.msgID, "reusable", "large", "20_100kg")
-	seedOfferEee(t, f.msgID, "reusable", "small", "1_5kg")
+	// One row per post, model and prompt version, so the later check is a later prompt version.
+	res := database.DBConn.Exec("INSERT INTO messages_eee (msgid, is_eee, item_condition, size_bucket, weight_bucket, "+
+		"model, prompt_version, classified_at) VALUES (?, 0, 'reusable', 'small', '1_5kg', 'gemini-test', 'v2', NOW())",
+		f.msgID)
+	require.NoError(t, res.Error, "could not seed the later messages_eee row")
 
 	f.reply(t, "Cabinet please", true)
 	assert.Nil(t, f.prompt(t))
