@@ -198,7 +198,8 @@ Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
 
 When someone replies to an OFFER of a child car seat, Freegle asks them what to check and
-whether they still want it before their reply is passed on. Only they see the question until
+whether they still want it before their reply is passed on. The same happens for an offer whose
+photo looks damaged, or too big to carry home when no delivery is offered. Only they see the question until
 they answer. After a Yes the person offering sees the question and the answer with the reply.
 A reply they said no to, or never answered within three days, is not delivered, and the message
 shows why when you look at it. If their reply is held for your review, the question is held
