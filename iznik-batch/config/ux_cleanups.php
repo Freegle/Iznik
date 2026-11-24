@@ -24,4 +24,5 @@ return [
     ['name' => 'digest-subject', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/1881'],
     ['name' => 'push-posts-title', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/1903'],
     ['name' => 'confirm-reply', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/2012'],
+    ['name' => 'confirm-reply-post', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/2092'],
 ];
