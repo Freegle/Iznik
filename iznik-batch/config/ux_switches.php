@@ -36,7 +36,8 @@ return [
         'name' => 'familiar-poster',
         'opened' => '2026-10-26',
         'pr' => 'https://github.com/Freegle/Iznik/pull/1927',
-        'keep_until' => null,
+        // Never started, so every member still gets the old version. Kept so it can be started.
+        'keep_until' => '2026-12-06',
         'channel' => 'email',
         'type' => 'FamiliarPosts',
         'varies' => 'step',
