@@ -97,22 +97,26 @@ type ServerSwitchMetric struct {
 // ahead (docs/developers/reference/ux-experiments.md, "Switch lists and corpse control").
 var ServerSwitches = map[string]ServerSwitch{
 	"interested-button": {
-		Name:    "interested-button",
-		Opened:  "2026-10-23",
-		Channel: "server",
-		Type:    "interested_button",
-		Varies:  "step",
-		Arms:    []string{"control", "button"},
-		Metric:  ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
+		Name:   "interested-button",
+		Opened: "2026-10-23",
+		// Never started, so every member still gets the old version. Kept so it can be started.
+		KeepUntil: "2026-12-06",
+		Channel:   "server",
+		Type:      "interested_button",
+		Varies:    "step",
+		Arms:      []string{"control", "button"},
+		Metric:    ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
 	},
 	"krystal-hosting-ad": {
-		Name:    "krystal-hosting-ad",
-		Opened:  "2026-10-30",
-		Channel: "server",
-		Type:    "hosting_ad",
-		Varies:  "step",
-		Arms:    []string{"control", "ad"},
-		Metric:  ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
+		Name:   "krystal-hosting-ad",
+		Opened: "2026-10-30",
+		// Never started, so every member still gets the old version. Kept so it can be started.
+		KeepUntil: "2026-12-06",
+		Channel:   "server",
+		Type:      "hosting_ad",
+		Varies:    "step",
+		Arms:      []string{"control", "ad"},
+		Metric:    ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
 	},
 }
 
