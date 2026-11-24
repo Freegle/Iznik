@@ -135,3 +135,40 @@ func TestReplyConfirmOffer_ATrashNothingPosterIsLeftOut(t *testing.T) {
 	f.reply(t, "Wardrobe please", true)
 	assert.Nil(t, f.prompt(t))
 }
+
+func TestReplyConfirmOffer_AskedOncePerReplierAndPost(t *testing.T) {
+	f := newOfferFixture(t, "rco_once", "OFFER: wardrobe")
+	seedOfferEee(t, f.msgID, "reusable", "large", "20_100kg")
+
+	f.reply(t, "Is it still available?", true)
+	p := f.prompt(t)
+	require.NotNil(t, p)
+
+	// The replier says no, then replies again: a second question would be a nag.
+	f.answer(t, p.Chatmsgid, f.replierToken, "no")
+	second := f.reply(t, "Actually, I do want it", true)
+
+	required, _ := processingState(second)
+	assert.Equal(t, 1, required, "the second reply goes to the batch as an ordinary reply")
+	assert.Equal(t, int64(0), promptsHolding(second), "and nothing holds it")
+}
+
+func TestReplyConfirmOffer_AnOfferThatHasGoneIsNotAskedAbout(t *testing.T) {
+	f := newOfferFixture(t, "rco_gone", "OFFER: wardrobe")
+	seedOfferEee(t, f.msgID, "reusable", "large", "20_100kg")
+	database.DBConn.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", f.msgID)
+	t.Cleanup(func() { database.DBConn.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", f.msgID) })
+
+	f.reply(t, "Yes please", true)
+	assert.Nil(t, f.prompt(t))
+}
+
+// The newest row of the photo check decides: a post first called large and then small is not asked about.
+func TestReplyConfirmOffer_TheNewestPhotoCheckDecides(t *testing.T) {
+	f := newOfferFixture(t, "rco_newest", "OFFER: cabinet")
+	seedOfferEee(t, f.msgID, "reusable", "large", "20_100kg")
+	seedOfferEee(t, f.msgID, "reusable", "small", "1_5kg")
+
+	f.reply(t, "Cabinet please", true)
+	assert.Nil(t, f.prompt(t))
+}
