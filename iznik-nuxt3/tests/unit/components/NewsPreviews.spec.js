@@ -64,6 +64,11 @@ describe('NewsPreviews', () => {
       expect(wrapper.find('.show-more-previews').exists()).toBe(false)
     })
 
+    it('announces revealed previews to a screen reader', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.attributes('aria-live')).toBe('polite')
+    })
+
     it('uses default size md', () => {
       const wrapper = createWrapper()
       const preview = wrapper.find('.news-preview')

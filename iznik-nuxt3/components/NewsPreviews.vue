@@ -1,5 +1,7 @@
 <template>
-  <div>
+  <div aria-live="polite">
+    <!-- aria-live: a screen reader hears the extra previews arrive when the
+         button that revealed them goes. -->
     <NewsPreview
       v-for="preview in shown"
       :key="preview.id"
