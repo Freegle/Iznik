@@ -903,8 +903,16 @@ Decided while building, for review:
   whether that happens.
 - **Records not written are noted in `DeliberateSkips`** (`chat:{id}`), which also keeps a re-read
   window from logging them twice and tells the coverage check they were decided.
-- **Not built yet:** parity layer 5 (comparing Loki entries), the `db` side's drop counts from Loki,
-  and photos.
+- **Layer 5 is a test, not part of the parity job.** `TnChatApiParityTest` runs one message through
+  `route()` and through the syncer and asserts the same rows and the same routed Loki entry, by row of
+  section 1. On real traffic the API path writes no entries until the cutover, so there is nothing for
+  the hourly job to compare before then.
+- **The gate over real mail is `tn:chat-gate-check`** (5.6): it fails on any match the email path did
+  not make a chat message of, and lists TN chat it leaves to email, with why.
+- **`--feed=email`** on the parity job builds each record from its email (`SyntheticChatFeed`), to test
+  our side on yesterday before TN serves the feed. First run, 17 November: 2,529 of 2,550 agree.
+- **Not built yet:** the `db` side's drop counts from Loki, compared per reason with the feed's
+  extras, which needs the real feed; and photos.
 
 **Q13 settles the gate's envelope test.** Every TN member's chat mail on the second snapshot has the
 member's own `@user.trashnothing.com` address as its envelope-from: 3,577 replies in a chat, 1,691
