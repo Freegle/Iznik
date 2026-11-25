@@ -55,7 +55,7 @@ class TNChatParityCheckCommandTest extends TestCase
     /** The email path's work: the chat message, and its raw mail kept beside it. */
     private function emailPathWrote(string $logId, string $text, array $chatMessage = []): int
     {
-        $msg = $this->createTestChatMessage($this->chat, $this->member, array_merge(['message' => $text, 'platform' => 0], $chatMessage));
+        $msg = $this->createTestChatMessage($this->chat, $this->member, array_merge(['message' => $text, 'platform' => 0, 'date' => self::ARRIVAL], $chatMessage));
         $msgId = DB::table('messages')->insertGetId([
             'arrival' => self::ARRIVAL,
             'date' => self::ARRIVAL,
@@ -164,7 +164,7 @@ class TNChatParityCheckCommandTest extends TestCase
         $first = $this->emailPathWrote($logId, 'A different message altogether, sent earlier.');
         // A second mail with the same Message-ID: the email path linked its chat message to the
         // raw copy the first one stored.
-        $second = $this->createTestChatMessage($this->chat, $this->member, ['message' => 'See you at six.', 'platform' => 0]);
+        $second = $this->createTestChatMessage($this->chat, $this->member, ['message' => 'See you at six.', 'platform' => 0, 'date' => self::ARRIVAL]);
         DB::table('chat_messages_byemail')->insert([
             'chatmsgid' => $second->id,
             'msgid' => DB::table('chat_messages_byemail')->where('chatmsgid', $first)->value('msgid'),
@@ -187,6 +187,32 @@ class TNChatParityCheckCommandTest extends TestCase
 
         $this->check()
             ->expectsOutputToContain('"reason":"reviewed-since","api_hold":"Money"')
+            ->assertExitCode(0);
+    }
+
+    public function test_a_hold_a_block_keyword_has_rejected_since_is_explained(): void
+    {
+        $logId = (string) Str::uuid();
+        // Held on arrival, then rejected by a block keyword when processed, with no reviewer.
+        $this->emailPathWrote($logId, 'I can pay £20 for it.', ['reviewrejected' => 1]);
+        $this->feed([$this->record($logId, ['text' => 'I can pay £20 for it.'])]);
+
+        $this->check()
+            ->expectsOutputToContain('"reason":"rejected-since","api_hold":"Money"')
+            ->assertExitCode(0);
+    }
+
+    public function test_a_chat_message_written_long_after_its_raw_mail_arrived_is_not_compared(): void
+    {
+        $logId = (string) Str::uuid();
+        // A later mail with the same Message-ID: its chat message is linked to the copy this
+        // mail stored, and this mail's own chat message is gone.
+        $this->emailPathWrote($logId, 'A different message, sent later.', ['date' => '2026-11-17 12:55:00']);
+        $this->feed([$this->record($logId)]);
+
+        $this->check()
+            ->expectsOutputToContain('"why":"linked-chat-message-is-a-later-mails","mail_arrived":"2026-11-17T10:30:00Z","chat_message_written":"2026-11-17T12:55:00Z"')
+            ->expectsOutputToContain('[ok]   Layer 4, both wrote but differ: 0')
             ->assertExitCode(0);
     }
 

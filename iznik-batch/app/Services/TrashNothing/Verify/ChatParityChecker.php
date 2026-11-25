@@ -8,6 +8,7 @@ use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\ChatIngestPlan;
 use App\Services\TrashNothing\Ingestion\ChatMessageIngestionService;
 use App\Services\TrashNothing\Ingestion\TnChatMessage;
+use Carbon\CarbonImmutable;
 
 /**
  * Compares what the email path made of TN's chat mail with what the API path would make of the
@@ -113,6 +114,18 @@ class ChatParityChecker
             $report->note('shared_message_id', ['log_id' => $record->logId(), 'kind' => $record->kind,
                 'chat_message_ids' => array_column($linked, 'id'), 'compared_with' => $row['id']]);
         }
+
+        // The email path stores the raw copy straight after the chat message, so a chat message
+        // written well after the mail arrived came from a later mail with the same Message-ID, linked
+        // to this copy. This mail's own chat message is no longer linked to it (deleted since), so
+        // there is nothing of this mail's to compare with.
+        if ($row !== null && $this->writtenAfterArrival($row, $email)) {
+            $report->note('unverifiable', ['log_id' => $record->logId(), 'kind' => $record->kind,
+                'chat_message_id' => $row['id'], 'why' => 'linked-chat-message-is-a-later-mails',
+                'mail_arrived' => $email['timestamp'], 'chat_message_written' => $row['date']->format('Y-m-d\TH:i:s\Z')]);
+
+            return;
+        }
         $apiRow = $this->writtenRow($plan);
         $apiWrites = $plan->writes() || $apiRow !== null;
         $ids = ['log_id' => $record->logId(), 'kind' => $record->kind, 'chat_message_id' => $row['id'] ?? null];
@@ -193,6 +206,14 @@ class ChatParityChecker
             $report->note('explained', $ids + ['reason' => 'reviewed-since', 'api_hold' => $api['report_reason']]);
         }
 
+        // A block keyword rejects a message when chats:process-incoming reaches it, held or not, and
+        // clears the hold with no reviewer (ChatProcessService::dropBlocked).
+        if (in_array('hold', $differences, true) && $api['review_required'] && !$row['review_required']
+            && ($row['review_rejected'] ?? false)) {
+            $differences = array_values(array_diff($differences, ['hold']));
+            $report->note('explained', $ids + ['reason' => 'rejected-since', 'api_hold' => $api['report_reason']]);
+        }
+
         if (in_array('text', $differences, true) && $row['message'] === ''
             && \App\Models\User::where('id', $row['sender_id'])->whereNotNull('forgotten')->exists()) {
             $differences = array_values(array_diff($differences, ['text']));
@@ -200,6 +221,18 @@ class ChatParityChecker
         }
 
         return $differences;
+    }
+
+    /** Slack for the moments between writing a chat message and storing its mail. */
+    private const LATER_MAIL_MINUTES = 10;
+
+    private function writtenAfterArrival(array $row, array $email): bool
+    {
+        if (!($row['date'] ?? null) instanceof CarbonImmutable) {
+            return false;
+        }
+
+        return $row['date']->greaterThan(CarbonImmutable::parse($email['timestamp'])->addMinutes(self::LATER_MAIL_MINUTES));
     }
 
     /** The API path's sender holds the record's TN id and the email path's does not. */

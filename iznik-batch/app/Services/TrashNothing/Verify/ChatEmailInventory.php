@@ -177,7 +177,7 @@ class ChatEmailInventory
             ->where('cm.id', $chatMessageId)
             ->where('cm.type', '!=', ChatMessage::TYPE_IMAGE)
             ->first(['cm.id', 'cm.chatid', 'cm.userid', 'cm.type', 'cm.refmsgid', 'cm.message', 'cm.reviewrequired',
-                'cm.reportreason', 'cm.reviewedby', 'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid']);
+                'cm.reportreason', 'cm.reviewedby', 'cm.reviewrejected', 'cm.date', 'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid']);
 
         if ($row === null) {
             return null;
@@ -195,6 +195,10 @@ class ChatEmailInventory
             'report_reason' => $row->reportreason,
             // A moderator approved or rejected it since, which clears the hold it arrived with.
             'reviewed_by' => $row->reviewedby !== null ? (int) $row->reviewedby : null,
+            // Rejected since: by a moderator, or by a block keyword when chats:process-incoming
+            // reached it, which leaves no reviewer (ChatProcessService::dropBlocked).
+            'review_rejected' => (bool) $row->reviewrejected,
+            'date' => $row->date !== null ? CarbonImmutable::parse((string) $row->date, 'UTC') : null,
             'user1' => $row->user1 !== null ? (int) $row->user1 : null,
             'user2' => $row->user2 !== null ? (int) $row->user2 : null,
             'group_id' => $row->groupid !== null ? (int) $row->groupid : null,
