@@ -79,6 +79,7 @@ final class ChatParityReport
             'explained' => count($this->notes('explained')),
             'email_extra_text' => count($this->notes('email_extra_text')),
             'unverifiable' => count($this->notes('unverifiable')),
+            'shared_message_id' => count($this->notes('shared_message_id')),
         ];
     }
 }

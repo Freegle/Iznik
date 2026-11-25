@@ -158,6 +158,26 @@ class TNChatParityCheckCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_a_raw_mail_linked_to_two_chat_messages_is_compared_with_the_one_that_matches(): void
+    {
+        $logId = (string) Str::uuid();
+        $first = $this->emailPathWrote($logId, 'A different message altogether, sent earlier.');
+        // A second mail with the same Message-ID: the email path linked its chat message to the
+        // raw copy the first one stored.
+        $second = $this->createTestChatMessage($this->chat, $this->member, ['message' => 'See you at six.', 'platform' => 0]);
+        DB::table('chat_messages_byemail')->insert([
+            'chatmsgid' => $second->id,
+            'msgid' => DB::table('chat_messages_byemail')->where('chatmsgid', $first)->value('msgid'),
+        ]);
+        // The stored raw copy is the second mail's, whose text the record has.
+        $this->feed([$this->record($logId)]);
+
+        $this->check()
+            ->expectsOutputToContain('"chat_message_ids":[' . $first . ',' . $second->id . '],"compared_with":' . $second->id)
+            ->expectsOutputToContain('[ok]   Layer 4, both wrote but differ: 0')
+            ->assertExitCode(0);
+    }
+
     public function test_a_hold_a_moderator_has_reviewed_since_is_explained(): void
     {
         $logId = (string) Str::uuid();

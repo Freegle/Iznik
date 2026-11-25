@@ -97,6 +97,22 @@ class ChatParityChecker
 
         // As things stood when the email path wrote its copy: before it, in the same chat.
         $plan = $this->ingestion->plan($record, $row['id'] ?? null);
+
+        // Another mail had this one's Message-ID, so the email path linked both chat messages to the
+        // one raw copy. Compare with the one whose text this record's is, if any is.
+        $linked = $email['linked'] ?? [];
+        if (count($linked) > 1) {
+            $hash = ChatIngestPlan::textHash($plan->text);
+            foreach ($linked as $candidate) {
+                if (ChatIngestPlan::textHash($candidate['message']) === $hash && $candidate['id'] !== $row['id']) {
+                    $row = $candidate;
+                    $plan = $this->ingestion->plan($record, $row['id']);
+                    break;
+                }
+            }
+            $report->note('shared_message_id', ['log_id' => $record->logId(), 'kind' => $record->kind,
+                'chat_message_ids' => array_column($linked, 'id'), 'compared_with' => $row['id']]);
+        }
         $apiRow = $this->writtenRow($plan);
         $apiWrites = $plan->writes() || $apiRow !== null;
         $ids = ['log_id' => $record->logId(), 'kind' => $record->kind, 'chat_message_id' => $row['id'] ?? null];

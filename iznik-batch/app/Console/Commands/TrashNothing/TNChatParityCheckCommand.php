@@ -204,6 +204,7 @@ class TNChatParityCheckCommand extends Command
             'explained' => ['Explained: the TN id rule (3.1), or a change to the email path\'s row since it was written', false],
             'email_extra_text' => ['The email had more text than the record', false],
             'unverifiable' => ['Could not be compared', false],
+            'shared_message_id' => ['Mails sharing a Message-ID, so one raw copy is linked to several chat messages', false],
         ];
         foreach ($sections as $key => [$title, $isFailure]) {
             $items = $isFailure ? $report->failures($key) : $report->notes($key);

@@ -65,7 +65,7 @@ class ChatEmailInventory
             }
 
             $outcome = isset($record['routing_outcome']) ? (string) $record['routing_outcome'] : null;
-            $this->add($entries, $stats, $email, $timestamp, $outcome, fn () => $this->chatMessageForMessageId($email->messageId), $synthesize);
+            $this->add($entries, $stats, $email, $timestamp, $outcome, fn () => $this->chatMessagesForMessageId($email->messageId), $synthesize);
         }
 
         return ['entries' => $entries, 'stats' => $stats];
@@ -106,11 +106,12 @@ class ChatEmailInventory
                         continue;
                     }
 
-                    $chatMessage = $this->chatMessageRow((int) $row->chatmsgid);
+                    $linked = $this->chatMessagesForRaw((int) $row->id);
+                    $chatMessage = $linked[0] ?? null;
                     $outcome = $chatMessage === null ? null
                         : ($chatMessage['chat_type'] === 'User2Mod' ? RoutingResult::TO_VOLUNTEERS->value : RoutingResult::TO_USER->value);
 
-                    $this->add($entries, $stats, $email, CarbonImmutable::parse($row->arrival, 'UTC'), $outcome, fn () => $chatMessage, $synthesize);
+                    $this->add($entries, $stats, $email, CarbonImmutable::parse($row->arrival, 'UTC'), $outcome, fn () => $linked, $synthesize);
                 }
             });
 
@@ -139,22 +140,33 @@ class ChatEmailInventory
     }
 
     /**
-     * The chat message the email path made from the email with this Message-ID: its raw copy is in
-     * messages, linked by chat_messages_byemail. Null when it made none, or the copy has been
+     * The chat messages the email path made from the email with this Message-ID: its raw copy is
+     * in messages, linked by chat_messages_byemail. Empty when it made none, or the copy has been
      * purged (after two days).
+     *
+     * @return list<array>
      */
-    public function chatMessageForMessageId(?string $messageId): ?array
+    public function chatMessagesForMessageId(?string $messageId): array
     {
         if ($messageId === null || $messageId === '') {
-            return null;
+            return [];
         }
 
-        $chatMsgId = DB::table('messages as m')
-            ->join('chat_messages_byemail as cme', 'cme.msgid', '=', 'm.id')
-            ->where('m.messageid', $messageId)
-            ->min('cme.chatmsgid');
+        $rawId = DB::table('messages')->where('messageid', $messageId)->value('id');
 
-        return $chatMsgId !== null ? $this->chatMessageRow((int) $chatMsgId) : null;
+        return $rawId !== null ? $this->chatMessagesForRaw((int) $rawId) : [];
+    }
+
+    /**
+     * The text chat messages linked to one raw mail, oldest first.
+     *
+     * @return list<array>
+     */
+    public function chatMessagesForRaw(int $rawId): array
+    {
+        $ids = DB::table('chat_messages_byemail')->where('msgid', $rawId)->orderBy('chatmsgid')->pluck('chatmsgid');
+
+        return array_values(array_filter($ids->map(fn ($id) => $this->chatMessageRow((int) $id))->all()));
     }
 
     /** The fields of a chat message the parity check compares, with its chat's type and members. */
@@ -190,10 +202,10 @@ class ChatEmailInventory
     }
 
     /**
-     * @param  callable(): ?array  $chatMessage  Looked up only for TN chat mail.
+     * @param  callable(): list<array>  $chatMessages  The chat messages linked to the mail, looked up only for TN chat mail.
      * @param  bool  $synthesize  Also give each entry the record TN's feed should give for it (SyntheticChatFeed).
      */
-    private function add(array &$entries, array &$stats, ParsedEmail $email, CarbonImmutable $timestamp, ?string $outcome, callable $chatMessage, bool $synthesize = false): void
+    private function add(array &$entries, array &$stats, ParsedEmail $email, CarbonImmutable $timestamp, ?string $outcome, callable $chatMessages, bool $synthesize = false): void
     {
         $kind = $this->gate->trashNothingChatKind($email);
         if ($kind === null) {
@@ -213,13 +225,17 @@ class ChatEmailInventory
             return;
         }
 
+        $linked = $chatMessages();
         $entries[$logId] = [
             'log_id' => $logId,
             'message_id' => $email->messageId,
             'kind' => $kind,
             'timestamp' => $timestamp->format('Y-m-d\TH:i:s\Z'),
             'outcome' => $outcome,
-            'chat_message' => $chatMessage(),
+            'chat_message' => $linked[0] ?? null,
+            // Usually one. More when another mail had the same Message-ID: the email path then links
+            // its chat message to the raw copy already stored (storeChatEmailMessage).
+            'linked' => $linked,
         ];
 
         if ($synthesize) {
