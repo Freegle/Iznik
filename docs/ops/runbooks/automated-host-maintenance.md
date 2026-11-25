@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-19
+last_reviewed: 2026-11-25
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
