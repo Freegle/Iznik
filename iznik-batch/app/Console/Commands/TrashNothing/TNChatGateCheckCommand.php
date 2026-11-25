@@ -5,6 +5,7 @@ namespace App\Console\Commands\TrashNothing;
 use App\Services\Mail\Incoming\IncomingArchiveReader;
 use App\Services\Mail\Incoming\MailParserService;
 use App\Services\Mail\Incoming\ParsedEmail;
+use App\Services\TrashNothing\Verify\ChatEmailInventory;
 use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
@@ -46,7 +47,7 @@ class TNChatGateCheckCommand extends Command
     /** @var array<string, list<array>> */
     private array $listed = [];
 
-    public function handle(TnEmailRoutingGate $gate, MailParserService $parser, IncomingArchiveReader $archive): int
+    public function handle(TnEmailRoutingGate $gate, MailParserService $parser, IncomingArchiveReader $archive, ChatEmailInventory $inventory): int
     {
         $source = (string) $this->option('source');
         if (!in_array($source, ['db', 'archive'], true)) {
@@ -70,6 +71,18 @@ class TNChatGateCheckCommand extends Command
         }
 
         $this->report();
+
+        // No chat mail seen is not a pass: the gate was never tried on any. Most often the window is
+        // outside the two days of chat mail a snapshot keeps (its group posts are kept for 30).
+        $chat = array_sum($this->counts['matched'] ?? []) + array_sum($this->counts['matched_dropped'] ?? [])
+            + array_sum($this->counts['left_to_email'] ?? []) + array_sum($this->counts['false_match'] ?? []);
+        if ($chat === 0) {
+            $range = $source === 'db' ? $inventory->databaseChatMailRange() : null;
+            $this->error('No TN chat mail in this window, so the gate was not tried on any.'
+                . ($range !== null ? " The database keeps chat mail from {$range[0]} to {$range[1]} (UTC)." : ''));
+
+            return Command::FAILURE;
+        }
 
         return ($this->listed['false_match'] ?? []) === [] ? Command::SUCCESS : Command::FAILURE;
     }

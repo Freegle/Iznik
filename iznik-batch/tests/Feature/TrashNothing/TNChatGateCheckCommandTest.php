@@ -95,6 +95,15 @@ class TNChatGateCheckCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
+    public function test_a_window_with_no_chat_mail_fails_and_says_what_the_database_keeps(): void
+    {
+        $this->stored($this->reply(), $this->notifyAddress($this->chat->id, $this->member->id), true);
+
+        $this->artisan('tn:chat-gate-check', ['--date-min' => '2026-11-01T00:00:00Z', '--date-max' => '2026-11-02T00:00:00Z'])
+            ->expectsOutputToContain('The database keeps chat mail from ' . self::ARRIVAL)
+            ->assertExitCode(1);
+    }
+
     public function test_archive_side_counts_a_dropped_match_apart(): void
     {
         $this->archiveChatMail($this->reply(), $this->notifyAddress($this->chat->id, $this->member->id), 'Dropped', self::ARRIVAL);

@@ -111,6 +111,14 @@ class TNChatParityCheckCommand extends Command
 
         $this->print($report, $emails['stats'], count($records));
 
+        // Nothing compared is not a pass: the window has no TN chat mail in it, most often because
+        // it is outside the two days a snapshot keeps.
+        if ($report->total('email') === 0) {
+            $this->error('No TN chat mail in this window, so nothing was compared.' . $this->keptRange($inventory, $side));
+
+            return Command::FAILURE;
+        }
+
         $loki->logBatchJob('tn:chat-parity-check', $report->failed() ? 'failed' : 'completed', $report->summary() + [
             'email_side' => $side,
             'feed' => $feed,
@@ -138,6 +146,19 @@ class TNChatParityCheckCommand extends Command
             }
         }
         $this->line("Applied: {$written} written of " . count($records) . ' records');
+    }
+
+    /** Where the database's chat mail starts and ends, to choose a window that has some. */
+    private function keptRange(ChatEmailInventory $inventory, string $side): string
+    {
+        if ($side !== 'db') {
+            return '';
+        }
+        $range = $inventory->databaseChatMailRange();
+
+        return $range === null
+            ? ' The database keeps no chat mail at all.'
+            : " The database keeps chat mail from {$range[0]} to {$range[1]} (UTC).";
     }
 
     /** @return array{CarbonImmutable, CarbonImmutable} */

@@ -118,6 +118,20 @@ class ChatEmailInventory
     }
 
     /**
+     * When the oldest and newest chat mail the database still keeps arrived. purge:messages takes
+     * a chat email's raw copy after about two days, so a window outside this finds nothing.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    public function databaseChatMailRange(): ?array
+    {
+        $kept = fn () => DB::table('messages as m')->join('chat_messages_byemail as cme', 'cme.msgid', '=', 'm.id');
+        $first = $kept()->min('m.arrival');
+
+        return $first !== null ? [(string) $first, (string) $kept()->max('m.arrival')] : null;
+    }
+
+    /**
      * The chat message the email path made from the email with this Message-ID: its raw copy is in
      * messages, linked by chat_messages_byemail. Null when it made none, or the copy has been
      * purged (after two days).

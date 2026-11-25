@@ -183,9 +183,21 @@ class TNChatParityCheckCommandTest extends TestCase
 
     public function test_a_record_with_no_email_is_an_extra(): void
     {
-        $this->feed([$this->record((string) Str::uuid())]);
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+        $this->feed([$this->record($logId), $this->record((string) Str::uuid())]);
 
         $this->check()->expectsOutputToContain('Records with no email')->assertExitCode(0);
+    }
+
+    public function test_a_window_with_no_chat_mail_fails_and_says_what_the_database_keeps(): void
+    {
+        $this->emailPathWrote((string) Str::uuid(), 'See you at six.');
+        $this->feed([]);
+
+        $this->artisan('tn:chat-parity-check', ['--email-side' => 'db', '--date-min' => '2026-11-01T00:00:00Z', '--date-max' => '2026-11-02T00:00:00Z'])
+            ->expectsOutputToContain('No TN chat mail in this window, so nothing was compared. The database keeps chat mail from ' . self::ARRIVAL)
+            ->assertExitCode(1);
     }
 
     public function test_an_unreadable_feed_fails_the_run(): void
