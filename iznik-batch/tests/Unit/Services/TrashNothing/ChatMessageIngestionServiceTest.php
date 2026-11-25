@@ -211,6 +211,23 @@ class ChatMessageIngestionServiceTest extends TestCase
         $this->assertStringNotContainsString('Re:', $plan->text);
     }
 
+    public function test_post_reply_to_a_recipient_merged_away_goes_to_the_posts_poster(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $group);
+        $member = $this->tnUser();
+
+        // TN still names the account the poster's was merged out of.
+        $plan = $this->service->plan($this->record([
+            'kind' => 'post_reply', 'tn_user_id' => $member->tnuserid, 'fd_msgid' => $post->id,
+            'fd_recipient_user_id' => 999_999_998,
+        ]));
+
+        $this->assertSame(ChatIngestPlan::RESULT_WRITE, $plan->result);
+        $this->assertSame($poster->id, $plan->recipientId);
+    }
+
     public function test_post_reply_finds_an_existing_chat_in_either_user_order(): void
     {
         $group = $this->createTestGroup();

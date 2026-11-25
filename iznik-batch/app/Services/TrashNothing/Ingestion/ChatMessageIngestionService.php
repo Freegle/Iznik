@@ -233,6 +233,12 @@ class ChatMessageIngestionService
         }
 
         $recipient = $recipientId !== null ? User::find($recipientId) : null;
+        // The id names an account merged away since TN learned it. The email path follows the merge
+        // through the old address the survivor still holds; the API path has only the id, but a
+        // merge moves the account's posts, so the post's poster is the survivor.
+        if ($recipient === null && $postFrom !== null && $postFrom !== $recipientId) {
+            $recipient = User::find($postFrom);
+        }
         if ($recipient === null) {
             return ChatIngestPlan::notWritten($r, ChatIngestPlan::RESULT_DROPPED, self::REASON_UNKNOWN_RECIPIENT);
         }
