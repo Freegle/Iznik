@@ -39,14 +39,14 @@ class TNChatGateCheckCommandTest extends TestCase
         parent::tearDown();
     }
 
-    /** A raw mail kept in messages, linked to a chat message when $chat. */
-    private function stored(string $raw, string $envelopeTo, bool $chat): int
+    /** A raw mail kept in messages, linked to a chat message when $chat; a post's has a $type. */
+    private function stored(string $raw, string $envelopeTo, bool $chat, ?string $type = null): int
     {
         $id = DB::table('messages')->insertGetId([
             'arrival' => self::ARRIVAL, 'date' => self::ARRIVAL, 'source' => 'Email', 'message' => $raw,
             'fromuser' => $this->member->id, 'fromaddr' => 'member-g1@user.trashnothing.com',
             'envelopefrom' => 'member-g1@user.trashnothing.com', 'envelopeto' => $envelopeTo,
-            'messageid' => Str::uuid() . '@m2.trashnothing.com', 'subject' => 'x',
+            'messageid' => Str::uuid() . '@m2.trashnothing.com', 'subject' => 'x', 'type' => $type,
         ]);
         if ($chat) {
             DB::table('chat_messages_byemail')->insert([
@@ -78,11 +78,23 @@ class TNChatGateCheckCommandTest extends TestCase
 
     public function test_a_match_the_email_path_made_no_chat_of_fails(): void
     {
-        $id = $this->stored($this->reply(), $this->notifyAddress($this->chat->id, $this->member->id), false);
+        // Stored as a post, which a chat mail never is.
+        $id = $this->stored($this->reply(), $this->notifyAddress($this->chat->id, $this->member->id), false, 'Offer');
 
         $this->artisan('tn:chat-gate-check', self::WINDOW)
             ->expectsOutputToContain('"message_id":' . $id . ',"kind":"chat_reply"')
             ->assertExitCode(1);
+    }
+
+    public function test_a_chat_mail_whose_chat_message_has_gone_since_is_matched(): void
+    {
+        // Its chat message was deleted since (the duplicate purge), taking the link with it.
+        $this->stored($this->reply(), $this->notifyAddress($this->chat->id, $this->member->id), false);
+
+        $this->artisan('tn:chat-gate-check', self::WINDOW)
+            ->expectsOutputToContain('matched_since_deleted')
+            ->expectsOutputToContain('[ok]   No mail matched that the email path did not make a chat message of')
+            ->assertExitCode(0);
     }
 
     public function test_chat_the_gate_leaves_to_email_is_noted_with_why(): void

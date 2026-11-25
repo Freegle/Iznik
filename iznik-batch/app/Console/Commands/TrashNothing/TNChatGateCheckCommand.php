@@ -75,6 +75,7 @@ class TNChatGateCheckCommand extends Command
         // No chat mail seen is not a pass: the gate was never tried on any. Most often the window is
         // outside the two days of chat mail a snapshot keeps (its group posts are kept for 30).
         $chat = array_sum($this->counts['matched'] ?? []) + array_sum($this->counts['matched_dropped'] ?? [])
+            + array_sum($this->counts['matched_since_deleted'] ?? [])
             + array_sum($this->counts['left_to_email'] ?? []) + array_sum($this->counts['false_match'] ?? []);
         if ($chat === 0) {
             $range = $source === 'db' ? $inventory->databaseChatMailRange() : null;
@@ -96,7 +97,7 @@ class TNChatGateCheckCommand extends Command
             ->whereBetween('m.arrival', [$from->toDateTimeString(), $to->toDateTimeString()])
             ->where('m.fromaddr', 'LIKE', '%trashnothing.com')
             ->where('m.message', '!=', '')
-            ->select('m.id', 'm.message', 'm.envelopefrom', 'm.envelopeto', 'cme.chatmsgid')
+            ->select('m.id', 'm.type', 'm.message', 'm.envelopefrom', 'm.envelopeto', 'cme.chatmsgid')
             ->orderBy('m.id')
             ->chunk(500, function ($rows) use ($gate, $parser, &$seen) {
                 foreach ($rows as $row) {
@@ -112,7 +113,12 @@ class TNChatGateCheckCommand extends Command
                         continue;
                     }
 
-                    $this->classify($gate, $email, $row->chatmsgid !== null, ['message_id' => (int) $row->id]);
+                    // The email path stores a chat mail's raw copy only after making its chat message,
+                    // and a post's with its type. So a copy with neither a link nor a type made a chat
+                    // message that has gone since: the duplicate purge takes a repeat of the message
+                    // before it, and a forgotten member's messages, all NULL, repeat each other.
+                    $linkGone = $row->chatmsgid === null && $row->type === null;
+                    $this->classify($gate, $email, $row->chatmsgid !== null, ['message_id' => (int) $row->id], $linkGone);
                 }
             });
     }
@@ -145,7 +151,7 @@ class TNChatGateCheckCommand extends Command
     /**
      * @param  bool  $madeChat  Whether the email path made a chat message of it.
      */
-    private function classify(TnEmailRoutingGate $gate, ParsedEmail $email, bool $madeChat, array $ids): void
+    private function classify(TnEmailRoutingGate $gate, ParsedEmail $email, bool $madeChat, array $ids, bool $linkGone = false): void
     {
         $kind = $gate->trashNothingChatKind($email);
         $post = $gate->isTrashNothingGroupPost($email);
@@ -161,6 +167,8 @@ class TNChatGateCheckCommand extends Command
             // drops some chat mail (a reply to a chat since deleted) that the feed still carries.
             if (isset($ids['outcome']) && $ids['outcome'] === 'Dropped') {
                 $this->bump('matched_dropped', $kind);
+            } elseif ($linkGone) {
+                $this->bump('matched_since_deleted', $kind);
             } else {
                 $this->bump('false_match', $kind);
                 $this->listed['false_match'][] = $ids + ['kind' => $kind, 'why' => 'the email path made no chat message of it'];
