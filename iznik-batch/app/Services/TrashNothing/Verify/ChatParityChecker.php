@@ -127,18 +127,107 @@ class ChatParityChecker
             return;
         }
 
-        $differences = $this->differences($row, $apiRow ?? $plan->comparable(), $plan);
+        $api = $apiRow ?? $plan->comparable();
+        $apiText = $apiRow['text'] ?? $plan->text;
+        $differences = $this->differences($row, $api, $plan);
+
         $textDiff = array_search('text', $differences, true);
-        if ($textDiff !== false && $this->emailHasExtraText($row['message'], $apiRow['text'] ?? $plan->text)) {
+        if ($textDiff !== false && $this->emailHasExtraText($row['message'], $apiText)) {
             unset($differences[$textDiff]);
             $report->note('email_extra_text', $ids);
+        }
+
+        // The email path found the sender by address and the API path by TN id, and the TN id is
+        // on the account the API path chose (plan 3.1). The chat follows the sender, so it differs
+        // too. Reported apart: each is a message the email path filed on the wrong account.
+        if (in_array('sender_id', $differences, true) && $this->senderIsTheTnIdHolder($row, $api, $record)) {
+            $differences = array_values(array_diff($differences, ['sender_id', 'chat_id']));
+            $report->note('explained', $ids + [
+                'reason' => 'tn-id-on-another-account',
+                'email_sender' => $row['sender_id'],
+                'api_sender' => $api['sender_id'],
+            ]);
         }
 
         if ($differences === []) {
             $report->count('agree', $record->kind);
         } else {
-            $report->fail('content', $ids + ['fields' => array_values($differences)]);
+            $report->fail('content', $ids + ['fields' => array_values($differences)]
+                + $this->detail($differences, $row, $api, $apiText));
         }
+    }
+
+    /** The API path's sender holds the record's TN id and the email path's does not. */
+    private function senderIsTheTnIdHolder(array $row, array $api, TnChatMessage $record): bool
+    {
+        if ($record->tnUserId === 0 || $api['sender_id'] === null) {
+            return false;
+        }
+
+        $tnIds = \App\Models\User::whereIn('id', [$row['sender_id'], $api['sender_id']])->pluck('tnuserid', 'id');
+
+        return (int) ($tnIds[$api['sender_id']] ?? 0) === $record->tnUserId
+            && (int) ($tnIds[$row['sender_id']] ?? 0) !== $record->tnUserId;
+    }
+
+    /**
+     * What a person needs to see why a field differs, without the text: the two holds and the hold
+     * on the message before (as it is now, which a moderator may have changed since), the senders,
+     * and for text, the lengths and where the two first part.
+     */
+    private function detail(array $differences, array $row, array $api, string $apiText): array
+    {
+        $detail = [];
+
+        if (in_array('hold', $differences, true)) {
+            $detail['email_hold'] = $row['review_required'] ? ($row['report_reason'] ?? 'held') : null;
+            $detail['api_hold'] = $api['review_required'] ? ($api['report_reason'] ?? 'held') : null;
+            $prev = \Illuminate\Support\Facades\DB::table('chat_messages')
+                ->where('chatid', $row['chat_id'])
+                ->where('id', '<', $row['id'])
+                ->orderByDesc('id')
+                ->first(['id', 'reviewrequired', 'reportreason']);
+            $detail['previous'] = $prev === null ? null : [
+                'id' => (int) $prev->id,
+                'hold_now' => $prev->reviewrequired ? ($prev->reportreason ?? 'held') : null,
+            ];
+        }
+
+        if (array_intersect(['sender_id', 'chat_id'], $differences) !== []) {
+            $detail['email_sender'] = $row['sender_id'];
+            $detail['api_sender'] = $api['sender_id'];
+            $detail['email_chat'] = $row['chat_id'];
+            $detail['api_chat'] = $api['chat_id'];
+        }
+
+        if (in_array('text', $differences, true)) {
+            $email = ChatIngestPlan::normaliseText($row['message']);
+            $apiNorm = ChatIngestPlan::normaliseText($apiText);
+            $detail['email_length'] = mb_strlen($email);
+            $detail['api_length'] = mb_strlen($apiNorm);
+            $detail['same_for_first'] = $this->commonPrefixLength($email, $apiNorm);
+        }
+
+        if (in_array('type', $differences, true) || in_array('refmsgid', $differences, true)) {
+            $detail['email_type'] = $row['type'] . '/' . ($row['refmsgid'] ?? 'null');
+            $detail['api_type'] = $api['type'] . '/' . ($api['refmsgid'] ?? 'null');
+        }
+
+        return $detail;
+    }
+
+    private function commonPrefixLength(string $a, string $b): int
+    {
+        $a = mb_str_split($a);
+        $b = mb_str_split($b);
+        $n = min(count($a), count($b));
+        for ($i = 0; $i < $n; $i++) {
+            if ($a[$i] !== $b[$i]) {
+                return $i;
+            }
+        }
+
+        return $n;
     }
 
     /**

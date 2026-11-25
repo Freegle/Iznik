@@ -123,7 +123,7 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->feed([$this->record($logId, ['text' => 'Something else entirely.'])]);
 
         $this->check()
-            ->expectsOutputToContain('"fields":["text"]')
+            ->expectsOutputToContain('"fields":["text"],"email_length":15,"api_length":24,"same_for_first":1')
             ->doesntExpectOutputToContain('Something else entirely')
             ->assertExitCode(1);
     }
@@ -153,7 +153,22 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->emailPathWrote($logId, 'I can pay £20 for it.');
         $this->feed([$this->record($logId, ['text' => 'I can pay £20 for it.'])]);
 
-        $this->check()->expectsOutputToContain('"fields":["hold"]')->assertExitCode(1);
+        $this->check()
+            ->expectsOutputToContain('"fields":["hold"],"email_hold":null,"api_hold":"Money","previous":null')
+            ->assertExitCode(1);
+    }
+
+    public function test_a_sender_found_by_address_that_does_not_hold_the_tn_id_is_explained(): void
+    {
+        $logId = (string) Str::uuid();
+        // The email path filed it on the poster's side of the chat, an account with no TN id; the
+        // TN id is the member's, who is in the same chat.
+        $this->emailPathWrote($logId, 'See you at six.', ['userid' => $this->poster->id]);
+        $this->feed([$this->record($logId)]);
+
+        $this->check()
+            ->expectsOutputToContain('"reason":"tn-id-on-another-account","email_sender":' . $this->poster->id . ',"api_sender":' . $this->member->id)
+            ->assertExitCode(0);
     }
 
     public function test_a_sender_the_tn_id_rule_skips_is_explained_not_failed(): void
