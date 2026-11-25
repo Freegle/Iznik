@@ -965,6 +965,11 @@ builds, from each email, the record TN's feed should give for it (`SyntheticChat
 be tested on real mail before TN serves the feed. It prints ids,
 kinds and field names, never what anyone wrote. It does not yet compare the two paths' Loki entries.
 
+**Checking the gate.** `tn:chat-gate-check` runs the predicate over the real mail a snapshot keeps
+(`--source=db`, on yesterday) or the archive (`--source=archive`), and fails on any match the email path
+did not make a chat message of: that is a mail the cutover would stop routing. It also lists TN members'
+chat the gate leaves to email, with why.
+
 **After the cutover.** `tn:verify-chat-coverage` checks that every archived TN chat email of a moved
 kind has a `chat_messages_tn` row, or was skipped on purpose (noted in `DeliberateSkips` under
 `chat:` with its reason). A miss is looked up at TN by its id and fails the run, because the email
