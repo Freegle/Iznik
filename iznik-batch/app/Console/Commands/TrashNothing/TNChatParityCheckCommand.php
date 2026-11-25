@@ -139,13 +139,24 @@ class TNChatParityCheckCommand extends Command
     {
         $ingestion = new ChatMessageIngestionService;
         $written = 0;
+        $notWritten = [];
         foreach ($records as $record) {
             $asOf = $emails[$record->logId()]['chat_message']['id'] ?? null;
-            if ($ingestion->apply($ingestion->plan($record, $asOf))->result === ChatIngestPlan::RESULT_WRITTEN) {
+            $plan = $ingestion->plan($record, $asOf);
+            $applied = $ingestion->apply($plan);
+            if ($applied->result === ChatIngestPlan::RESULT_WRITTEN) {
                 $written++;
+            } else {
+                // What plan() decided and what apply() made of it, so a record held back on one run
+                // and written on the next shows which step stopped it.
+                $notWritten[] = ['log_id' => $record->logId(), 'kind' => $record->kind, 'planned' => $plan->result,
+                    'result' => $applied->result, 'reason' => $applied->reason(), 'email_chat_message_id' => $asOf];
             }
         }
         $this->line("Applied: {$written} written of " . count($records) . ' records');
+        foreach ($notWritten as $item) {
+            $this->line('  not written: ' . json_encode($item));
+        }
     }
 
     /** Where the database's chat mail starts and ends, to choose a window that has some. */

@@ -376,6 +376,20 @@ class TNChatParityCheckCommandTest extends TestCase
             ->assertExitCode(0);
     }
 
+    public function test_apply_lists_each_record_it_did_not_write_with_why(): void
+    {
+        config(['freegle.trashnothing.parity_allow_writes' => true]);
+        $logId = (string) Str::uuid();
+        $chatMessageId = $this->emailPathWrote($logId, 'See you at six.');
+        // A TN id no account holds: the API path skips it (plan 3.1).
+        $this->feed([$this->record($logId, ['tn_user_id' => 1])]);
+
+        $this->check('db', ['--apply' => true])
+            ->expectsOutputToContain('Applied: 0 written of 1 records')
+            ->expectsOutputToContain('  not written: {"log_id":"' . $logId . '","kind":"chat_reply","planned":"skipped","result":"skipped","reason":"tn-sender-unknown","email_chat_message_id":' . $chatMessageId . '}')
+            ->assertExitCode(0);
+    }
+
     private function writeArchive(string $raw, string $outcome, string $envelopeFrom = 'member-g1@user.trashnothing.com'): void
     {
         $this->archiveChatMail($raw, $this->notifyAddress($this->chat->id, $this->member->id), $outcome, self::ARRIVAL, $envelopeFrom);
