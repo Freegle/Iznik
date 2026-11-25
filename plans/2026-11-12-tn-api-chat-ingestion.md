@@ -921,7 +921,11 @@ Decided while building, for review:
   linked to arrived: a later mail with the same Message-ID, linked to the stored copy, whose own chat
   message is no longer linked to it. The check now lists the approved holds, the rejected one and the
   forgotten senders as explained, and the later mail as not comparable. Rerun, 24 November: no
-  failures in any layer, 2,649 agree, 26 explained, 1 not comparable.
+  failures in any layer, 2,649 agree, 26 explained, 1 not comparable. 23 November: no failures,
+  2,896 of 2,917 agree, 21 explained. The gate check over both days listed 3 mails with no chat
+  message, none a post: the duplicate purge had deleted each since, one a second send of the same
+  text, two a forgotten member's, whose cleared texts all repeat each other. It now counts a raw
+  copy with no link and no post type as matched, chat message deleted since.
 - **Not built yet:** the `db` side's drop counts from Loki, compared per reason with the feed's
   extras, which needs the real feed; and photos.
 
