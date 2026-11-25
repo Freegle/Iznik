@@ -915,8 +915,13 @@ Decided while building, for review:
   (it left TN's 11 notices to email). What differed: 7 TN id rule skips, as expected; one first reply
   to an account merged away since (now sent to the post's poster, as the email path does); 15 holds
   that only the API path made, which look like arrival holds a moderator has since approved; 4 texts
-  forgetting the sender cleared since; and one text that differs from its first character, still to
-  explain. The check now lists the approved holds and the forgotten senders as explained.
+  forgetting the sender cleared since; one hold a block keyword cleared since, by rejecting the
+  message when it was processed, with no reviewer; and one text that differs from its first
+  character. That last is a chat message written two and a half hours after the raw mail it is
+  linked to arrived: a later mail with the same Message-ID, linked to the stored copy, whose own chat
+  message is no longer linked to it. The check now lists the approved holds, the rejected one and the
+  forgotten senders as explained, and the later mail as not comparable. Rerun, 24 November: no
+  failures in any layer, 2,649 agree, 26 explained, 1 not comparable.
 - **Not built yet:** the `db` side's drop counts from Loki, compared per reason with the feed's
   extras, which needs the real feed; and photos.
 
