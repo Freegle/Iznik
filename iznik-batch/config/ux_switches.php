@@ -36,7 +36,9 @@ return [
         'name' => 'familiar-poster',
         'opened' => '2026-10-26',
         'pr' => 'https://github.com/Freegle/Iznik/pull/1927',
-        'keep_until' => null,
+        // Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the
+        // switch by keep_until.
+        'keep_until' => '2026-12-09',
         'channel' => 'email',
         'type' => 'FamiliarPosts',
         'varies' => 'step',

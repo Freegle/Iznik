@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-18
+last_reviewed: 2026-11-25
 owner: Freegle ops
 covers:
   - ops/hosts/README.md
@@ -59,7 +59,8 @@ Three monit traps from that page, repeated here because they bite:
   other. Check before you read any grace period.
 - **A host that starts monit at boot needs `with start delay`.** Without it monit checks
   before systemd has started anything, and emails a "does not exist" alert for each
-  service after every reboot.
+  service after every reboot. Until the delay is over every `monit` command on the host
+  fails with "Cannot connect", so a script that talks to monit after a reboot must wait.
 
 ## Routine checks
 
