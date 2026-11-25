@@ -193,6 +193,9 @@ class TNChatParityCheckCommandTest extends TestCase
     public function test_a_window_with_no_chat_mail_fails_and_says_what_the_database_keeps(): void
     {
         $this->emailPathWrote((string) Str::uuid(), 'See you at six.');
+        // A stray copy years older, as production keeps a few, is not where the kept mail starts.
+        $stray = $this->emailPathWrote((string) Str::uuid(), 'Old.');
+        DB::table('messages')->where('id', DB::table('chat_messages_byemail')->where('chatmsgid', $stray)->value('msgid'))->update(['arrival' => '2017-11-07 18:21:00']);
         $this->feed([]);
 
         $this->artisan('tn:chat-parity-check', ['--email-side' => 'db', '--date-min' => '2026-11-01T00:00:00Z', '--date-max' => '2026-11-02T00:00:00Z'])

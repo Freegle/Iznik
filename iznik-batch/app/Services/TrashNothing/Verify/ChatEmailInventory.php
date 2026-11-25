@@ -118,17 +118,24 @@ class ChatEmailInventory
     }
 
     /**
-     * When the oldest and newest chat mail the database still keeps arrived. purge:messages takes
-     * a chat email's raw copy after about two days, so a window outside this finds nothing.
+     * Where the chat mail the database still keeps begins and ends. purge:messages takes a chat
+     * email's raw copy after about two days, so a window outside this finds nothing. A few far
+     * older copies survive the purge (production has some from 2017), so the start is looked for
+     * only in the three days before the newest, which covers the two the purge keeps.
      *
      * @return array{0: string, 1: string}|null
      */
     public function databaseChatMailRange(): ?array
     {
         $kept = fn () => DB::table('messages as m')->join('chat_messages_byemail as cme', 'cme.msgid', '=', 'm.id');
-        $first = $kept()->min('m.arrival');
+        $last = $kept()->max('m.arrival');
+        if ($last === null) {
+            return null;
+        }
 
-        return $first !== null ? [(string) $first, (string) $kept()->max('m.arrival')] : null;
+        $first = $kept()->where('m.arrival', '>=', CarbonImmutable::parse((string) $last, 'UTC')->subDays(3)->toDateTimeString())->min('m.arrival');
+
+        return [(string) $first, (string) $last];
     }
 
     /**
