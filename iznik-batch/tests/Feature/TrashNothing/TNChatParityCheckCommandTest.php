@@ -123,7 +123,7 @@ class TNChatParityCheckCommandTest extends TestCase
         $this->feed([$this->record($logId, ['text' => 'Something else entirely.'])]);
 
         $this->check()
-            ->expectsOutputToContain('"fields":["text"],"email_length":15,"api_length":24,"same_for_first":1')
+            ->expectsOutputToContain('"fields":["text"],"email_length":15,"api_length":24,"same_for_first":1,"same_for_last":1')
             ->doesntExpectOutputToContain('Something else entirely')
             ->assertExitCode(1);
     }
@@ -158,6 +158,41 @@ class TNChatParityCheckCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_a_hold_a_moderator_has_reviewed_since_is_explained(): void
+    {
+        $logId = (string) Str::uuid();
+        // Held on arrival, then approved: the row is unheld now, with who reviewed it.
+        $this->emailPathWrote($logId, 'I can pay £20 for it.', ['reviewedby' => $this->poster->id]);
+        $this->feed([$this->record($logId, ['text' => 'I can pay £20 for it.'])]);
+
+        $this->check()
+            ->expectsOutputToContain('"reason":"reviewed-since","api_hold":"Money"')
+            ->assertExitCode(0);
+    }
+
+    public function test_text_cleared_by_forgetting_the_sender_is_explained(): void
+    {
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.', ['message' => null]);
+        $this->member->update(['forgotten' => now()]);
+        $this->feed([$this->record($logId)]);
+
+        $this->check()
+            ->expectsOutputToContain('"reason":"sender-forgotten-since"')
+            ->assertExitCode(0);
+    }
+
+    public function test_text_added_at_the_start_shows_as_a_long_run_at_the_end(): void
+    {
+        $logId = (string) Str::uuid();
+        $this->emailPathWrote($logId, 'See you at six.');
+        $this->feed([$this->record($logId, ['text' => "Hello.\n\nSee you at six."])]);
+
+        $this->check()
+            ->expectsOutputToContain('"email_length":15,"api_length":23,"same_for_first":0,"same_for_last":15')
+            ->assertExitCode(1);
+    }
+
     public function test_a_sender_found_by_address_that_does_not_hold_the_tn_id_is_explained(): void
     {
         $logId = (string) Str::uuid();
@@ -178,7 +213,7 @@ class TNChatParityCheckCommandTest extends TestCase
         // TN names an id no account holds: the API path skips it (plan 3.1).
         $this->feed([$this->record($logId, ['tn_user_id' => $this->member->tnuserid + 1])]);
 
-        $this->check()->expectsOutputToContain('[note] Explained by the TN id rule (3.1): 1')->assertExitCode(0);
+        $this->check()->expectsOutputToContain('[note] Explained: the TN id rule (3.1), or a change to the email path\'s row since it was written: 1')->assertExitCode(0);
     }
 
     public function test_a_record_with_no_email_is_an_extra(): void
@@ -279,7 +314,7 @@ class TNChatParityCheckCommandTest extends TestCase
         ]);
 
         $this->check('db', ['--feed' => 'email'])
-            ->expectsOutputToContain('[note] Explained by the TN id rule (3.1): 1')
+            ->expectsOutputToContain('[note] Explained: the TN id rule (3.1), or a change to the email path\'s row since it was written: 1')
             ->assertExitCode(0);
     }
 

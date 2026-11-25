@@ -957,7 +957,9 @@ address, so it can never be skipped by mistake.
 write, joined on the log id: every email has a record, both paths write or neither does, and where
 both write, the same chat, sender, type, post, text and hold. A hold only the email row has is
 allowed when its reason is one `chats:process-incoming` writes, since processing can add a hold but
-never clear one. Differences the TN id rule explains are listed apart. On batch-prod it reads the
+never clear one. Differences the TN id rule explains are listed apart, and so are changes to the email
+path's row after it was written: a hold a moderator has since approved or rejected (`reviewedby`), and
+text cleared when the sender was forgotten. On batch-prod it reads the
 incoming archive (`--email-side=archive`); on yesterday it reads the raw mail kept beside each chat
 message (`--email-side=db`), which lasts about two days, and `--apply` there writes the API rows
 for real to compare them (refused unless `FREEGLE_TN_PARITY_ALLOW_WRITES` is set). `--feed=email`

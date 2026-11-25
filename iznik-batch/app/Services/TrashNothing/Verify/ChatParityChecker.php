@@ -149,12 +149,41 @@ class ChatParityChecker
             ]);
         }
 
+        $differences = $this->explainChangesSince($report, $ids, $differences, $row, $api);
+
         if ($differences === []) {
             $report->count('agree', $record->kind);
         } else {
             $report->fail('content', $ids + ['fields' => array_values($differences)]
                 + $this->detail($differences, $row, $api, $apiText));
         }
+    }
+
+    /**
+     * Differences that come from what happened to the email path's row after it was written, as a
+     * snapshot shows it a day or more later, and not from a difference between the paths:
+     *
+     *   - a hold a moderator has since approved or rejected, which clears it (reviewedby is set);
+     *   - text forgetting the sender cleared (User::forget sets every message of theirs to NULL), as
+     *     when TN removes the member's account.
+     *
+     * @return list<string>  The differences left.
+     */
+    private function explainChangesSince(ChatParityReport $report, array $ids, array $differences, array $row, array $api): array
+    {
+        if (in_array('hold', $differences, true) && $api['review_required'] && !$row['review_required']
+            && ($row['reviewed_by'] ?? null) !== null) {
+            $differences = array_values(array_diff($differences, ['hold']));
+            $report->note('explained', $ids + ['reason' => 'reviewed-since', 'api_hold' => $api['report_reason']]);
+        }
+
+        if (in_array('text', $differences, true) && $row['message'] === ''
+            && \App\Models\User::where('id', $row['sender_id'])->whereNotNull('forgotten')->exists()) {
+            $differences = array_values(array_diff($differences, ['text']));
+            $report->note('explained', $ids + ['reason' => 'sender-forgotten-since']);
+        }
+
+        return $differences;
     }
 
     /** The API path's sender holds the record's TN id and the email path's does not. */
@@ -206,6 +235,8 @@ class ChatParityChecker
             $detail['email_length'] = mb_strlen($email);
             $detail['api_length'] = mb_strlen($apiNorm);
             $detail['same_for_first'] = $this->commonPrefixLength($email, $apiNorm);
+            // Counted from the end: text added at the start shows as a long run here.
+            $detail['same_for_last'] = $this->commonPrefixLength(implode('', array_reverse(mb_str_split($email))), implode('', array_reverse(mb_str_split($apiNorm))));
         }
 
         if (in_array('type', $differences, true) || in_array('refmsgid', $differences, true)) {

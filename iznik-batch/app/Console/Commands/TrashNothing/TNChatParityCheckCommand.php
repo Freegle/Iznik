@@ -201,7 +201,7 @@ class TNChatParityCheckCommand extends Command
             'outcome' => ['Layer 3, one path wrote and the other did not', true],
             'content' => ['Layer 4, both wrote but differ', true],
             'extras' => ['Layer 2, records that should never be in the feed', true],
-            'explained' => ['Explained by the TN id rule (3.1)', false],
+            'explained' => ['Explained: the TN id rule (3.1), or a change to the email path\'s row since it was written', false],
             'email_extra_text' => ['The email had more text than the record', false],
             'unverifiable' => ['Could not be compared', false],
         ];
