@@ -911,6 +911,12 @@ Decided while building, for review:
   not make a chat message of, and lists TN chat it leaves to email, with why.
 - **`--feed=email`** on the parity job builds each record from its email (`SyntheticChatFeed`), to test
   our side on yesterday before TN serves the feed. First run, 17 November: 2,529 of 2,550 agree.
+  Second, 24 November: 2,626 of 2,654 agree, and the gate check matched all 2,654 and nothing else
+  (it left TN's 11 notices to email). What differed: 7 TN id rule skips, as expected; one first reply
+  to an account merged away since (now sent to the post's poster, as the email path does); 15 holds
+  that only the API path made, which look like arrival holds a moderator has since approved; 4 texts
+  forgetting the sender cleared since; and one text that differs from its first character, still to
+  explain. The check now lists the approved holds and the forgotten senders as explained.
 - **Not built yet:** the `db` side's drop counts from Loki, compared per reason with the feed's
   extras, which needs the real feed; and photos.
 
