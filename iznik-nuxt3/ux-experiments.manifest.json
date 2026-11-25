@@ -5,42 +5,58 @@
     {
       "name": "ask-photos-carry-on",
       "opened": "2026-10-21",
-      "pr": "https://github.com/Freegle/Iznik/pull/1854"
+      "pr": "https://github.com/Freegle/Iznik/pull/1854",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "join-name-optional",
       "opened": "2026-10-24",
-      "pr": "https://github.com/Freegle/Iznik/pull/1906"
+      "pr": "https://github.com/Freegle/Iznik/pull/1906",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "mobile-web-app-interstitial",
       "opened": "2026-10-22",
-      "pr": "https://github.com/Freegle/Iznik/pull/1865"
+      "pr": "https://github.com/Freegle/Iznik/pull/1865",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "ask-description-optional",
       "opened": "2026-10-24",
-      "pr": "https://github.com/Freegle/Iznik/pull/1907"
+      "pr": "https://github.com/Freegle/Iznik/pull/1907",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "reply-collect-chips",
       "opened": "2026-10-24",
-      "pr": "https://github.com/Freegle/Iznik/pull/1909"
+      "pr": "https://github.com/Freegle/Iznik/pull/1909",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "outcome-taker-preselect",
       "opened": "2026-10-24",
-      "pr": "https://github.com/Freegle/Iznik/pull/1910"
+      "pr": "https://github.com/Freegle/Iznik/pull/1910",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "give-skip-options-screen",
       "opened": "2026-10-24",
-      "pr": "https://github.com/Freegle/Iznik/pull/1908"
+      "pr": "https://github.com/Freegle/Iznik/pull/1908",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     },
     {
       "name": "rate-on-return",
       "opened": "2026-10-25",
-      "pr": "https://github.com/Freegle/Iznik/pull/1921"
+      "pr": "https://github.com/Freegle/Iznik/pull/1921",
+      "keep_until": "2026-12-09",
+      "reason": "Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the switch by keep_until."
     }
   ]
 }
