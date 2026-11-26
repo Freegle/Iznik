@@ -95,8 +95,7 @@ php artisan servers:rightsize-report --no-review
 ```
 
 `--dry-run` prints each server's verdict and sends nothing. `--no-review` leaves out the
-Claude call. `--note="..."` sends the report as a correction of an earlier one, with that
-line at the top and "Corrected:" in the subject.
+Claude call.
 
 ## Settings
 

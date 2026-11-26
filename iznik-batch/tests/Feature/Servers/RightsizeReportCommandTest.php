@@ -104,15 +104,6 @@ class RightsizeReportCommandTest extends TestCase
         Process::assertNothingRan();
     }
 
-    public function test_a_note_marks_the_mail_as_a_correction(): void
-    {
-        $this->artisan('servers:rightsize-report', ['--note' => 'The costs in the last report were too low.', '--no-review' => true])
-            ->assertExitCode(0);
-
-        Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->note === 'The costs in the last report were too low.'
-            && $mail->envelope()->subject === 'Corrected: Server sizing: no size changes suggested');
-    }
-
     public function test_without_a_katapult_token_or_a_recipient_it_does_nothing(): void
     {
         config(['freegle.servers.report_to' => '']);

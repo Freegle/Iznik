@@ -27,13 +27,11 @@ class ServerSizingReportMail extends MjmlMailable
     /**
      * @param  array<string, mixed>  $analysis  from ServerSizingAnalyser::analyse()
      * @param  array{changes: list<string>, watch: list<string>, caveats: list<string>}|null  $review
-     * @param  string|null  $note  shown at the top, and marks the mail as a correction of an earlier one
      */
     public function __construct(
         public readonly array $analysis,
         public readonly ?array $review,
         public readonly string $recipient,
-        public readonly ?string $note = null,
     ) {
         parent::__construct();
     }
@@ -58,7 +56,7 @@ class ServerSizingReportMail extends MjmlMailable
             $parts[] = "{$flagged} disk".($flagged === 1 ? '' : 's').' filling';
         }
 
-        return ($this->note === null ? '' : 'Corrected: ').'Server sizing: '.implode(', ', $parts);
+        return 'Server sizing: '.implode(', ', $parts);
     }
 
     public function envelope(): Envelope
@@ -80,7 +78,6 @@ class ServerSizingReportMail extends MjmlMailable
 
         return $this->mjmlView('emails.mjml.servers.sizing-report', [
             'previewText' => $this->getSubject(),
-            'note' => $this->note,
             'cards' => $this->cards(),
             'review' => $this->review,
             'monthlyPaid' => self::money($fleet['monthly_paid']),

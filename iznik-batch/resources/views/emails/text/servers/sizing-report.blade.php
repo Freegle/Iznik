@@ -1,10 +1,6 @@
 Server sizing
 =============
 
-@if (!empty($note))
-Correction. {!! $note !!}
-
-@endif
 We pay about {{ $monthlyPaid }} a month for servers and disk.
 @if ($possibleSaving)
 The moves down suggested below would save {{ $possibleSaving }} a month.

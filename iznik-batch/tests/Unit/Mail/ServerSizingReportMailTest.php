@@ -224,7 +224,6 @@ class ServerSizingReportMailTest extends TestCase
             'historyDays' => 21,
             'minHistoryDays' => 14,
             'unattached' => [],
-            'note' => null,
             'siteName' => 'Freegle',
         ], $overrides);
     }
@@ -277,9 +276,6 @@ class ServerSizingReportMailTest extends TestCase
             $this->assertStringContainsString('There are 5 days of readings so far.', view($view, ['historyDays' => 5] + $data)->render());
             $this->assertStringNotContainsString('discount', $out);
             $this->assertStringNotContainsString('Disks to look at', $out);
-            $this->assertStringNotContainsString('Correction.', $out);
-            $this->assertStringContainsString('The costs were too low.', view($view, ['note' => 'The costs were too low.'] + $data)->render());
-            $this->assertStringContainsString('Correction.', view($view, ['note' => 'The costs were too low.'] + $data)->render());
             $this->assertStringNotContainsString('would cost', $out);
             $this->assertStringNotContainsString('not a server Katapult lists', $out);
         }

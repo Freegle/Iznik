@@ -15,8 +15,7 @@ class RightsizeReportCommand extends Command
     protected $signature = 'servers:rightsize-report
                             {--dry-run : Print the verdicts and send nothing}
                             {--no-review : Leave out the AI review}
-                            {--to= : Send to this address instead of SERVERS_REPORT_TO}
-                            {--note= : Send as a correction of an earlier report, with this line at the top}';
+                            {--to= : Send to this address instead of SERVERS_REPORT_TO}';
 
     protected $description = 'Mail the weekly report on whether each server is the right size';
 
@@ -38,7 +37,7 @@ class RightsizeReportCommand extends Command
         }
 
         $built = $report->build(! $this->option('no-review') && ! $dryRun);
-        $mail = new ServerSizingReportMail($built['analysis'], $built['review'], $to !== '' ? $to : 'nobody@example.org', $this->option('note') ?: null);
+        $mail = new ServerSizingReportMail($built['analysis'], $built['review'], $to !== '' ? $to : 'nobody@example.org');
 
         $this->table(
             ['Server', 'Package', 'A month', 'Verdict'],

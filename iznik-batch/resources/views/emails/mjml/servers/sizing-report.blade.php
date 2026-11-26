@@ -7,11 +7,6 @@
     {{-- The headline: what we pay, and what the rules say could be saved. --}}
     <mj-section background-color="#ffffff" padding="15px 0 5px">
       <mj-column>
-        @if (!empty($note))
-        <mj-text font-size="14px" line-height="1.5" padding="5px 25px" color="#8a5a00">
-          <strong>Correction.</strong> {{ $note }}
-        </mj-text>
-        @endif
         <mj-text font-size="15px" line-height="1.5" padding="5px 25px">
           We pay about <strong>{{ $monthlyPaid }} a month</strong> for servers and disk.
           @if ($possibleSaving)
