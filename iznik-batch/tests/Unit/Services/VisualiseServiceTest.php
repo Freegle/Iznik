@@ -18,7 +18,7 @@ class VisualiseServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new VisualiseService;
+        $this->service = new VisualiseService();
     }
 
     private function callPrivate(string $method, array $args)
@@ -87,7 +87,7 @@ class VisualiseServiceTest extends TestCase
     #[DataProvider('profileProvider')]
     public function test_allows_profile(?array $settings, bool $expected): void
     {
-        $user = new User;
+        $user = new User();
         $user->settings = $settings;
 
         $this->assertSame($expected, $this->callPrivate('allowsProfile', [$user]));
@@ -96,8 +96,7 @@ class VisualiseServiceTest extends TestCase
     public function test_allows_profile_when_settings_not_an_array(): void
     {
         // Bypass the array cast to exercise the !is_array branch.
-        $user = new class extends User
-        {
+        $user = new class extends User {
             public function getSettingsAttribute($value = null)
             {
                 return 'garbage';

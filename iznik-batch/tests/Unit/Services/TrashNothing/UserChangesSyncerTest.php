@@ -105,8 +105,8 @@ class UserChangesSyncerTest extends TestCase
     {
         $this->syncChanges([[
             'fd_user_id' => $userId,
-            'username' => $username,
-            'date' => '2026-10-01T10:00:00',
+            'username'   => $username,
+            'date'       => '2026-10-01T10:00:00',
         ]], $dryRun);
     }
 
@@ -121,11 +121,11 @@ class UserChangesSyncerTest extends TestCase
 
     private function username(string $prefix): string
     {
-        return $prefix.random_int(100000, 999999);
+        return $prefix . random_int(100000, 999999);
     }
 
     /**
-     * @param  array<int, array{string, int}>  $emails  [address, preferred]
+     * @param array<int, array{string, int}> $emails [address, preferred]
      */
     private function tnUser(string $fullname, array $emails): User
     {
@@ -158,7 +158,7 @@ class UserChangesSyncerTest extends TestCase
     public function test_prettified_fullname_with_unchanged_username_is_not_renamed(): void
     {
         $old = $this->username('tricia.hayes');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1]]);
 
         $this->sync($user->id, $old);
@@ -172,7 +172,7 @@ class UserChangesSyncerTest extends TestCase
     public function test_username_differing_only_in_case_is_not_a_rename(): void
     {
         $old = $this->username('tricia.hayes');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1]]);
 
         $this->sync($user->id, strtoupper($old));
@@ -186,8 +186,8 @@ class UserChangesSyncerTest extends TestCase
         $old = $this->username('old.name');
         $new = $this->username('new.name');
         $user = $this->tnUser(User::tnDisplayName($old), [
-            ["{$old}-g123".self::TN_DOMAIN, 1],
-            ["{$old}-g456".self::TN_DOMAIN, 0],
+            ["{$old}-g123" . self::TN_DOMAIN, 1],
+            ["{$old}-g456" . self::TN_DOMAIN, 0],
         ]);
 
         $this->sync($user->id, $new);
@@ -195,7 +195,7 @@ class UserChangesSyncerTest extends TestCase
         $user = $user->fresh();
         $this->assertSame(User::tnDisplayName($new), $user->fullname);
         $this->assertSame(
-            ["{$new}-g123".self::TN_DOMAIN => 1, "{$new}-g456".self::TN_DOMAIN => 0],
+            ["{$new}-g123" . self::TN_DOMAIN => 1, "{$new}-g456" . self::TN_DOMAIN => 0],
             $this->emailsOf($user),
         );
         $this->assertTrue($user->isTN(), 'a preferred TN address must remain so isTN() holds');
@@ -203,7 +203,7 @@ class UserChangesSyncerTest extends TestCase
         $events = $this->renameEvents();
         $this->assertCount(2, $events);
         $this->assertEqualsCanonicalizing(
-            ["{$old}-g123".self::TN_DOMAIN, "{$old}-g456".self::TN_DOMAIN],
+            ["{$old}-g123" . self::TN_DOMAIN, "{$old}-g456" . self::TN_DOMAIN],
             array_column($events, 'old_email'),
         );
         foreach ($events as $event) {
@@ -216,13 +216,13 @@ class UserChangesSyncerTest extends TestCase
         $old = $this->username('old.name');
         $new = $this->username('new.name');
         $bare = User::tnEmailForUsername($old);
-        $alias = "{$old}-g9".self::TN_DOMAIN;
+        $alias = "{$old}-g9" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$bare, 1], [$alias, 0]]);
 
         $this->sync($user->id, $new);
 
         $user = $user->fresh();
-        $expected = [User::tnEmailForUsername($new) => 1, "{$new}-g9".self::TN_DOMAIN => 0];
+        $expected = [User::tnEmailForUsername($new) => 1, "{$new}-g9" . self::TN_DOMAIN => 0];
         ksort($expected);
         $this->assertSame($expected, $this->emailsOf($user));
         $this->assertTrue($user->isTN());
@@ -246,7 +246,7 @@ class UserChangesSyncerTest extends TestCase
     {
         $old = $this->username('bibiana');
         $new = $this->username('bibi');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
         $personal = "{$old}@example.com";
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$personal, 0]]);
 
@@ -254,7 +254,7 @@ class UserChangesSyncerTest extends TestCase
 
         $expected = [
             $personal => 0,
-            "{$new}-g123".self::TN_DOMAIN => 1,
+            "{$new}-g123" . self::TN_DOMAIN => 1,
         ];
         ksort($expected);
         $this->assertSame($expected, $this->emailsOf($user));
@@ -268,8 +268,8 @@ class UserChangesSyncerTest extends TestCase
     public function test_a_longer_username_with_the_same_start_is_a_second_username(): void
     {
         $old = $this->username('bibiana');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
-        $longer = "{$old}-gomes-g4840".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
+        $longer = "{$old}-gomes-g4840" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1], [$longer, 0]]);
         $before = $this->emailsOf($user);
 
@@ -283,16 +283,16 @@ class UserChangesSyncerTest extends TestCase
     {
         $old = $this->username('old.name');
         $new = $this->username('new.name');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1]]);
-        $other = $this->tnUser('Someone Else', [["{$new}-g123".self::TN_DOMAIN, 1]]);
+        $other = $this->tnUser('Someone Else', [["{$new}-g123" . self::TN_DOMAIN, 1]]);
 
         $this->sync($user->id, $new);
 
         $user = $user->fresh();
         $this->assertSame(User::tnDisplayName($old), $user->fullname);
         $this->assertSame([$alias => 1], $this->emailsOf($user));
-        $this->assertSame(["{$new}-g123".self::TN_DOMAIN => 1], $this->emailsOf($other));
+        $this->assertSame(["{$new}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($other));
         $this->assertSame([], $this->renameEvents());
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, '[NAME-CHANGE]') && str_contains($m, 'email-clash')));
     }
@@ -324,8 +324,8 @@ class UserChangesSyncerTest extends TestCase
         $sentry = $this->recordSentry();
         $old = $this->username('old.name');
         $new = $this->username('new.name');
-        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
-        $this->tnUser('Someone Else', [["{$new}-g123".self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
+        $this->tnUser('Someone Else', [["{$new}-g123" . self::TN_DOMAIN, 1]]);
 
         $this->sync($user->id, $new);
         $this->sync($user->id, $new);
@@ -342,11 +342,11 @@ class UserChangesSyncerTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $new = $this->username('new.name');
-        $this->tnUser('Holder', [["{$new}-g123".self::TN_DOMAIN, 1]]);
+        $this->tnUser('Holder', [["{$new}-g123" . self::TN_DOMAIN, 1]]);
 
         foreach ([1, 2] as $i) {
             $old = $this->username('old.name');
-            $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
+            $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
             $this->sync($user->id, $new);
         }
 
@@ -361,7 +361,7 @@ class UserChangesSyncerTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $old = $this->username('old.name');
-        $alias = "{$old}-g123".self::TN_DOMAIN;
+        $alias = "{$old}-g123" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$alias, 1]]);
 
         $this->sync($user->id, 'has a space');
@@ -398,7 +398,7 @@ class UserChangesSyncerTest extends TestCase
         $old = $this->username('old.name');
         $first = $this->username('first.name');
         $second = $this->username('second.name');
-        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
         $changes = [
             ['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00'],
             ['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00'],
@@ -407,7 +407,7 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges($changes);
 
         $user = $user->fresh();
-        $this->assertSame(["{$second}-g123".self::TN_DOMAIN => 1], $this->emailsOf($user));
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user));
         $idsAfterFirstRead = $this->emailIdsOf($user);
         $this->assertCount(2, $this->renameEvents(), 'each rename is made once');
 
@@ -415,7 +415,7 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges($changes);
 
         $user = $user->fresh();
-        $this->assertSame(["{$second}-g123".self::TN_DOMAIN => 1], $this->emailsOf($user));
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user));
         $this->assertSame($idsAfterFirstRead, $this->emailIdsOf($user), 'no address was deleted and made again');
         $this->assertSame(User::tnDisplayName($second), $user->fullname);
         $this->assertCount(2, $this->renameEvents(), 'reading the window again renames nothing');
@@ -430,14 +430,14 @@ class UserChangesSyncerTest extends TestCase
         $old = $this->username('old.name');
         $first = $this->username('first.name');
         $second = $this->username('second.name');
-        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
 
         $this->syncChanges([
             ['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00'],
             ['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00'],
         ]);
 
-        $this->assertSame(["{$second}-g123".self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
         $this->assertCount(1, $this->renameEvents());
         $this->assertNotEmpty(array_filter($this->logged, fn ($m) => str_contains($m, 'action=superseded field=username')));
     }
@@ -447,12 +447,12 @@ class UserChangesSyncerTest extends TestCase
         $old = $this->username('old.name');
         $first = $this->username('first.name');
         $second = $this->username('second.name');
-        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
 
         $this->syncChanges([['fd_user_id' => $user->id, 'username' => $first, 'date' => '2026-10-01T10:00:00']]);
         $this->syncChanges([['fd_user_id' => $user->id, 'username' => $second, 'date' => '2026-10-01T10:05:00']]);
 
-        $this->assertSame(["{$second}-g123".self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+        $this->assertSame(["{$second}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
         $this->assertCount(2, $this->renameEvents());
     }
 
@@ -461,21 +461,21 @@ class UserChangesSyncerTest extends TestCase
     {
         $old = $this->username('old.name');
         $new = $this->username('new.name');
-        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123".self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser(User::tnDisplayName($old), [["{$old}-g123" . self::TN_DOMAIN, 1]]);
 
         $this->syncChanges([['fd_user_id' => $user->id, 'username' => $new, 'date' => '2026-10-01T10:05:00']], dryRun: true);
         $this->syncChanges([['fd_user_id' => $user->id, 'username' => $new, 'date' => '2026-10-01T10:00:00']]);
 
-        $this->assertSame(["{$new}-g123".self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
+        $this->assertSame(["{$new}-g123" . self::TN_DOMAIN => 1], $this->emailsOf($user->fresh()));
     }
 
     private function postcode(int $id, string $name, float $lat, float $lng): void
     {
         DB::table('locations')->updateOrInsert(['id' => $id], [
-            'name' => $name,
-            'type' => 'Postcode',
-            'lat' => $lat,
-            'lng' => $lng,
+            'name'     => $name,
+            'type'     => 'Postcode',
+            'lat'      => $lat,
+            'lng'      => $lng,
             'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, (int) config('freegle.srid', 3857))),
         ]);
         $this->postcodeIdByLat[(string) $lat] = $id;
@@ -500,7 +500,7 @@ class UserChangesSyncerTest extends TestCase
      */
     public function test_two_moves_read_again_are_logged_once_each(): void
     {
-        $user = $this->tnUser('Pat', [[$this->username('pat').self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
         $this->postcode(99000301, 'AB1 1AA', 55.9533, -3.1883);
         $this->postcode(99000302, 'CD2 2BB', 51.5502, 0.1350);
         $changes = [
@@ -519,7 +519,7 @@ class UserChangesSyncerTest extends TestCase
 
     public function test_an_older_move_seen_after_a_newer_one_is_not_applied(): void
     {
-        $user = $this->tnUser('Pat', [[$this->username('pat').self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
         $this->postcode(99000301, 'AB1 1AA', 55.9533, -3.1883);
         $this->postcode(99000302, 'CD2 2BB', 51.5502, 0.1350);
 
@@ -536,8 +536,8 @@ class UserChangesSyncerTest extends TestCase
     {
         $old = $this->username('old.name');
         $new = $this->username('new.name');
-        $preferredAlias = "{$old}-g123".self::TN_DOMAIN;
-        $otherAlias = "{$old}-g456".self::TN_DOMAIN;
+        $preferredAlias = "{$old}-g123" . self::TN_DOMAIN;
+        $otherAlias = "{$old}-g456" . self::TN_DOMAIN;
         $user = $this->tnUser(User::tnDisplayName($old), [[$preferredAlias, 1], [$otherAlias, 0]]);
 
         $this->sync($user->id, $new, dryRun: true);
@@ -568,7 +568,7 @@ class UserChangesSyncerTest extends TestCase
         $this->changes = array_merge($filler, [[
             'fd_user_id' => $user->id,
             'reply_time' => 3600,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
     }
 
@@ -588,7 +588,7 @@ class UserChangesSyncerTest extends TestCase
 
     public function test_a_later_page_that_cannot_be_fetched_stops_the_run_after_the_pages_it_got(): void
     {
-        $user = $this->tnUser('Pat', [[$this->username('pat').self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
         $this->fullPageWithOneReplyTime($user);
         $this->failFromPage = 2;
         $syncer = $this->syncer();
@@ -629,7 +629,7 @@ class UserChangesSyncerTest extends TestCase
 
     private function tnUserWithId(?int $tnUserId): User
     {
-        $user = $this->tnUser('Test Member', [[$this->username('m').'-g1'.self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser('Test Member', [[$this->username('m') . '-g1' . self::TN_DOMAIN, 1]]);
         if ($tnUserId !== null) {
             $user->tnuserid = $tnUserId;
             $user->save();
@@ -657,7 +657,7 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'tn_user_id' => 99130001,
             'reply_time' => 4321,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame(4321, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
@@ -668,12 +668,12 @@ class UserChangesSyncerTest extends TestCase
         $user = $this->tnUserWithId(99130002);
 
         $this->syncChanges([[
-            'tn_user_id' => 99130002,
+            'tn_user_id'      => 99130002,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
-        $this->assertSame('Deleted User #'.$user->id, $user->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $user->id, $user->fresh()->fullname);
     }
 
     /**
@@ -685,10 +685,10 @@ class UserChangesSyncerTest extends TestCase
         $user = $this->tnUserWithId(99130003);
 
         $this->syncChanges([[
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130004,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130004,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $user->fresh()->fullname, 'the account is not forgotten');
@@ -703,8 +703,8 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130006,
-            'username' => $this->username('other'),
-            'date' => '2026-10-01T10:00:00',
+            'username'   => $this->username('other'),
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame($before, $this->emailsOf($user->fresh()), 'the addresses are not renamed');
@@ -720,7 +720,7 @@ class UserChangesSyncerTest extends TestCase
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130007,
             'reply_time' => 55,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame(99130007, (int) $user->fresh()->tnuserid);
@@ -738,14 +738,14 @@ class UserChangesSyncerTest extends TestCase
         $holder = $this->tnUserWithId(99130008);
 
         $this->syncChanges([[
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130008,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130008,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $named->fresh()->fullname);
-        $this->assertSame('Deleted User #'.$holder->id, $holder->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
         $this->assertNull($named->fresh()->tnuserid);
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
     }
@@ -760,8 +760,8 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $named->id,
             'tn_user_id' => 99130040,
-            'username' => $new,
-            'date' => '2026-10-01T10:00:00',
+            'username'   => $new,
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame([$new], $holder->fresh()->tnUsernames());
@@ -776,13 +776,13 @@ class UserChangesSyncerTest extends TestCase
         $member = $this->tnUserWithId(99130041);
 
         $this->syncChanges([[
-            'fd_user_id' => $old->id,
-            'tn_user_id' => 99130041,
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130041,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
-        $this->assertSame('Deleted User #'.$member->id, $member->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
         $this->assertSame('Old Account', $old->fresh()->fullname);
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'), 'the old account is reported, not dropped in silence');
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
@@ -794,27 +794,27 @@ class UserChangesSyncerTest extends TestCase
         $member = User::create(['fullname' => 'Test Member', 'added' => now(), 'tnuserid' => 99130042]);
 
         $this->syncChanges([[
-            'fd_user_id' => $member->id,
-            'tn_user_id' => 99130042,
+            'fd_user_id'      => $member->id,
+            'tn_user_id'      => 99130042,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
-        $this->assertSame('Deleted User #'.$member->id, $member->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $member->id, $member->fresh()->fullname);
     }
 
     /** Leaving TN says nothing about their Freegle account, so a volunteer's is not forgotten. */
     public function test_a_removal_leaves_a_freegle_account_holding_the_id_alone(): void
     {
-        $user = $this->tnUser('Test Member', [[$this->username('vol').'@example.org', 1]]);
+        $user = $this->tnUser('Test Member', [[$this->username('vol') . '@example.org', 1]]);
         $user->tnuserid = 99130043;
         $user->save();
 
         $this->syncChanges([[
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130043,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130043,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $user->fresh()->fullname);
@@ -829,7 +829,7 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130044,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertNull($user->fresh()->tnuserid);
@@ -842,7 +842,7 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130009,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]], dryRun: true);
 
         $this->assertNull($user->fresh()->tnuserid);
@@ -858,7 +858,7 @@ class UserChangesSyncerTest extends TestCase
             'fd_user_id' => $gone,
             'tn_user_id' => 99130010,
             'reply_time' => 66,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame(66, (int) UserReplyTime::where('userid', $user->id)->value('replytime'));
@@ -871,13 +871,13 @@ class UserChangesSyncerTest extends TestCase
         $split = $this->tnUserWithId(99130012);
 
         $this->syncChanges([[
-            'fd_user_id' => $old->id,
-            'tn_user_id' => 99130012,
+            'fd_user_id'      => $old->id,
+            'tn_user_id'      => 99130012,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
-        $this->assertSame('Deleted User #'.$split->id, $split->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $split->id, $split->fresh()->fullname);
         $this->assertSame('Test Member', $old->fresh()->fullname);
         $this->assertCount(0, $this->skipEvents('tn-user-id-mismatch'));
     }
@@ -891,8 +891,8 @@ class UserChangesSyncerTest extends TestCase
         $preferred = $this->username('pref');
         $other = $this->username('other');
         $user = $this->tnUser('Test Member', [
-            ["{$preferred}-g1".self::TN_DOMAIN, 1],
-            ["{$other}-g2".self::TN_DOMAIN, 0],
+            ["{$preferred}-g1" . self::TN_DOMAIN, 1],
+            ["{$other}-g2" . self::TN_DOMAIN, 0],
         ]);
 
         if ($tnUserId !== null) {
@@ -915,10 +915,10 @@ class UserChangesSyncerTest extends TestCase
         $before = $this->emailsOf($user);
 
         $this->syncChanges([[
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130013,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130013,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $user->fresh()->fullname);
@@ -934,10 +934,10 @@ class UserChangesSyncerTest extends TestCase
         [$user] = $this->accountWithTwoUsernames(null);
 
         $this->syncChanges([[
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130014,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130014,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $user->fresh()->fullname);
@@ -954,7 +954,7 @@ class UserChangesSyncerTest extends TestCase
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130015,
             'reply_time' => 77,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertNull($user->fresh()->tnuserid);
@@ -975,8 +975,8 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130016,
-            'username' => $this->username('new.name'),
-            'date' => '2026-10-01T10:00:00',
+            'username'   => $this->username('new.name'),
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame($before, $this->emailsOf($user->fresh()));
@@ -995,8 +995,8 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130017,
-            'username' => $other,
-            'date' => '2026-10-01T10:00:00',
+            'username'   => $other,
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame($before, $this->emailsOf($user->fresh()));
@@ -1008,10 +1008,10 @@ class UserChangesSyncerTest extends TestCase
         $sentry = $this->recordSentry();
         $user = $this->tnUserWithId(99130018);
         $change = [
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130019,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130019,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ];
 
         $this->syncChanges([$change]);
@@ -1030,17 +1030,17 @@ class UserChangesSyncerTest extends TestCase
         $holder = $this->tnUserWithId(99130020);
 
         $this->syncChanges([[
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130020,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130020,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
 
         // The removal went ahead on the holder, so the report must not say it was not applied.
-        $this->assertSame('Deleted User #'.$holder->id, $holder->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
         $this->assertStringNotContainsString('not applied', $sentry->calls[0]);
         $this->assertStringContainsString("removed from user {$holder->id}", $sentry->calls[0]);
     }
@@ -1053,15 +1053,15 @@ class UserChangesSyncerTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $named = $this->tnUserWithId(null);
-        $holder = $this->tnUser('Holder', [[$this->username('holder').'@example.com', 1]]);
+        $holder = $this->tnUser('Holder', [[$this->username('holder') . '@example.com', 1]]);
         $holder->tnuserid = 99130043;
         $holder->save();
 
         $this->syncChanges([[
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130043,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130043,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Holder', $holder->fresh()->fullname);
@@ -1078,13 +1078,13 @@ class UserChangesSyncerTest extends TestCase
         $sentry = $this->recordSentry();
         $named = $this->tnUserWithId(null);
         $holder = $this->tnUserWithId(99130044);
-        UserEmail::create(['userid' => $holder->id, 'email' => $this->username('second').'-g1'.self::TN_DOMAIN, 'preferred' => 0]);
+        UserEmail::create(['userid' => $holder->id, 'email' => $this->username('second') . '-g1' . self::TN_DOMAIN, 'preferred' => 0]);
 
         $this->syncChanges([[
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130044,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130044,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Test Member', $holder->fresh()->fullname);
@@ -1103,16 +1103,16 @@ class UserChangesSyncerTest extends TestCase
         $named = $this->tnUserWithId(null);
         $holder = $this->tnUserWithId(99130046);
         $change = [
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130046,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130046,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ];
 
         $this->syncChanges([$change]);
         $this->syncChanges([$change]);
 
-        $this->assertSame('Deleted User #'.$holder->id, $holder->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
         $this->assertSame('Test Member', $named->fresh()->fullname);
         $this->assertNull($named->fresh()->tnuserid, 'the id of a member who left is not given to another account');
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
@@ -1123,16 +1123,16 @@ class UserChangesSyncerTest extends TestCase
     {
         $user = $this->tnUserWithId(99130047);
         $change = [
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130047,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130047,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ];
 
         $this->syncChanges([$change], dryRun: true);
         $this->syncChanges([$change]);
 
-        $this->assertSame('Deleted User #'.$user->id, $user->fresh()->fullname);
+        $this->assertSame('Deleted User #' . $user->id, $user->fresh()->fullname);
     }
 
     /**
@@ -1142,15 +1142,15 @@ class UserChangesSyncerTest extends TestCase
     public function test_a_removal_for_a_freegle_account_holding_the_tn_id_is_reported(): void
     {
         $sentry = $this->recordSentry();
-        $user = $this->tnUser('Holder', [[$this->username('freegler').'@example.com', 1]]);
+        $user = $this->tnUser('Holder', [[$this->username('freegler') . '@example.com', 1]]);
         $user->tnuserid = 99130048;
         $user->save();
 
         $this->syncChanges([[
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130048,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130048,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Holder', $user->fresh()->fullname);
@@ -1163,14 +1163,14 @@ class UserChangesSyncerTest extends TestCase
     public function test_a_removal_without_our_id_for_a_freegle_account_holding_the_tn_id_is_reported(): void
     {
         $sentry = $this->recordSentry();
-        $user = $this->tnUser('Holder', [[$this->username('freegler').'@example.com', 1]]);
+        $user = $this->tnUser('Holder', [[$this->username('freegler') . '@example.com', 1]]);
         $user->tnuserid = 99130049;
         $user->save();
 
         $this->syncChanges([[
-            'tn_user_id' => 99130049,
+            'tn_user_id'      => 99130049,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertSame('Holder', $user->fresh()->fullname);
@@ -1186,10 +1186,10 @@ class UserChangesSyncerTest extends TestCase
         $this->tnUserWithId(99130045);
 
         $this->syncChanges([[
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130045,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130045,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ]], dryRun: true);
 
         $this->assertSame([], $sentry->calls);
@@ -1202,10 +1202,10 @@ class UserChangesSyncerTest extends TestCase
         $named = $this->tnUserWithId(null);
         $holder = $this->tnUserWithId(99130025);
         $change = [
-            'fd_user_id' => $named->id,
-            'tn_user_id' => 99130025,
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130025,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ];
 
         $this->syncChanges([$change]);
@@ -1215,7 +1215,7 @@ class UserChangesSyncerTest extends TestCase
         // its marker lasts; that is cleared here, so this tests only the report's own keys.
         DB::table('users')->where('id', $holder->id)->update(['tnuserid' => null]);
         Cache::forget('tn-sync:change-applied:removal:99130025');
-        UserEmail::create(['userid' => $named->id, 'email' => $this->username('second').'-g1'.self::TN_DOMAIN, 'preferred' => 0]);
+        UserEmail::create(['userid' => $named->id, 'email' => $this->username('second') . '-g1' . self::TN_DOMAIN, 'preferred' => 0]);
 
         $this->syncChanges([$change]);
 
@@ -1234,7 +1234,7 @@ class UserChangesSyncerTest extends TestCase
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130022,
             'reply_time' => 88,
-            'date' => '2026-10-01T10:00:00',
+            'date'       => '2026-10-01T10:00:00',
         ]]);
 
         $this->assertCount(1, $this->skipEvents('tn-user-id-mismatch'));
@@ -1247,10 +1247,10 @@ class UserChangesSyncerTest extends TestCase
         $sentry = $this->recordSentry();
         $user = $this->tnUserWithId(99130023);
         $change = [
-            'fd_user_id' => $user->id,
-            'tn_user_id' => 99130024,
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130024,
             'account_removed' => true,
-            'date' => '2026-10-01T10:00:00',
+            'date'            => '2026-10-01T10:00:00',
         ];
 
         $this->syncChanges([$change], dryRun: true);
@@ -1330,7 +1330,7 @@ class UserChangesSyncerTest extends TestCase
     /** TN named the account, but with no TN address on it nothing shows TN added this one. */
     public function test_the_backfill_leaves_an_account_with_no_tn_address_alone(): void
     {
-        $user = $this->tnUser('Test Member', [[$this->username('plain').'@example.com', 1]]);
+        $user = $this->tnUser('Test Member', [[$this->username('plain') . '@example.com', 1]]);
 
         $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130029, 'date' => '2026-02-01T10:00:00']]);
 
@@ -1466,8 +1466,8 @@ class UserChangesSyncerTest extends TestCase
         $counts = $this->backfill([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130050,
-            'username' => $this->username('someoneelse'),
-            'date' => '2026-02-01T10:00:00',
+            'username'   => $this->username('someoneelse'),
+            'date'       => '2026-02-01T10:00:00',
         ]]);
 
         $this->assertSame(1, $counts['username-differs']);
@@ -1481,8 +1481,8 @@ class UserChangesSyncerTest extends TestCase
         $counts = $this->backfill([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130051,
-            'username' => strtoupper($user->tnUsernames()[0]),
-            'date' => '2026-02-01T10:00:00',
+            'username'   => strtoupper($user->tnUsernames()[0]),
+            'date'       => '2026-02-01T10:00:00',
         ]]);
 
         $this->assertSame(1, $counts['stamped']);
@@ -1504,8 +1504,8 @@ class UserChangesSyncerTest extends TestCase
     public function test_the_backfill_leaves_a_freegle_account_with_one_tn_alias(): void
     {
         $user = $this->tnUser('Volunteer', [
-            [$this->username('vol').'@example.org', 1],
-            [$this->username('tn').'-g1'.self::TN_DOMAIN, 0],
+            [$this->username('vol') . '@example.org', 1],
+            [$this->username('tn') . '-g1' . self::TN_DOMAIN, 0],
         ]);
 
         $counts = $this->backfill([['fd_user_id' => $user->id, 'tn_user_id' => 99130053, 'date' => '2026-02-01T10:00:00']]);
@@ -1583,8 +1583,8 @@ class UserChangesSyncerTest extends TestCase
         $this->backfill([[
             'fd_user_id' => $user->id,
             'tn_user_id' => 99130060,
-            'username' => $username,
-            'date' => '2026-02-01T10:00:00',
+            'username'   => $username,
+            'date'       => '2026-02-01T10:00:00',
         ]]);
 
         $this->assertSame(
@@ -1647,8 +1647,8 @@ class UserChangesSyncerTest extends TestCase
 
     public function test_every_day_of_a_window_is_applied_and_counted(): void
     {
-        $first = $this->tnUser('Pat', [[$this->username('pat').self::TN_DOMAIN, 1]]);
-        $last = $this->tnUser('Sam', [[$this->username('sam').self::TN_DOMAIN, 1]]);
+        $first = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
+        $last = $this->tnUser('Sam', [[$this->username('sam') . self::TN_DOMAIN, 1]]);
         $this->changesByDay = [
             '2026-10-01' => [['fd_user_id' => $first->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
             '2026-10-03' => [['fd_user_id' => $last->id, 'reply_time' => 120, 'date' => '2026-10-03T10:00:00']],
@@ -1678,7 +1678,7 @@ class UserChangesSyncerTest extends TestCase
 
     public function test_a_day_that_cannot_be_fetched_stops_the_run_after_the_days_it_got(): void
     {
-        $user = $this->tnUser('Pat', [[$this->username('pat').self::TN_DOMAIN, 1]]);
+        $user = $this->tnUser('Pat', [[$this->username('pat') . self::TN_DOMAIN, 1]]);
         $this->changesByDay = [
             '2026-10-01' => [['fd_user_id' => $user->id, 'reply_time' => 60, 'date' => '2026-10-01T10:00:00']],
         ];

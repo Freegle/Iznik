@@ -15,7 +15,7 @@ class EngageUpdateServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new EngageUpdateService;
+        $this->service = new EngageUpdateService();
     }
 
     // --- NULL → New ---

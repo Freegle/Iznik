@@ -119,7 +119,7 @@ class GreatCircleTest extends TestCase
         float $positiveDirection,
         float $equivalentDirection
     ): void {
-        $positive = GreatCircle::getPositionByDistance(100_000.0, $positiveDirection, 0.0, 0.0);
+        $positive   = GreatCircle::getPositionByDistance(100_000.0, $positiveDirection, 0.0, 0.0);
         $equivalent = GreatCircle::getPositionByDistance(100_000.0, $equivalentDirection, 0.0, 0.0);
 
         // The two bearings are mathematically identical after adjustment.
@@ -132,10 +132,10 @@ class GreatCircleTest extends TestCase
     public static function directionAdjustmentProvider(): array
     {
         return [
-            '270° = −90° (due west)' => [270.0, -90.0],
-            '181° = −179°' => [181.0, -179.0],
-            '359° = −1°' => [359.0, -1.0],
-            '225° = −135° (southwest)' => [225.0, -135.0],
+            '270° = −90° (due west)'     => [270.0, -90.0],
+            '181° = −179°'               => [181.0, -179.0],
+            '359° = −1°'                 => [359.0, -1.0],
+            '225° = −135° (southwest)'   => [225.0, -135.0],
         ];
     }
 
@@ -255,7 +255,7 @@ class GreatCircleTest extends TestCase
         $distance = 200_000.0;
 
         $north = GreatCircle::getPositionByDistance($distance, 0.0, $startLat, $startLon);
-        $back = GreatCircle::getPositionByDistance($distance, 180.0, $north['lat'], $north['lng']);
+        $back  = GreatCircle::getPositionByDistance($distance, 180.0, $north['lat'], $north['lng']);
 
         $this->assertEqualsWithDelta($startLat, $back['lat'], 0.01, 'Round-trip latitude');
         $this->assertEqualsWithDelta($startLon, $back['lng'], 0.01, 'Round-trip longitude');
@@ -271,7 +271,7 @@ class GreatCircleTest extends TestCase
         float $far
     ): void {
         $shortResult = GreatCircle::getPositionByDistance($short, 0.0, 51.5, -0.1);
-        $farResult = GreatCircle::getPositionByDistance($far, 0.0, 51.5, -0.1);
+        $farResult   = GreatCircle::getPositionByDistance($far,   0.0, 51.5, -0.1);
 
         $this->assertGreaterThan(
             $shortResult['lat'],
@@ -283,8 +283,8 @@ class GreatCircleTest extends TestCase
     public static function monotonicDistanceProvider(): array
     {
         return [
-            '1 km < 10 km' => [1_000.0,   10_000.0],
-            '10 km < 100 km' => [10_000.0,  100_000.0],
+            '1 km < 10 km'    => [1_000.0,   10_000.0],
+            '10 km < 100 km'  => [10_000.0,  100_000.0],
             '100 km < 500 km' => [100_000.0, 500_000.0],
         ];
     }
@@ -299,7 +299,7 @@ class GreatCircleTest extends TestCase
      */
     public function test_east_west_symmetry_at_equator(): void
     {
-        $east = GreatCircle::getPositionByDistance(500_000.0, 90.0, 0.0, 0.0);
+        $east = GreatCircle::getPositionByDistance(500_000.0, 90.0,  0.0, 0.0);
         $west = GreatCircle::getPositionByDistance(500_000.0, 270.0, 0.0, 0.0);
 
         $this->assertEqualsWithDelta($east['lat'], $west['lat'], 1e-8,
@@ -318,8 +318,8 @@ class GreatCircleTest extends TestCase
 
         $this->assertIsFloat($result['lat']);
         $this->assertIsFloat($result['lng']);
-        $this->assertFalse(is_nan($result['lat']), 'lat must not be NaN when starting at north pole');
-        $this->assertFalse(is_nan($result['lng']), 'lng must not be NaN when starting at north pole');
+        $this->assertFalse(is_nan($result['lat']),      'lat must not be NaN when starting at north pole');
+        $this->assertFalse(is_nan($result['lng']),      'lng must not be NaN when starting at north pole');
         $this->assertFalse(is_infinite($result['lat']), 'lat must not be Inf when starting at north pole');
         $this->assertFalse(is_infinite($result['lng']), 'lng must not be Inf when starting at north pole');
     }
@@ -330,8 +330,8 @@ class GreatCircleTest extends TestCase
 
         $this->assertIsFloat($result['lat']);
         $this->assertIsFloat($result['lng']);
-        $this->assertFalse(is_nan($result['lat']), 'lat must not be NaN when starting at south pole');
-        $this->assertFalse(is_nan($result['lng']), 'lng must not be NaN when starting at south pole');
+        $this->assertFalse(is_nan($result['lat']),  'lat must not be NaN when starting at south pole');
+        $this->assertFalse(is_nan($result['lng']),  'lng must not be NaN when starting at south pole');
     }
 
     // -------------------------------------------------------------------------
@@ -352,8 +352,8 @@ class GreatCircleTest extends TestCase
     // -------------------------------------------------------------------------
 
     /**
-     * @param  string  $latRelation  'greater', 'less', or 'same' relative to start (51.5°N).
-     * @param  string  $lngRelation  'greater', 'less', or 'same' relative to start (−0.1°E).
+     * @param  string $latRelation  'greater', 'less', or 'same' relative to start (51.5°N).
+     * @param  string $lngRelation  'greater', 'less', or 'same' relative to start (−0.1°E).
      */
     #[DataProvider('compassDirectionProvider')]
     public function test_compass_direction_moves_position_correctly(
@@ -393,14 +393,14 @@ class GreatCircleTest extends TestCase
     public static function compassDirectionProvider(): array
     {
         return [
-            'due north (0°)' => [0.0, 'greater', 'same'],
-            'due east (90°)' => [90.0, 'same',    'greater'],
-            'due south (180°)' => [180.0, 'less',    'same'],
-            'due west (270°)' => [270.0, 'same',    'less'],
-            'northeast (45°)' => [45.0, 'greater', 'greater'],
-            'southeast (135°)' => [135.0, 'less',    'greater'],
-            'southwest (225°)' => [225.0, 'less',    'less'],
-            'northwest (315°)' => [315.0, 'greater', 'less'],
+            'due north (0°)'      => [  0.0, 'greater', 'same'],
+            'due east (90°)'      => [ 90.0, 'same',    'greater'],
+            'due south (180°)'    => [180.0, 'less',    'same'],
+            'due west (270°)'     => [270.0, 'same',    'less'],
+            'northeast (45°)'     => [ 45.0, 'greater', 'greater'],
+            'southeast (135°)'    => [135.0, 'less',    'greater'],
+            'southwest (225°)'    => [225.0, 'less',    'less'],
+            'northwest (315°)'    => [315.0, 'greater', 'less'],
         ];
     }
 }

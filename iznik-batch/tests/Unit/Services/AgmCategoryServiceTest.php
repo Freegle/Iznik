@@ -37,7 +37,7 @@ class AgmCategoryServiceTest extends TestCase
 
     private function service(): AgmCategoryService
     {
-        return new AgmCategoryService(new DiscourseClient);
+        return new AgmCategoryService(new DiscourseClient());
     }
 
     private function fakeCategoryMissing(): void
@@ -81,7 +81,7 @@ class AgmCategoryServiceTest extends TestCase
         $this->assertTrue($result['created']);
         $this->assertSame(42, $result['categoryId']);
         Http::assertSent(function (Request $request) {
-            if ($request->method() !== 'POST' || ! str_contains($request->url(), '/categories.json')) {
+            if ($request->method() !== 'POST' || !str_contains($request->url(), '/categories.json')) {
                 return false;
             }
 
@@ -170,7 +170,7 @@ class AgmCategoryServiceTest extends TestCase
         Http::assertSent(fn (Request $r) => $r->method() === 'PUT'
             && str_contains($r->url(), 'site_settings')
             && $r['default_categories_watching'] === '7'
-            && ! isset($r['update_existing_user']));
+            && !isset($r['update_existing_user']));
         Http::assertSent(fn (Request $r) => $r->method() === 'PUT'
             && str_contains($r->url(), 'site_settings')
             && $r['default_categories_watching'] === '7|18'

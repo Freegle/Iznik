@@ -47,7 +47,7 @@ class GroupCustomisationServiceTest extends TestCase
 
         Mail::fake();
 
-        $this->service = new GroupCustomisationService;
+        $this->service = new GroupCustomisationService();
     }
 
     // ------------------------------------------------------------------
@@ -61,7 +61,7 @@ class GroupCustomisationServiceTest extends TestCase
     private function createGroupImageId(Group $group): int
     {
         return DB::table('groups_images')->insertGetId([
-            'groupid' => $group->id,
+            'groupid'     => $group->id,
             'contenttype' => 'image/jpeg',
         ]);
     }
@@ -70,11 +70,11 @@ class GroupCustomisationServiceTest extends TestCase
     private function groupMissingAll(array $extra = []): Group
     {
         return $this->createTestGroup(array_merge([
-            'type' => Group::TYPE_FREEGLE,
-            'publish' => 1,
-            'onhere' => 1,
-            'profile' => null,
-            'tagline' => null,
+            'type'        => Group::TYPE_FREEGLE,
+            'publish'     => 1,
+            'onhere'      => 1,
+            'profile'     => null,
+            'tagline'     => null,
             'welcomemail' => null,
             'description' => null,
         ], $extra));
@@ -84,10 +84,10 @@ class GroupCustomisationServiceTest extends TestCase
     private function groupFullyCustomised(): Group
     {
         $group = $this->createTestGroup([
-            'type' => Group::TYPE_FREEGLE,
-            'publish' => 1,
-            'onhere' => 1,
-            'tagline' => 'A tagline',
+            'type'        => Group::TYPE_FREEGLE,
+            'publish'     => 1,
+            'onhere'      => 1,
+            'tagline'     => 'A tagline',
             'welcomemail' => 'Welcome!',
             'description' => 'A description',
         ]);
@@ -104,7 +104,6 @@ class GroupCustomisationServiceTest extends TestCase
     {
         $user = $this->createTestUser();
         $this->createMembership($user, $group, ['role' => $role]);
-
         return DB::table('users_emails')->where('userid', $user->id)->where('preferred', 1)->value('email');
     }
 
@@ -211,7 +210,7 @@ class GroupCustomisationServiceTest extends TestCase
     public static function missingAttributeProvider(): array
     {
         return [
-            'tagline missing' => ['tagline',      'Tagline',      'A tagline'],
+            'tagline missing'     => ['tagline',      'Tagline',      'A tagline'],
             'welcomemail missing' => ['welcomemail',  'Welcome Mail', 'Welcome!'],
             'description missing' => ['description',  'Description',  'A description'],
         ];
@@ -223,7 +222,7 @@ class GroupCustomisationServiceTest extends TestCase
         $group = $this->groupMissingAll();
         // Set the other three so only profile is missing.
         DB::table('groups')->where('id', $group->id)->update([
-            'tagline' => 'A tagline',
+            'tagline'     => 'A tagline',
             'welcomemail' => 'Welcome!',
             'description' => 'A description',
         ]);
@@ -283,7 +282,7 @@ class GroupCustomisationServiceTest extends TestCase
 
         $user = $this->createTestUser();
         $this->createMembership($user, $group, [
-            'role' => Membership::ROLE_MODERATOR,
+            'role'       => Membership::ROLE_MODERATOR,
             'collection' => Membership::COLLECTION_PENDING,
         ]);
 
@@ -303,10 +302,10 @@ class GroupCustomisationServiceTest extends TestCase
 
         DB::table('users_emails')->where('userid', $user->id)->update(['preferred' => 0]);
         DB::table('users_emails')->insert([
-            'userid' => $user->id,
-            'email' => "user{$user->id}-alias@users.ilovefreegle.org",
+            'userid'    => $user->id,
+            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
             'preferred' => 1,
-            'added' => now(),
+            'added'     => now(),
         ]);
 
         $result = $this->service->sendReminders();
@@ -324,10 +323,10 @@ class GroupCustomisationServiceTest extends TestCase
 
         DB::table('users_emails')->where('userid', $user->id)->delete();
         DB::table('users_emails')->insert([
-            'userid' => $user->id,
-            'email' => "user{$user->id}-alias@users.ilovefreegle.org",
+            'userid'    => $user->id,
+            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
             'preferred' => 1,
-            'added' => now(),
+            'added'     => now(),
         ]);
 
         $result = $this->service->sendReminders();
@@ -411,7 +410,7 @@ class GroupCustomisationServiceTest extends TestCase
         $this->addMod($groupWithMod);
 
         $groupFullyCustom = $this->groupFullyCustomised();
-        $groupNoMods = $this->groupMissingAll();
+        $groupNoMods      = $this->groupMissingAll();
 
         $result = $this->service->sendReminders();
 

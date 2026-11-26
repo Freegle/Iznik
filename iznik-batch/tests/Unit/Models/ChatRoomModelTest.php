@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ChatRoomModelTest extends TestCase

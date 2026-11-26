@@ -17,9 +17,7 @@ class RippleReplyServiceTest extends TestCase
 
     // Box covering lng [-0.2, 0.0], lat [51.4, 51.6].
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
-
     private const INSIDE = [51.5, -0.1];   // [lat, lng]
-
     private const OUTSIDE = [52.0, 1.0];
 
     /**
@@ -44,7 +42,7 @@ class RippleReplyServiceTest extends TestCase
         // inside the seeded reach box and refuses everywhere else. The gate
         // and hold/release plumbing are under test, not the geometry.
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (! str_contains($request->url(), 'reach-eval')) {
+            if (!str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             if ($this->reachEvalDown) {
@@ -64,7 +62,7 @@ class RippleReplyServiceTest extends TestCase
 
     private function service(): RippleReplyService
     {
-        return new RippleReplyService(new ReachQueryService);
+        return new RippleReplyService(new ReachQueryService());
     }
 
     private function seedReachedPost(): int
@@ -111,6 +109,7 @@ class RippleReplyServiceTest extends TestCase
         $this->assertTrue($svc->shouldHold($msgid, self::OUTSIDE[0], self::OUTSIDE[1]));
         $this->assertFalse($svc->shouldHold($msgid, self::INSIDE[0], self::INSIDE[1]));
     }
+
 
     /**
      * A reach outage must not hold anybody's reply.

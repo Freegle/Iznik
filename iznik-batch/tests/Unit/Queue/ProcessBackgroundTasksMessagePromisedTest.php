@@ -17,7 +17,6 @@ use Tests\TestCase;
 class ProcessBackgroundTasksMessagePromisedTest extends TestCase
 {
     private User $giver;
-
     private Message $offer;
 
     protected function setUp(): void

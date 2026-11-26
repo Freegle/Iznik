@@ -13,8 +13,7 @@ class AmpEmailMemberTextTest extends TestCase
 {
     private function createAmpEmailInstance(): object
     {
-        return new class
-        {
+        return new class {
             use \App\Mail\Traits\AmpEmail;
 
             public function attach(string $ampHtml, Email $message): void
@@ -41,14 +40,14 @@ class AmpEmailMemberTextTest extends TestCase
     {
         config(['freegle.amp.secret' => 'test-secret', 'freegle.amp.enabled' => true]);
 
-        $ampHtml = '<!doctype html><html amp4email><head><style amp4email-boilerplate>body{visibility:hidden}</style>'.
-            '<style amp-custom>.card { color: #338808; }</style></head>'.
-            '<body><div class="card">'.e($text).'</div></body></html>';
+        $ampHtml = '<!doctype html><html amp4email><head><style amp4email-boilerplate>body{visibility:hidden}</style>' .
+            '<style amp-custom>.card { color: #338808; }</style></head>' .
+            '<body><div class="card">' . e($text) . '</div></body></html>';
 
-        $message = (new Email)
+        $message = (new Email())
             ->from('noreply@example.invalid')
             ->to('member@example.invalid')
-            ->html('<p>'.e($text).'</p>')
+            ->html('<p>' . e($text) . '</p>')
             ->text($text);
 
         $this->createAmpEmailInstance()->attach($ampHtml, $message);
@@ -65,11 +64,11 @@ class AmpEmailMemberTextTest extends TestCase
     {
         config(['freegle.amp.secret' => 'test-secret', 'freegle.amp.enabled' => true]);
 
-        $ampHtml = '<!doctype html><html amp4email><head><style amp4email-boilerplate>body{visibility:hidden}</style>'.
-            '<style amp-custom>.card { color: #338808; }</style></head>'.
+        $ampHtml = '<!doctype html><html amp4email><head><style amp4email-boilerplate>body{visibility:hidden}</style>' .
+            '<style amp-custom>.card { color: #338808; }</style></head>' .
             '<body><div [text]="count > 1 ? \'many\' : \'one\'" style="pointer-events: none">Hello</div></body></html>';
 
-        $message = (new Email)
+        $message = (new Email())
             ->from('noreply@example.invalid')
             ->to('member@example.invalid')
             ->html('<p>Hello</p>')

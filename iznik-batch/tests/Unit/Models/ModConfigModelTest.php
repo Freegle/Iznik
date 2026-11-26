@@ -129,7 +129,7 @@ class ModConfigModelTest extends TestCase
     {
         return (int) DB::table('mod_configs')->insertGetId(array_merge([
             'createdby' => $createdBy,
-            'name' => 'TestConfig_'.uniqid('', true),
+            'name' => 'TestConfig_' . uniqid('', true),
             'default' => false,
             'protected' => false,
         ], $attributes));

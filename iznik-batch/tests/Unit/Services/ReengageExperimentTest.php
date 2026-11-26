@@ -52,7 +52,7 @@ class ReengageExperimentTest extends TestCase
 
     public function test_subject_matches_each_tip_day(): void
     {
-        $service = new ReengageService;
+        $service = new ReengageService();
 
         $this->assertStringContainsString('Welcome to Freegle', $service->subjectFor(1, []));
         $this->assertStringContainsString('nobody wants', $service->subjectFor(2, []));
@@ -63,7 +63,7 @@ class ReengageExperimentTest extends TestCase
 
     public function test_subjects_are_distinct_per_day(): void
     {
-        $service = new ReengageService;
+        $service = new ReengageService();
         $subjects = array_map(fn ($d) => $service->subjectFor($d, []), range(1, 5));
         $this->assertCount(5, array_unique($subjects), 'Each day should have its own subject line');
     }

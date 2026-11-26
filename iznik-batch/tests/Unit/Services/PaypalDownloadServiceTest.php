@@ -20,7 +20,7 @@ class PaypalDownloadServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PaypalDownloadService;
+        $this->service = new PaypalDownloadService();
 
         // Configure credentials and a single-day scan window for determinism.
         config([

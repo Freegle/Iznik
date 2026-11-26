@@ -10,7 +10,7 @@ class GroupRippleOptOutTest extends TestCase
 {
     private function optOut(): GroupRippleOptOut
     {
-        return new GroupRippleOptOut;
+        return new GroupRippleOptOut();
     }
 
     /** Give a group a settings blob and return its id. */
@@ -64,7 +64,7 @@ class GroupRippleOptOutTest extends TestCase
     public function test_every_false_spelling_counts_as_off(): void
     {
         foreach (['0', 'false', '"0"', '"false"'] as $spelling) {
-            $id = $this->groupWithSettings('{"rippling": {"out": '.$spelling.'}}');
+            $id = $this->groupWithSettings('{"rippling": {"out": ' . $spelling . '}}');
             $this->assertFalse(
                 $this->optOut()->permits($id, GroupRippleOptOut::DIRECTION_OUT),
                 "out: $spelling is an opt-out"

@@ -81,7 +81,7 @@ class TransactionPolicyTest extends TestCase
         $baseLevel = TransactionPolicy::transactionLevel();
         $levelDuringOperation = null;
 
-        TransactionPolicy::atomic(function () use (&$levelDuringOperation) {
+        TransactionPolicy::atomic(function () use (&$levelDuringOperation, $baseLevel) {
             $levelDuringOperation = TransactionPolicy::transactionLevel();
         }, 'test level');
 
@@ -199,7 +199,6 @@ class TransactionPolicyTest extends TestCase
             if ($attempts < 2) {
                 throw new DeadlockException('Simulated deadlock');
             }
-
             return 'success after retry';
         }, 'test retry');
 

@@ -3,6 +3,8 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Admin\AdminMail;
+use App\Mail\Admin\ChaseAdminMail;
+use App\Models\User;
 use Tests\TestCase;
 
 class AdminMailTest extends TestCase
@@ -246,14 +248,14 @@ class AdminMailTest extends TestCase
         // which admin is waiting, and how long it has been pending — all without
         // opening the email.
         $html = view('emails.mjml.admin.chase', [
-            'groupName' => 'Freegle Testington',
-            'adminSubject' => 'Welcome post for new members',
+            'groupName'       => 'Freegle Testington',
+            'adminSubject'    => 'Welcome post for new members',
             'pendingTimeText' => '3 days',
-            'pendingHours' => 72,
-            'modToolsUrl' => 'https://modtools.org/admins',
-            'adminId' => 1,
-            'userName' => 'Test Mod',
-            'siteName' => config('freegle.branding.name', 'Freegle'),
+            'pendingHours'    => 72,
+            'modToolsUrl'     => 'https://modtools.org/admins',
+            'adminId'         => 1,
+            'userName'        => 'Test Mod',
+            'siteName'        => config('freegle.branding.name', 'Freegle'),
             'trackingPixelMjml' => null,
         ])->render();
 
@@ -330,8 +332,8 @@ class AdminMailTest extends TestCase
         $admin = $this->makeAdmin([
             'text' => 'PLAIN-VERSION of the news',
             'mjml' => '<mj-section><mj-column><mj-text>DESIGNED-VERSION <b>bold</b>'
-                .'<script>alert("x")</script><img src="https://x.example/i.png" onerror="alert(1)"></mj-text>'
-                .'</mj-column></mj-section>',
+                . '<script>alert("x")</script><img src="https://x.example/i.png" onerror="alert(1)"></mj-text>'
+                . '</mj-column></mj-section>',
         ]);
 
         $mail = new AdminMail($user, $admin, 'Test Group', 'mods@groups.ilovefreegle.org', 'testgroup');
@@ -364,7 +366,7 @@ class AdminMailTest extends TestCase
 
         foreach (['html' => $html, 'text' => $text] as $part => $body) {
             $this->assertStringContainsString('registered as a charity with HMRC (ref. XT32865)', $body, $part);
-            $this->assertStringContainsString('Registered address: '.$address, $body, $part);
+            $this->assertStringContainsString('Registered address: ' . $address, $body, $part);
         }
     }
 

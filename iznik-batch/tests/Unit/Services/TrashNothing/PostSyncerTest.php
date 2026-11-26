@@ -69,17 +69,19 @@ class PostSyncerTest extends TestCase
         $method->invoke($syncer, $post, null);
     }
 
+
+
     private function makePost(array $overrides = []): array
     {
         return array_merge([
-            'post_id' => 'tn-loc-test-'.uniqid('', true),
-            'group_id' => '',
-            'user_id' => null,
-            'title' => 'Old wooden bookshelf',
-            'content' => 'Good condition, free to collect.',
-            'date' => '2026-07-07T12:00:00Z',
-            'type' => 'offer',
-            'latitude' => null,
+            'post_id'   => 'tn-loc-test-' . uniqid('', true),
+            'group_id'  => '',
+            'user_id'   => null,
+            'title'     => 'Old wooden bookshelf',
+            'content'   => 'Good condition, free to collect.',
+            'date'      => '2026-07-07T12:00:00Z',
+            'type'      => 'offer',
+            'latitude'  => null,
             'longitude' => null,
         ], $overrides);
     }
@@ -94,10 +96,10 @@ class PostSyncerTest extends TestCase
         $nearLng = 10.0;
 
         $near = $this->createTestGroup(['lat' => $nearLat, 'lng' => $nearLng]);
-        $far = $this->createTestGroup(['lat' => -10.0, 'lng' => 100.0]);
+        $far  = $this->createTestGroup(['lat' => -10.0, 'lng' => 100.0]);
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->once())
             ->method('ingest')
@@ -107,8 +109,8 @@ class PostSyncerTest extends TestCase
         // API says the post belongs to the far group, but its coordinates sit
         // right on the near group's centroid.
         $this->callProcessPost($syncer, $this->makePost([
-            'group_id' => (string) $far->id,
-            'latitude' => $nearLat,
+            'group_id'  => (string) $far->id,
+            'latitude'  => $nearLat,
             'longitude' => $nearLng,
         ]));
     }
@@ -120,16 +122,16 @@ class PostSyncerTest extends TestCase
         $group = $this->createTestGroup();
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->never())->method('ingest');
 
-        $postId = 'tn-nocoords-'.uniqid('', true);
+        $postId = 'tn-nocoords-' . uniqid('', true);
         $this->callProcessPost($syncer, $this->makePost([
-            'post_id' => $postId,
-            'group_id' => (string) $group->id,
-            'user_id' => '4242',
-            'latitude' => null,
+            'post_id'   => $postId,
+            'group_id'  => (string) $group->id,
+            'user_id'   => '4242',
+            'latitude'  => null,
             'longitude' => null,
         ]));
 
@@ -155,8 +157,8 @@ class PostSyncerTest extends TestCase
         $this->injectIngestionSpy($syncer)->method('ingest')->willThrowException(new \RuntimeException('ingest failed'));
 
         $this->callProcessPost($syncer, $this->makePost([
-            'user_id' => 4242,
-            'latitude' => 10.0,
+            'user_id'   => 4242,
+            'latitude'  => 10.0,
             'longitude' => 10.0,
         ]));
 
@@ -185,15 +187,15 @@ class PostSyncerTest extends TestCase
         $group = $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]); // London
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->never())->method('ingest');
 
-        $postId = 'tn-oob-'.uniqid('', true);
+        $postId = 'tn-oob-' . uniqid('', true);
         $this->callProcessPost($syncer, $this->makePost([
-            'post_id' => $postId,
-            'group_id' => (string) $group->id,
-            'latitude' => 35.0,
+            'post_id'   => $postId,
+            'group_id'  => (string) $group->id,
+            'latitude'  => 35.0,
             'longitude' => -40.0,
         ]));
 
@@ -214,7 +216,7 @@ class PostSyncerTest extends TestCase
         $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->once())
             ->method('ingest')
@@ -222,7 +224,7 @@ class PostSyncerTest extends TestCase
             ->willReturn('approved');
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
+            'latitude'  => 10.0,
             'longitude' => 10.0,
         ]));
     }
@@ -232,7 +234,7 @@ class PostSyncerTest extends TestCase
         $group = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->once())
             ->method('ingest')
@@ -240,8 +242,8 @@ class PostSyncerTest extends TestCase
             ->willReturn('approved');
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$group->id],
         ]));
     }
@@ -274,8 +276,8 @@ class PostSyncerTest extends TestCase
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $chosen->id, true);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$chosen->id],
         ]));
     }
@@ -285,9 +287,9 @@ class PostSyncerTest extends TestCase
         // The containing community's centre is further away than the other's, so this
         // only passes if being inside the area beats being near the centre.
         $containing = $this->createTestGroup([
-            'lat' => 10.4,
-            'lng' => 10.4,
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((9.9 9.9, 10.5 9.9, 10.5 10.5, 9.9 10.5, 9.9 9.9))', ".config('freegle.srid').')'),
+            'lat'       => 10.4,
+            'lng'       => 10.4,
+            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((9.9 9.9, 10.5 9.9, 10.5 10.5, 9.9 10.5, 9.9 9.9))', " . config('freegle.srid') . ')'),
         ]);
         $nearer = $this->createTestGroup(['lat' => 10.1, 'lng' => 10.1]);
 
@@ -295,23 +297,23 @@ class PostSyncerTest extends TestCase
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $containing->id, true);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$nearer->id, $containing->id],
         ]));
     }
 
     public function test_of_several_chosen_communities_none_containing_the_post_it_goes_on_the_nearest(): void
     {
-        $far = $this->createTestGroup(['lat' => 10.5, 'lng' => 10.5]);
+        $far  = $this->createTestGroup(['lat' => 10.5, 'lng' => 10.5]);
         $near = $this->createTestGroup(['lat' => 10.1, 'lng' => 10.1]);
 
         $syncer = $this->makeSyncer();
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $near->id, true);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$far->id, $near->id],
         ]));
     }
@@ -326,8 +328,8 @@ class PostSyncerTest extends TestCase
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $chosen->id, true);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 35.0,
-            'longitude' => -40.0,
+            'latitude'          => 35.0,
+            'longitude'         => -40.0,
             'freegle_group_ids' => [$chosen->id],
         ]));
     }
@@ -335,14 +337,14 @@ class PostSyncerTest extends TestCase
     public function test_a_chosen_community_that_is_not_published_is_passed_over(): void
     {
         $local = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
-        $gone = $this->createTestGroup(['lat' => 10.2, 'lng' => 10.2, 'publish' => 0]);
+        $gone  = $this->createTestGroup(['lat' => 10.2, 'lng' => 10.2, 'publish' => 0]);
 
         $syncer = $this->makeSyncer();
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $local->id, false);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$gone->id],
         ]));
     }
@@ -356,8 +358,8 @@ class PostSyncerTest extends TestCase
         $this->expectIngestOn($this->injectIngestionSpy($syncer), $local->id, false);
 
         $this->callProcessPost($syncer, $this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [],
         ]));
     }
@@ -391,8 +393,8 @@ class PostSyncerTest extends TestCase
         $group = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
         $posts = $this->deserializePosts([$this->makePost([
-            'latitude' => 10.0,
-            'longitude' => 10.0,
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
             'freegle_group_ids' => [$group->id],
         ])]);
 
@@ -400,7 +402,7 @@ class PostSyncerTest extends TestCase
         $this->assertSame([(int) $group->id], $posts[0]->getFreegleGroupIds());
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->once())
             ->method('ingest')
@@ -417,14 +419,14 @@ class PostSyncerTest extends TestCase
         $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
         $posts = $this->deserializePosts([$this->makePost([
-            'latitude' => 10.0,
+            'latitude'  => 10.0,
             'longitude' => 10.0,
         ])]);
 
         $this->assertNull($posts[0]->getFreegleGroupIds());
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
 
         $spy->expects($this->once())
             ->method('ingest')
@@ -460,7 +462,7 @@ class PostSyncerTest extends TestCase
         $sentry = $this->recordSentry();
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
         $spy->method('ingest')->willReturn('approved');
 
         $this->callProcessPost($syncer, $this->makePost(['latitude' => 10.0, 'longitude' => 10.0]));
@@ -479,7 +481,7 @@ class PostSyncerTest extends TestCase
         $sentry = $this->recordSentry();
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
         $spy->method('ingest')->willReturn('approved');
 
         foreach ($this->deserializePosts([
@@ -500,7 +502,7 @@ class PostSyncerTest extends TestCase
         $sentry = $this->recordSentry();
 
         $syncer = $this->makeSyncer();
-        $spy = $this->injectIngestionSpy($syncer);
+        $spy    = $this->injectIngestionSpy($syncer);
         $spy->expects($this->once())
             ->method('ingest')
             ->with($this->anything(), $this->anything(), false)
@@ -532,14 +534,14 @@ class PostSyncerTest extends TestCase
     {
         $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
-        $dir = 'storage/framework/testing/tn-posts-'.uniqid('', true);
+        $dir = 'storage/framework/testing/tn-posts-' . uniqid('', true);
         mkdir(base_path($dir), 0755, true);
         $this->fixtureDirs[] = base_path($dir);
         $posts = [];
         foreach ([['p1', '2026-07-07T12:00:00Z'], ['p2', '2026-07-07T13:15:00Z'], ['p3', '2026-07-07T14:30:00Z']] as [$id, $date]) {
             $posts[] = $this->makePost(['post_id' => $id, 'date' => $date, 'latitude' => 10.0, 'longitude' => 10.0]);
         }
-        file_put_contents(base_path($dir.'/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
+        file_put_contents(base_path($dir . '/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
 
         $syncer = new PostSyncer(
             dryRun: true,
@@ -564,9 +566,9 @@ class PostSyncerTest extends TestCase
             $seen->ingested[] = $post['post_id'];
             $outcome = $outcomes[count($seen->ingested) - 1] ?? 'ok';
             $reason = match ($outcome) {
-                'unknown-user' => GroupPostIngestionService::REASON_UNKNOWN_USER,
+                'unknown-user'  => GroupPostIngestionService::REASON_UNKNOWN_USER,
                 'lookup-failed' => GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED,
-                default => null,
+                default         => null,
             };
 
             return $outcome === 'ok' ? 'approved' : 'skipped';
@@ -583,7 +585,7 @@ class PostSyncerTest extends TestCase
     protected function tearDown(): void
     {
         foreach ($this->fixtureDirs as $dir) {
-            foreach (glob($dir.'/*') ?: [] as $file) {
+            foreach (glob($dir . '/*') ?: [] as $file) {
                 @unlink($file);
             }
             @rmdir($dir);
@@ -647,7 +649,7 @@ class PostSyncerTest extends TestCase
     public function test_a_backfilled_post_whose_poster_could_not_be_looked_up_says_so(): void
     {
         [$syncer, $seen] = $this->syncerOverThreePosts(['lookup-failed', 'ok']);
-        $posts = json_decode(file_get_contents($this->fixtureDirs[0].'/posts_page_1.json'), true)['posts'];
+        $posts = json_decode(file_get_contents($this->fixtureDirs[0] . '/posts_page_1.json'), true)['posts'];
 
         $this->assertFalse($syncer->ingestFetchedPost($posts[0]), 'try again later');
         $this->assertTrue($syncer->ingestFetchedPost($posts[1]));
@@ -676,25 +678,25 @@ class PostSyncerTest extends TestCase
     {
         $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
 
-        $dir = 'storage/framework/testing/tn-posts-'.uniqid('', true);
+        $dir = 'storage/framework/testing/tn-posts-' . uniqid('', true);
         mkdir(base_path($dir), 0755, true);
         $this->fixtureDirs[] = base_path($dir);
         $dates = ['2026-07-07T12:00:00Z', '2026-07-07T13:15:00Z', '2026-07-07T14:30:00Z'];
         $posts = [];
         foreach (array_values($tnUserIds) as $i => $tnUserId) {
             $posts[] = $this->makePost([
-                'post_id' => 'p'.($i + 1),
-                'date' => $dates[$i],
-                'latitude' => 10.0,
-                'longitude' => 10.0,
-                'user_id' => (string) $tnUserId,
+                'post_id'           => 'p' . ($i + 1),
+                'date'              => $dates[$i],
+                'latitude'          => 10.0,
+                'longitude'         => 10.0,
+                'user_id'           => (string) $tnUserId,
                 'freegle_group_ids' => [],
             ]);
         }
-        file_put_contents(base_path($dir.'/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
+        file_put_contents(base_path($dir . '/posts_page_1.json'), json_encode(['num_pages' => 1, 'posts' => $posts]));
 
         Http::fake(function (Request $request) {
-            if (! preg_match('#/users/(\d+)\?#', $request->url(), $m)) {
+            if (!preg_match('#/users/(\d+)\?#', $request->url(), $m)) {
                 return Http::response('not found', 404);
             }
 
@@ -710,7 +712,7 @@ class PostSyncerTest extends TestCase
      */
     private function syncerForRun(string $fixtureDir): PostSyncer
     {
-        $loki = app(LokiService::class);
+        $loki        = app(LokiService::class);
         $rateLimiter = new TrashNothingRateLimiter(0);
 
         $syncer = new PostSyncer(
@@ -886,7 +888,7 @@ class PostSyncerTest extends TestCase
         [$rejected, $gone] = [$this->tnUserId(), $this->tnUserId()];
         $this->tnStatuses = [$rejected => 403, $gone => 404];
         $dir = $this->feedWithPosters([$rejected, $gone]);
-        $posts = json_decode(file_get_contents(base_path($dir.'/posts_page_1.json')), true)['posts'];
+        $posts = json_decode(file_get_contents(base_path($dir . '/posts_page_1.json')), true)['posts'];
 
         $syncer = $this->syncerForRun($dir);
 
@@ -928,7 +930,7 @@ class PostSyncerTest extends TestCase
     public function test_redact_api_key_strips_the_key_from_a_quoted_request_url(): void
     {
         $message = '[401] Client error: `GET https://trashnothing.com/api/v1.4/posts/all'
-            .'?types=offer%2Cwanted&per_page=50&page=1&api_key=SECRETVALUE123` resulted in a `401 Unauthorized` response';
+            . '?types=offer%2Cwanted&per_page=50&page=1&api_key=SECRETVALUE123` resulted in a `401 Unauthorized` response';
 
         $out = PostSyncer::redactApiKey($message);
 

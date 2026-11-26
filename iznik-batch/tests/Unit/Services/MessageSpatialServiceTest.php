@@ -14,7 +14,6 @@ class MessageSpatialServiceTest extends TestCase
     use \Tests\Support\SeedsReachCells;
 
     protected MessageSpatialService $service;
-
     protected SpatialAdminService $spatialAdmin;
 
     protected function setUp(): void
@@ -1195,7 +1194,7 @@ class MessageSpatialServiceTest extends TestCase
             '/force\s+index\s*\(\s*`?arrival`?\s*\)/i',
             $sql,
             'the ranked derived table must drive from the arrival index; ROW_NUMBER alone barely '
-                .'moves the query (32.43s against 37.10s)'
+                . 'moves the query (32.43s against 37.10s)'
         );
         $this->assertDoesNotMatchRegularExpression(
             '/not\s+exists\s*\(\s*select\s+`?better`?/i',
@@ -1272,7 +1271,7 @@ class MessageSpatialServiceTest extends TestCase
                 '/force\s+index/i',
                 $sql,
                 'stillQualifyForIndex looks posts up by msgid and must not be forced onto the '
-                    .'arrival index; that hint belongs to the reconciler alone'
+                    . 'arrival index; that hint belongs to the reconciler alone'
             );
         }
     }

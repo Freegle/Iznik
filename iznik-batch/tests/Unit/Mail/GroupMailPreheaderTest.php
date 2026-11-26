@@ -2,6 +2,11 @@
 
 namespace Tests\Unit\Mail;
 
+use App\Mail\Group\AlertNoMessagesMail;
+use App\Mail\Group\BoundaryErrorMail;
+use App\Mail\Group\ClosedGroupReminderMail;
+use App\Mail\Group\CustomisationReminderMail;
+use App\Mail\Group\WelcomeReviewMail;
 use Tests\TestCase;
 
 /**
@@ -21,7 +26,7 @@ class GroupMailPreheaderTest extends TestCase
     {
         return [
             'count' => $count,
-            'body' => 'The following groups have not received any messages recently.',
+            'body'  => 'The following groups have not received any messages recently.',
             'email' => 'geeks@ilovefreegle.org',
         ];
     }
@@ -29,10 +34,10 @@ class GroupMailPreheaderTest extends TestCase
     private function boundaryErrorData(string $groupName): array
     {
         return [
-            'groupId' => 42,
-            'groupName' => $groupName,
+            'groupId'      => 42,
+            'groupName'    => $groupName,
             'errorMessage' => 'The boundary polygon is not valid GeoJSON.',
-            'email' => 'geeks@ilovefreegle.org',
+            'email'        => 'geeks@ilovefreegle.org',
         ];
     }
 
@@ -40,29 +45,29 @@ class GroupMailPreheaderTest extends TestCase
     {
         return [
             'groupName' => $groupName,
-            'modSite' => 'https://modtools.org',
-            'email' => 'mod@example.com',
+            'modSite'   => 'https://modtools.org',
+            'email'     => 'mod@example.com',
         ];
     }
 
     private function customisationReminderData(string $groupName): array
     {
         return [
-            'groupName' => $groupName,
-            'missing' => "- Group description\n- Group photo",
-            'modSite' => 'https://modtools.org',
+            'groupName'   => $groupName,
+            'missing'     => "- Group description\n- Group photo",
+            'modSite'     => 'https://modtools.org',
             'mentorsAddr' => 'mentors@ilovefreegle.org',
-            'email' => 'mod@example.com',
+            'email'       => 'mod@example.com',
         ];
     }
 
     private function welcomeReviewData(string $groupName): array
     {
         return [
-            'groupName' => $groupName,
+            'groupName'      => $groupName,
             'welcomeContent' => 'Welcome to the group! Please read our rules.',
-            'modSite' => 'https://modtools.org',
-            'email' => 'mod@example.com',
+            'modSite'        => 'https://modtools.org',
+            'email'          => 'mod@example.com',
         ];
     }
 

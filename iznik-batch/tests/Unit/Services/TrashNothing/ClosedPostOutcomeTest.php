@@ -17,8 +17,8 @@ class ClosedPostOutcomeTest extends TestCase
 {
     private function closedPost(string $type, string $collection): Message
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user    = $this->createTestUser();
+        $group   = $this->createTestGroup();
         $message = $this->createTestMessage($user, $group, ['type' => $type]);
         MessageGroup::where('msgid', $message->id)->update(['collection' => $collection]);
 
@@ -35,7 +35,7 @@ class ClosedPostOutcomeTest extends TestCase
     {
         $message = $this->closedPost(Message::TYPE_OFFER, MessageGroup::COLLECTION_PENDING);
 
-        $this->assertSame('taken', (new ClosedPostOutcome)->apply($message->id, 'satisfied'));
+        $this->assertSame('taken', (new ClosedPostOutcome())->apply($message->id, 'satisfied'));
 
         $this->assertSame('Taken', DB::table('messages_outcomes')->where('msgid', $message->id)->value('outcome'));
         $this->assertSame(MessageGroup::COLLECTION_PENDING, MessageGroup::where('msgid', $message->id)->value('collection'),
@@ -49,7 +49,7 @@ class ClosedPostOutcomeTest extends TestCase
     {
         $message = $this->closedPost(Message::TYPE_WANTED, MessageGroup::COLLECTION_APPROVED);
 
-        $this->assertSame('received', (new ClosedPostOutcome)->apply($message->id, 'satisfied'));
+        $this->assertSame('received', (new ClosedPostOutcome())->apply($message->id, 'satisfied'));
         $this->assertSame('Received', DB::table('messages_outcomes')->where('msgid', $message->id)->value('outcome'));
     }
 
@@ -58,7 +58,7 @@ class ClosedPostOutcomeTest extends TestCase
         $message = $this->closedPost(Message::TYPE_OFFER, MessageGroup::COLLECTION_PENDING);
         $groupId = MessageGroup::where('msgid', $message->id)->value('groupid');
 
-        $this->assertSame('withdrawn-deleted', (new ClosedPostOutcome)->apply($message->id, 'withdrawn'));
+        $this->assertSame('withdrawn-deleted', (new ClosedPostOutcome())->apply($message->id, 'withdrawn'));
 
         $row = DB::table('messages')->where('id', $message->id)->first(['deleted', 'messageid']);
         $this->assertNotNull($row->deleted);
@@ -75,7 +75,7 @@ class ClosedPostOutcomeTest extends TestCase
     {
         $message = $this->closedPost(Message::TYPE_OFFER, MessageGroup::COLLECTION_APPROVED);
 
-        $this->assertSame('withdrawn', (new ClosedPostOutcome)->apply($message->id, 'withdrawn'));
+        $this->assertSame('withdrawn', (new ClosedPostOutcome())->apply($message->id, 'withdrawn'));
 
         $this->assertSame('Withdrawn', DB::table('messages_outcomes')->where('msgid', $message->id)->value('outcome'));
         $this->assertNull(DB::table('messages')->where('id', $message->id)->value('deleted'));
@@ -86,7 +86,7 @@ class ClosedPostOutcomeTest extends TestCase
         $message = $this->closedPost(Message::TYPE_OFFER, MessageGroup::COLLECTION_APPROVED);
         DB::table('messages_outcomes')->insert(['msgid' => $message->id, 'outcome' => 'Taken', 'timestamp' => now()]);
 
-        $this->assertSame('skipped', (new ClosedPostOutcome)->apply($message->id, 'withdrawn'));
+        $this->assertSame('skipped', (new ClosedPostOutcome())->apply($message->id, 'withdrawn'));
         $this->assertSame(1, DB::table('messages_outcomes')->where('msgid', $message->id)->count());
     }
 
@@ -94,7 +94,7 @@ class ClosedPostOutcomeTest extends TestCase
     {
         $message = $this->closedPost(Message::TYPE_OFFER, MessageGroup::COLLECTION_APPROVED);
 
-        $this->assertSame('skipped', (new ClosedPostOutcome)->apply($message->id, 'promised'));
+        $this->assertSame('skipped', (new ClosedPostOutcome())->apply($message->id, 'promised'));
         $this->assertFalse(DB::table('messages_outcomes')->where('msgid', $message->id)->exists());
     }
 }

@@ -20,7 +20,7 @@ class ChatNotificationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatNotificationService;
+        $this->service = new ChatNotificationService();
         Mail::fake();
     }
 
@@ -575,7 +575,7 @@ class ChatNotificationServiceTest extends TestCase
             'created_at' => now(), 'expires_at' => now()->addDays(3), 'answer' => 'yes', 'answered_via' => 'button', 'answered_at' => now(),
         ]);
 
-        (new \App\Services\ChatProcessService)->processIncoming();
+        (new \App\Services\ChatProcessService())->processIncoming();
 
         $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
         $method->setAccessible(true);
@@ -2286,4 +2286,5 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertContains($earlier->id, $ids, 'Genuinely earlier message should remain as context');
         $this->assertNotContains($duplicate->id, $ids, 'Duplicate copy of the current message should be excluded');
     }
+
 }

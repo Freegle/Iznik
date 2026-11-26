@@ -15,7 +15,7 @@ class MessageRemapSubjectsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MessageRemapSubjectsService;
+        $this->service = new MessageRemapSubjectsService();
     }
 
     public function test_updates_subject_when_location_name_changes(): void

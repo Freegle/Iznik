@@ -16,7 +16,7 @@ class TnEmailRoutingGateTest extends TestCase
 {
     private function gate(): TnEmailRoutingGate
     {
-        return new TnEmailRoutingGate;
+        return new TnEmailRoutingGate();
     }
 
     /**
@@ -29,25 +29,25 @@ class TnEmailRoutingGateTest extends TestCase
         $envelopeFrom = $overrides['envelopeFrom'] ?? 'poster@user.trashnothing.com';
 
         $lines = [
-            'From: '.$from,
-            'To: '.$envelopeTo,
-            'Subject: '.($overrides['subject'] ?? 'OFFER: Bookshelf (Camden)'),
+            'From: ' . $from,
+            'To: ' . $envelopeTo,
+            'Subject: ' . ($overrides['subject'] ?? 'OFFER: Bookshelf (Camden)'),
             'Message-ID: <tn-test@trashnothing.com>',
             'Date: Fri, 14 Aug 2026 09:00:00 +0000',
         ];
 
         foreach ($headers as $name => $value) {
-            $lines[] = $name.': '.$value;
+            $lines[] = $name . ': ' . $value;
         }
 
-        $raw = implode("\r\n", $lines)."\r\n\r\nFree to collect.\r\n";
+        $raw = implode("\r\n", $lines) . "\r\n\r\nFree to collect.\r\n";
 
         return app(MailParserService::class)->parse($raw, $envelopeFrom, $envelopeTo);
     }
 
     private function groupAddress(string $localPart): string
     {
-        return $localPart.'@'.config('freegle.mail.group_domain');
+        return $localPart . '@' . config('freegle.mail.group_domain');
     }
 
     public function test_matches_a_tn_group_post(): void

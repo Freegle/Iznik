@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\EeeVisionService;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -13,7 +14,7 @@ class EeeVisionServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new EeeVisionService;
+        $this->service = new EeeVisionService();
     }
 
     public function test_fetch_image_rejects_non_image_content_type(): void
@@ -48,7 +49,7 @@ class EeeVisionServiceTest extends TestCase
 
     public function test_fetch_image_accepts_jpeg_content_type(): void
     {
-        $fakeJpeg = "\xFF\xD8\xFF\xE0".str_repeat('x', 100); // minimal JPEG-like bytes
+        $fakeJpeg = "\xFF\xD8\xFF\xE0" . str_repeat('x', 100); // minimal JPEG-like bytes
 
         Http::fake([
             'https://delivery.ilovefreegle.org*' => Http::response(
@@ -69,7 +70,7 @@ class EeeVisionServiceTest extends TestCase
     {
         Http::fake([
             'https://delivery.ilovefreegle.org*' => Http::response(
-                'RIFF'.str_repeat('x', 100),
+                'RIFF' . str_repeat('x', 100),
                 200,
                 ['Content-Type' => 'image/webp']
             ),
@@ -117,7 +118,6 @@ class EeeVisionServiceTest extends TestCase
     {
         $reflection = new \ReflectionMethod(EeeVisionService::class, 'fetchImageBase64');
         $reflection->setAccessible(true);
-
         return $reflection->invoke($this->service, $url);
     }
 
@@ -150,7 +150,7 @@ class EeeVisionServiceTest extends TestCase
         $this->assertCount(7, EeeVisionService::WEEE_STREAMS);
         $this->assertSame(range(1, 7), array_keys(EeeVisionService::WEEE_STREAMS));
         foreach (array_values(EeeVisionService::WEEE_STREAMS) as $i => $name) {
-            $this->assertStringStartsWith(chr(ord('A') + $i).':', $name);
+            $this->assertStringStartsWith(chr(ord('A') + $i) . ':', $name);
         }
     }
 
@@ -205,7 +205,7 @@ class EeeVisionServiceTest extends TestCase
         config(['freegle.eee.gemini_api_key' => 'test-key']);
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response([
-                'candidates' => [['content' => ['parts' => [['text' => '[{"n":1,"e":1,"s":2},{"n":2,"e":0,"s":null}]']]]]],
+                'candidates'    => [['content' => ['parts' => [['text' => '[{"n":1,"e":1,"s":2},{"n":2,"e":0,"s":null}]']]]]],
                 'usageMetadata' => ['promptTokenCount' => 100, 'candidatesTokenCount' => 10],
             ]),
         ]);
@@ -239,7 +239,7 @@ class EeeVisionServiceTest extends TestCase
         ]);
 
         $nested = $this->service->geminiBatchJob('batches/nested');
-        $flat = $this->service->geminiBatchJob('batches/flat');
+        $flat   = $this->service->geminiBatchJob('batches/flat');
 
         $this->assertSame(['state' => 'BATCH_STATE_SUCCEEDED', 'results_file' => 'files/out1', 'stats' => ['requestCount' => '2']], $nested);
         $this->assertSame('JOB_STATE_RUNNING', $flat['state']);
@@ -250,7 +250,6 @@ class EeeVisionServiceTest extends TestCase
     {
         $ref = new \ReflectionMethod(EeeVisionService::class, $method);
         $ref->setAccessible(true);
-
         return $ref->invoke($this->service);
     }
 }

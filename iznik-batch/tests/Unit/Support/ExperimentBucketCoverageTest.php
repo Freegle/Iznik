@@ -35,7 +35,7 @@ class ExperimentBucketCoverageTest extends TestCase
     {
         $this->assertSame($expected, ExperimentBucket::bucket($userId, $experiment, $buckets, $salt));
 
-        $text = $userId.'|'.$experiment.($salt !== '' ? '|'.$salt : '');
+        $text = $userId . '|' . $experiment . ($salt !== '' ? '|' . $salt : '');
         $this->assertSame(crc32($text) % $buckets, ExperimentBucket::bucket($userId, $experiment, $buckets, $salt));
     }
 
@@ -120,7 +120,6 @@ class ExperimentBucketCoverageTest extends TestCase
     // -------------------------------------------------------------------------
 
     private const USER = 12345;
-
     private const EXP = 'welcome';
 
     private function userBucket(string $salt = ''): int
@@ -209,7 +208,7 @@ class ExperimentBucketCoverageTest extends TestCase
         $unsalted = $this->userBucket();
         $salt = 'rerun';
         for ($i = 0; $this->userBucket($salt) === $unsalted && $i < 20; $i++) {
-            $salt = 'rerun'.$i;
+            $salt = 'rerun' . $i;
         }
         $salted = $this->userBucket($salt);
         $this->assertNotSame($unsalted, $salted);

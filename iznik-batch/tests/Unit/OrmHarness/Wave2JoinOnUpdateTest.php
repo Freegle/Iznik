@@ -37,7 +37,7 @@ class Wave2JoinOnUpdateTest extends TestCase
             ->select('m.emailfrequency', 'm.eventsallowed', 'm.volunteeringallowed')
             ->join('memberships as m', function ($j) {
                 $j->on('m.groupid', '=', 'mg.groupid')
-                    ->where('m.userid', 1);
+                  ->where('m.userid', 1);
             })
             ->where('mg.msgid', 2)
             ->orderBy('mg.arrival')

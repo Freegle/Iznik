@@ -9,19 +9,19 @@ class LocationModelTest extends TestCase
 {
     public function test_location_model_has_correct_table(): void
     {
-        $location = new Location;
+        $location = new Location();
         $this->assertEquals('locations', $location->getTable());
     }
 
     public function test_location_model_has_no_timestamps(): void
     {
-        $location = new Location;
+        $location = new Location();
         $this->assertFalse($location->timestamps);
     }
 
     public function test_location_model_casts(): void
     {
-        $location = new Location;
+        $location = new Location();
         $casts = $location->getCasts();
 
         $this->assertArrayHasKey('lat', $casts);
@@ -38,7 +38,7 @@ class LocationModelTest extends TestCase
 
     public function test_location_model_is_not_guarded_except_id(): void
     {
-        $location = new Location;
+        $location = new Location();
         $this->assertEquals(['id'], $location->getGuarded());
     }
 }

@@ -19,7 +19,6 @@ class Wave1Batch2Test extends TestCase
 
     // DELETE FROM logs WHERE id = ?  (two call sites, same statement)
     private const SITE_PURGE_LOG_A = '50062be723d4';
-
     private const SITE_PURGE_LOG_B = '09aefe3fcfb5';
 
     // SELECT id FROM locations WHERE name = ? AND type = 'Postcode' LIMIT 1

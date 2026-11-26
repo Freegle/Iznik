@@ -22,7 +22,7 @@ class ReachCatchUpScheduleTest extends TestCase
             'freegle.schedule.overlay' => null,
         ]);
 
-        $schedule = new Schedule;
+        $schedule = new Schedule();
         $this->app->instance(Schedule::class, $schedule);
         Facade::clearResolvedInstances();
 

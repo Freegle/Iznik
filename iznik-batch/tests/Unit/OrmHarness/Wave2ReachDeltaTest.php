@@ -30,7 +30,7 @@ class Wave2ReachDeltaTest extends TestCase
             ->leftJoin('rippling_reach_shadow as s', 's.msgid', '=', 'rr.msgid')
             ->where(function ($q) {
                 $q->whereNull('s.msgid')
-                    ->orWhere('rr.updated_at', '>=', '2026-01-01 00:00:00');
+                  ->orWhere('rr.updated_at', '>=', '2026-01-01 00:00:00');
             })
             ->limit(1000));
     }

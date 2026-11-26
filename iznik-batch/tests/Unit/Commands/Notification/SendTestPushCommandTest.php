@@ -10,7 +10,7 @@ class SendTestPushCommandTest extends TestCase
     public function test_send_notification_with_modtools_app(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
 
         $this->createTestPushNotification($user->id, 'ModTools');
 
@@ -33,7 +33,7 @@ class SendTestPushCommandTest extends TestCase
     public function test_send_notification_with_freegle_direct_app(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
 
         $this->createTestPushNotification($user->id, 'User');
 
@@ -73,7 +73,7 @@ class SendTestPushCommandTest extends TestCase
     public function test_fails_when_no_subscriptions_found(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
 
         $this->artisan('push:test-notification', [
             '--email' => $email,
@@ -103,20 +103,20 @@ class SendTestPushCommandTest extends TestCase
     public function test_fails_with_invalid_app_option(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
 
         $this->artisan('push:test-notification', [
             '--email' => $email,
             '--app' => 'invalid',
         ])
-            ->expectsOutputToContain('Invalid --app value: invalid')
+            ->expectsOutputToContain("Invalid --app value: invalid")
             ->assertExitCode(1);
     }
 
     public function test_default_app_is_modtools(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
@@ -135,7 +135,7 @@ class SendTestPushCommandTest extends TestCase
     public function test_lists_subscription_tokens(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
@@ -154,7 +154,7 @@ class SendTestPushCommandTest extends TestCase
     public function test_fails_when_notify_returns_zero(): void
     {
         $user = $this->createTestUser();
-        $email = 'test'.$user->id.'@test.com';
+        $email = 'test' . $user->id . '@test.com';
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
@@ -175,7 +175,7 @@ class SendTestPushCommandTest extends TestCase
             'userid' => $userId,
             'apptype' => $apptype,
             'type' => 'FCMAndroid',
-            'subscription' => 'test_token_'.bin2hex(random_bytes(16)),
+            'subscription' => 'test_token_' . bin2hex(random_bytes(16)),
             'added' => now(),
         ]);
     }

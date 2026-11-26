@@ -28,11 +28,11 @@ class ChaseUpMailUrlTest extends TestCase
 
         $url = $this->makeMail()->resolveNotificationUrl([
             'type' => 'Exhort',
-            'url' => $site.'/stories',
+            'url' => $site . '/stories',
             'newsfeed' => null,
         ]);
 
-        $this->assertSame($site.'/stories', $url,
+        $this->assertSame($site . '/stories', $url,
             'An absolute Exhort URL must be used as-is, not concatenated onto the site');
     }
 
@@ -46,7 +46,7 @@ class ChaseUpMailUrlTest extends TestCase
             'newsfeed' => null,
         ]);
 
-        $this->assertSame($site.'/microvolunteering/message/123', $url,
+        $this->assertSame($site . '/microvolunteering/message/123', $url,
             'A relative Exhort URL must be resolved against the user site');
     }
 
@@ -60,7 +60,7 @@ class ChaseUpMailUrlTest extends TestCase
             'newsfeed' => null,
         ]);
 
-        $this->assertSame($site.'/stories', $url,
+        $this->assertSame($site . '/stories', $url,
             'A path without a leading slash must not be glued onto the hostname');
     }
 
@@ -74,7 +74,7 @@ class ChaseUpMailUrlTest extends TestCase
             'newsfeed' => ['id' => 42],
         ]);
 
-        $this->assertSame($site.'/chitchat/42', $url);
+        $this->assertSame($site . '/chitchat/42', $url);
     }
 
     public function test_notification_without_newsfeed_falls_back_to_chitchat(): void
@@ -87,6 +87,6 @@ class ChaseUpMailUrlTest extends TestCase
             'newsfeed' => null,
         ]);
 
-        $this->assertSame($site.'/chitchat', $url);
+        $this->assertSame($site . '/chitchat', $url);
     }
 }

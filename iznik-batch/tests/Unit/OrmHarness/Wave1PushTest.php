@@ -47,13 +47,9 @@ class Wave1PushTest extends TestCase
     // not the id written at the call site. Looping here found that out - the
     // five reported as still-raw with their code already gone.
     private const SITE_PUSH_LOOKUP_A = '7c9db632531a';
-
     private const SITE_PUSH_LOOKUP_B = 'bf6d88273e85';
-
     private const SITE_PUSH_LOOKUP_C = 'eba8a4c424be';
-
     private const SITE_PUSH_LOOKUP_D = '290c878bdae5';
-
     private const SITE_PUSH_LOOKUP_E = '060d6cce1405';
 
     public function test_group_mods(): void

@@ -4,22 +4,22 @@ namespace Tests\Unit\Queue;
 
 use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
 use App\Mail\Admin\AdminMail;
-use App\Mail\Chat\ChatNotification;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Donation\DonateExternalMail;
-use App\Mail\Message\ModStdMessageMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
 use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
+use App\Mail\Chat\ChatNotification;
+use App\Mail\Message\ModStdMessageMail;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\MessageGroup;
 use App\Models\User;
-use App\Services\BlockedKeywordBackfillService;
 use App\Services\ChatNotificationService;
+use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
@@ -381,7 +381,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         DB::table('background_tasks')->insert([
             'task_type' => 'unknown_task_type',
-            'data' => json_encode(['test' => true]),
+            'data' => json_encode(['test' => TRUE]),
             'created_at' => now(),
             'attempts' => 2,  // Already tried twice.
         ]);
@@ -692,7 +692,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             'freegle.sites.user' => 'https://www.example.org/',
         ]);
 
-        $command = new \App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
+        $command = new \App\Console\Commands\Queue\ProcessBackgroundTasksCommand();
         $method = new \ReflectionMethod($command, 'signInLinkFromResetUrl');
         $method->setAccessible(true);
 
@@ -801,13 +801,12 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent with correct from address and content.
-        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group) {
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group, $mod) {
             $this->assertEquals('Wendy Moderator', $mail->modName);
             $this->assertEquals($group->nameshort, $mail->groupNameShort);
             $this->assertEquals('MODERATOR MESSAGE -: WANTED: Something (Test AB1)', $mail->stdSubject);
             $this->assertEquals('Dear member, please repost with more detail.', $mail->stdBody);
-
-            return true;
+            return TRUE;
         });
 
         // Verify log entry was created.
@@ -932,8 +931,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group) {
             $this->assertEquals($group->nameshort, $mail->groupNameShort);
-
-            return true;
+            return TRUE;
         });
 
         // The "Replied" mod-log entry is now written synchronously by the Go handleReply
@@ -1587,12 +1585,11 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent.
-        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mod) {
             $this->assertEquals('Test Moderator', $mail->modName);
             $this->assertEquals('Location Required please', $mail->stdSubject);
             $this->assertEquals('Hello, can you please advise your postcode?', $mail->stdBody);
-
-            return true;
+            return TRUE;
         });
 
         // Verify task was processed.
@@ -1624,7 +1621,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::fake();
 
         $group = $this->createTestGroup();
-        $tnEmail = 'user'.uniqid().'@user.trashnothing.com';
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
         // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
         $this->createMembership($member, $group);
@@ -1687,7 +1684,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::fake();
 
         $group = $this->createTestGroup();
-        $tnEmail = 'user'.uniqid().'@user.trashnothing.com';
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
         // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
         $this->createMembership($member, $group);
@@ -1741,7 +1738,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertEquals(
             $chatMsg->id,
             $roster->lastmsgemailed,
-            'lastmsgemailed must be set to the ModMail message ID after direct send, '.
+            'lastmsgemailed must be set to the ModMail message ID after direct send, ' .
             'otherwise the notification daemon will attempt to re-send'
         );
     }
@@ -1755,7 +1752,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::fake();
 
         $group = $this->createTestGroup();
-        $tnEmail = 'user'.uniqid().'@user.trashnothing.com';
+        $tnEmail = 'user' . uniqid() . '@user.trashnothing.com';
         $member = $this->createTestUser(['email_preferred' => $tnEmail]);
         // A TrashNothing member of the group: mods may write to them (User::modsMayContact).
         $this->createMembership($member, $group);
@@ -1826,7 +1823,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::fake();
 
         $group = $this->createTestGroup();
-        $poster = $this->createTestUser(['email_preferred' => 'poster'.uniqid().'@example.com']);
+        $poster = $this->createTestUser(['email_preferred' => 'poster' . uniqid() . '@example.com']);
         $mod = $this->createTestUser(['fullname' => 'Approving Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
         $this->createMembership($poster, $group);
@@ -1903,7 +1900,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // On 2026-11-03 two posters approved with "Thanks for freegling" each got it twice: the
         // standard message itself, then the chat notifier's "Your conversation with the ...
         // Volunteers" carrying the same words 30 seconds later.
-        [$poster, , $otherMod] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: false);
+        [$poster, , $otherMod] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
 
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($poster) {
             return collect($mail->to)->pluck('address')->contains($poster->email_preferred);
@@ -1916,7 +1913,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
     public function test_approve_stdmsg_counts_as_seen_by_the_mod_who_sent_it(): void
     {
-        [, $mod, , $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: false);
+        [, $mod, , $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
 
         $chatMsgId = (int) DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->value('id');
         $roster = DB::table('chat_roster')->where('chatid', $chatRoom->id)->where('userid', $mod->id)->first();
@@ -1928,7 +1925,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
     public function test_approve_stdmsg_with_chats_marked_read_sends_other_mods_no_copy(): void
     {
-        [$poster, , $otherMod, $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: true);
+        [$poster, , $otherMod, $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: TRUE);
 
         $chatMsg = DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->first();
         $this->assertSame(1, (int) $chatMsg->mailedtoall);
@@ -2184,15 +2181,14 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             ->assertSuccessful();
         $this->artisan('mail:spool:process')->assertSuccessful();
 
-        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) use ($reporter, $chatId) {
+        Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) use ($reporter, $other, $chatId) {
             $this->assertEquals('Melissa Reporter', $mail->reporterName);
             $this->assertEquals($reporter->id, $mail->reporterId);
             $this->assertEquals('Creepy Guy', $mail->otherUserName);
             $this->assertEquals($chatId, $mail->chatId);
             $this->assertEquals('Spam', $mail->reason);
             $this->assertEquals('asked me out', $mail->comment);
-
-            return true;
+            return TRUE;
         });
 
         $task = DB::table('background_tasks')->first();
@@ -2232,8 +2228,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ChatSpamReportMail::class, function (ChatSpamReportMail $mail) {
             $this->assertEquals('', $mail->comment);
             $this->assertEquals('Other', $mail->reason);
-
-            return true;
+            return TRUE;
         });
     }
 
@@ -2292,8 +2287,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             $this->assertEquals($user->id, $mail->userId);
             $this->assertEquals('newemail@test.com', $mail->email);
             $this->assertNotEmpty($mail->confirmUrl);
-
-            return true;
+            return TRUE;
         });
 
         $task = DB::table('background_tasks')->first();
@@ -2316,8 +2310,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         Mail::fake();
 
-        $user = $this->createTestUser();
-        $email = 'verify-'.uniqid().'-g4@user.trashnothing.com';
+        $user  = $this->createTestUser();
+        $email = 'verify-' . uniqid() . '-g4@user.trashnothing.com';
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_verify',
@@ -2539,9 +2533,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Verify BCC body has the V1 prefix.
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
             if (! collect($mail->to)->pluck('address')->contains('bcc-archive@example.com')) {
-                return false;
+                return FALSE;
             }
-
             return str_contains($mail->stdBody, '(This is a BCC of');
         });
     }
@@ -2751,7 +2744,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->artisan('mail:spool:process')->assertSuccessful();
 
         // BCC address should have $groupname replaced with the group's nameshort.
-        $expectedBcc = $group->nameshort.'-archive@example.com';
+        $expectedBcc = $group->nameshort . '-archive@example.com';
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($expectedBcc) {
             return collect($mail->to)->pluck('address')->contains($expectedBcc);
         });
@@ -3028,18 +3021,18 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $msgId = DB::table('messages')->insertGetId([
             'fromuser' => $poster->id,
-            'subject' => 'OFFER: Sofa and two chairs',
+            'subject'  => 'OFFER: Sofa and two chairs',
             'textbody' => 'A sofa and two kitchen chairs.',
-            'type' => 'Offer',
-            'lat' => 52.5,
-            'lng' => -1.8,
-            'date' => now(),
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
         ]);
         DB::table('messages_groups')->insert([
-            'msgid' => $msgId,
-            'groupid' => $group->id,
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
             'collection' => 'Approved',
-            'arrival' => now(),
+            'arrival'    => now(),
         ]);
         DB::table('messages_bulk_items')->insert([
             ['msgid' => $msgId, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
@@ -3050,8 +3043,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $crop = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}', 'contenttype' => 'image/jpeg']);
 
         DB::table('background_tasks')->insert([
-            'task_type' => 'freebie_alerts_add',
-            'data' => json_encode(['msgid' => $msgId]),
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
             'created_at' => now(),
         ]);
 
@@ -3066,7 +3059,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $this->artisan('queue:background-tasks', [
             '--max-iterations' => 1,
-            '--sleep' => 0,
+            '--sleep'          => 0,
         ])->assertSuccessful();
 
         $this->artisan('mail:spool:process')->assertSuccessful();
@@ -3087,31 +3080,31 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $msgId = DB::table('messages')->insertGetId([
             'fromuser' => $poster->id,
-            'subject' => 'OFFER: Office Clearance',
+            'subject'  => 'OFFER: Office Clearance',
             'textbody' => 'Desks and chairs available.',
-            'type' => 'Offer',
-            'lat' => 52.5,
-            'lng' => -1.8,
-            'date' => now(),
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
         ]);
         DB::table('messages_groups')->insert([
-            'msgid' => $msgId,
-            'groupid' => $group->id,
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
             'collection' => 'Approved',
-            'arrival' => now(),
+            'arrival'    => now(),
         ]);
         // Mark as a clearance post.
         DB::table('messages_bulk_items')->insert([
-            'msgid' => $msgId,
-            'position' => 0,
-            'name' => 'Office desk',
-            'quantity' => 2,
+            'msgid'     => $msgId,
+            'position'  => 0,
+            'name'      => 'Office desk',
+            'quantity'  => 2,
             'condition' => 'Good',
         ]);
 
         DB::table('background_tasks')->insert([
-            'task_type' => 'freebie_alerts_add',
-            'data' => json_encode(['msgid' => $msgId]),
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
             'created_at' => now(),
         ]);
 
@@ -3124,7 +3117,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $this->artisan('queue:background-tasks', [
             '--max-iterations' => 1,
-            '--sleep' => 0,
+            '--sleep'          => 0,
         ])->assertSuccessful();
 
         // Flush the spool so Mail::fake intercepts the actual SMTP send.
@@ -3389,8 +3382,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $user = $this->createTestUser();
 
         $taskId = DB::table('background_tasks')->insertGetId([
-            'task_type' => 'user_forget',
-            'data' => json_encode(['user_id' => $user->id, 'reason' => 'Support purge']),
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['user_id' => $user->id, 'reason' => 'Support purge']),
             'created_at' => now(),
         ]);
 
@@ -3411,8 +3404,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     public function test_user_forget_task_records_error_without_user_id(): void
     {
         $taskId = DB::table('background_tasks')->insertGetId([
-            'task_type' => 'user_forget',
-            'data' => json_encode(['reason' => 'Support purge']),
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['reason' => 'Support purge']),
             'created_at' => now(),
         ]);
 
@@ -3431,7 +3424,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // unexpected Http call will throw, failing the test.
         config([
             'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
-            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir().'/tn_sync_test_'.uniqid().'.txt',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
         ]);
 
         Http::preventStrayRequests();
@@ -3459,7 +3452,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // Fake the Http calls to avoid real network requests.
         config([
             'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
-            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir().'/tn_sync_test_'.uniqid().'.txt',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
         ]);
 
         Http::fake([
@@ -3659,8 +3652,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $recipients = [];
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
             $recipients[] = $mail->recipientUserId;
-
-            return true;
+            return TRUE;
         });
         sort($recipients);
         $expected = [$chose->id, $ordinary->id];
@@ -3717,8 +3709,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $recipients = [];
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
             $recipients[] = $mail->recipientUserId;
-
-            return true;
+            return TRUE;
         });
         $this->assertSame([$contactable->id], $recipients);
     }
@@ -3768,8 +3759,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $recipients = [];
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use (&$recipients) {
             $recipients[] = $mail->recipientUserId;
-
-            return true;
+            return TRUE;
         });
         $this->assertSame([$chose->id], $recipients);
     }
@@ -3865,7 +3855,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
      */
     public function test_missing_ids_read_as_unrestricted(): void
     {
-        $command = new ProcessBackgroundTasksCommand;
+        $command = new ProcessBackgroundTasksCommand();
 
         $unaddressed = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, 'postIsUnaddressed');
         $unaddressed->setAccessible(true);
@@ -3885,7 +3875,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         $msgId = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
-            'subject' => 'OFFER: Test item '.$allowed,
+            'subject' => 'OFFER: Test item ' . $allowed,
             'date' => now(),
         ]);
         DB::table('messages_groups')->insert([
@@ -4027,6 +4017,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ModStdMessageMail::class);
     }
 
+
     /**
      * The member-facing half of the same rule: a group removes a member whose only tie to
      * it is a post that rippled in, and says nothing to them (Discourse 10102).
@@ -4099,6 +4090,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ModStdMessageMail::class);
     }
 
+
     // --- concern_keyword_backfill ---
     //
     // The Go API queues this when a Freegle-wide block keyword is created, so the
@@ -4108,11 +4100,11 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     public function test_concern_keyword_backfill_applies_a_new_block_keyword_to_recent_chat_and_posts(): void
     {
         $this->mock(PushNotificationService::class);
-        $service = new BlockedKeywordBackfillService(new ContentCheckService);
+        $service = new BlockedKeywordBackfillService(new ContentCheckService());
         $service->pauseMicros = 0;
         $this->app->instance(BlockedKeywordBackfillService::class, $service);
 
-        $word = 'testblockword'.uniqid();
+        $word = 'testblockword' . uniqid();
         $keywordId = DB::table('concern_keywords')->insertGetId([
             'keyword' => $word, 'category' => 'scam', 'action' => 'block',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
@@ -4146,7 +4138,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         $this->mock(PushNotificationService::class);
 
-        $word = 'testflagword'.uniqid();
+        $word = 'testflagword' . uniqid();
         $keywordId = DB::table('concern_keywords')->insertGetId([
             'keyword' => $word, 'category' => 'review', 'action' => 'flag',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,

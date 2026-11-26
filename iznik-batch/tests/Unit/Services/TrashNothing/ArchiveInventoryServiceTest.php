@@ -21,7 +21,7 @@ class ArchiveInventoryServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->archiveDir = storage_path('incoming-archive/test-inventory-'.uniqid('', true));
+        $this->archiveDir = storage_path('incoming-archive/test-inventory-' . uniqid('', true));
         mkdir($this->archiveDir, 0755, true);
     }
 
@@ -38,7 +38,7 @@ class ArchiveInventoryServiceTest extends TestCase
         }
 
         foreach (array_diff(scandir($dir), ['.', '..']) as $entry) {
-            $path = $dir.'/'.$entry;
+            $path = $dir . '/' . $entry;
             is_dir($path) ? $this->deleteTree($path) : @unlink($path);
         }
 
@@ -49,7 +49,7 @@ class ArchiveInventoryServiceTest extends TestCase
     {
         return new ArchiveInventoryService(
             new IncomingArchiveReader(app(MailParserService::class), $dir ?? $this->archiveDir),
-            new TnEmailRoutingGate,
+            new TnEmailRoutingGate(),
         );
     }
 
@@ -58,19 +58,19 @@ class ArchiveInventoryServiceTest extends TestCase
      */
     private function archive(string $timestamp, string $rawEmail, string $envelopeTo, ?string $outcome = null): string
     {
-        $ts = CarbonImmutable::parse($timestamp, 'UTC');
-        $dateDir = $this->archiveDir.'/'.$ts->format('Y-m-d');
+        $ts      = CarbonImmutable::parse($timestamp, 'UTC');
+        $dateDir = $this->archiveDir . '/' . $ts->format('Y-m-d');
 
         if (! is_dir($dateDir)) {
             mkdir($dateDir, 0755, true);
         }
 
-        $path = $dateDir.'/'.$ts->format('His').'_'.random_int(100000, 999999).'.json';
+        $path = $dateDir . '/' . $ts->format('His') . '_' . random_int(100000, 999999) . '.json';
 
         $data = [
-            'version' => 3,
+            'version'   => 3,
             'timestamp' => $ts->format('Y-m-d\TH:i:s\Z'),
-            'envelope' => ['from' => 'poster@user.trashnothing.com', 'to' => $envelopeTo],
+            'envelope'  => ['from' => 'poster@user.trashnothing.com', 'to' => $envelopeTo],
             'raw_email' => base64_encode($rawEmail),
         ];
 
@@ -87,22 +87,22 @@ class ArchiveInventoryServiceTest extends TestCase
     {
         $lines = [
             'From: Poster <poster@user.trashnothing.com>',
-            'Subject: '.$subject,
-            'Message-ID: <'.$postId.'@tn.trashnothing.com>',
+            'Subject: ' . $subject,
+            'Message-ID: <' . $postId . '@tn.trashnothing.com>',
             'Date: Fri, 14 Aug 2026 09:00:00 +0000',
-            'X-Trash-Nothing-Post-Id: '.$postId,
+            'X-Trash-Nothing-Post-Id: ' . $postId,
         ];
 
         if ($coordinates !== null) {
-            $lines[] = 'X-Trash-Nothing-Post-Coordinates: '.$coordinates;
+            $lines[] = 'X-Trash-Nothing-Post-Coordinates: ' . $coordinates;
         }
 
-        return implode("\r\n", $lines)."\r\n\r\nFree to collect.\r\n";
+        return implode("\r\n", $lines) . "\r\n\r\nFree to collect.\r\n";
     }
 
     private function groupAddress(string $localPart = 'camdengroup'): string
     {
-        return $localPart.'@'.config('freegle.mail.group_domain');
+        return $localPart . '@' . config('freegle.mail.group_domain');
     }
 
     public function test_collects_tn_posts_in_the_window_with_coordinates(): void
@@ -231,9 +231,9 @@ class ArchiveInventoryServiceTest extends TestCase
     public function test_a_truncated_file_is_counted_not_fatal(): void
     {
         // Files are read while Postfix may still be writing others.
-        $dateDir = $this->archiveDir.'/2026-08-14';
+        $dateDir = $this->archiveDir . '/2026-08-14';
         mkdir($dateDir, 0755, true);
-        file_put_contents($dateDir.'/090000_111111.json', '{"version":3,"raw_em');
+        file_put_contents($dateDir . '/090000_111111.json', '{"version":3,"raw_em');
 
         $this->archive('2026-08-14T09:05:00Z', $this->tnEmail('47102958'), $this->groupAddress());
 
@@ -252,16 +252,16 @@ class ArchiveInventoryServiceTest extends TestCase
         // volume, not a correctness boundary: if the naming scheme ever
         // changes, it must cost performance, never silently drop a post from
         // the inventory.
-        $dateDir = $this->archiveDir.'/2026-08-14';
+        $dateDir = $this->archiveDir . '/2026-08-14';
         mkdir($dateDir, 0755, true);
 
-        $ts = CarbonImmutable::parse('2026-08-14T09:00:00Z');
-        $path = $dateDir.'/unexpected-name.json';
+        $ts   = CarbonImmutable::parse('2026-08-14T09:00:00Z');
+        $path = $dateDir . '/unexpected-name.json';
 
         file_put_contents($path, json_encode([
-            'version' => 3,
+            'version'   => 3,
             'timestamp' => $ts->format('Y-m-d\TH:i:s\Z'),
-            'envelope' => ['from' => 'poster@user.trashnothing.com', 'to' => $this->groupAddress()],
+            'envelope'  => ['from' => 'poster@user.trashnothing.com', 'to' => $this->groupAddress()],
             'raw_email' => base64_encode($this->tnEmail('odd-name')),
         ], JSON_UNESCAPED_SLASHES));
 
@@ -289,7 +289,7 @@ class ArchiveInventoryServiceTest extends TestCase
 
     public function test_missing_archive_directory_is_not_fatal(): void
     {
-        $service = $this->service($this->archiveDir.'/does-not-exist');
+        $service = $this->service($this->archiveDir . '/does-not-exist');
 
         $result = $service->collect(
             CarbonImmutable::parse('2026-08-14T08:00:00Z'),

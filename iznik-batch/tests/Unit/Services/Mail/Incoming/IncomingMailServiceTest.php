@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services\Mail\Incoming;
 
-use App\Mail\Fbl\FblNotification;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Group;
@@ -14,6 +13,7 @@ use App\Services\Mail\Incoming\MailParserService;
 use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\Mail\Incoming\RoutingResult;
 use Illuminate\Support\Facades\DB;
+use App\Mail\Fbl\FblNotification;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\EmailFixtures;
 use Tests\TestCase;
@@ -26,8 +26,9 @@ use Tests\TestCase;
  */
 class IncomingMailServiceTest extends TestCase
 {
-    use EmailFixtures;
     use \Tests\Support\SeedsReachCells;
+
+    use EmailFixtures;
 
     private IncomingMailService $service;
 
@@ -412,10 +413,11 @@ class IncomingMailServiceTest extends TestCase
         );
     }
 
+
     /**
      * Mail from a TN member's Subscribe, carrying what TN's own mail carries.
      *
-     * @param  array<string, string>  $headers
+     * @param array<string, string> $headers
      */
     private function tnSubscribe(Group $group, string $alias, array $headers): RoutingResult
     {
@@ -1717,7 +1719,7 @@ class IncomingMailServiceTest extends TestCase
         // one, so without this the reply would pass through and the test would
         // be proving the outage behaviour instead of the gate.
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (! str_contains($request->url(), 'reach-eval')) {
+            if (!str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
 
@@ -3629,20 +3631,20 @@ class IncomingMailServiceTest extends TestCase
         $noreply = strtolower(config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'));
 
         $noreplyUser = $this->createTestUser(['email_preferred' => $noreply]);
-        $recipient = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
+        $recipient   = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
 
         $recipientAlias = "someslug-{$recipient->id}@users.ilovefreegle.org";
 
         $email = $this->createMinimalEmail([
-            'From' => $noreply,
-            'To' => $recipientAlias,
+            'From'    => $noreply,
+            'To'      => $recipientAlias,
             'Subject' => '[ExampleFreegle] Volunteer Opportunity Roundup',
         ], 'Charities are looking for helpers...');
 
         $parsed = $this->parser->parse($email, $noreply, $recipientAlias);
 
         $beforeRooms = DB::table('chat_rooms')
-            ->where(function ($q) use ($noreplyUser) {
+            ->where(function ($q) use ($noreplyUser, $recipient) {
                 $q->where('user1', $noreplyUser->id)->orWhere('user2', $noreplyUser->id);
             })
             ->count();
@@ -4088,7 +4090,7 @@ class IncomingMailServiceTest extends TestCase
 
         // Create an email_tracking record simulating a chat notification that was sent to user1.
         DB::table('email_tracking')->insert([
-            'tracking_id' => 'test-tracking-'.uniqid(),
+            'tracking_id' => 'test-tracking-' . uniqid(),
             'email_type' => 'ChatNotification',
             'userid' => $user1->id,
             'recipient_email' => $user1->emails->first()->email,
@@ -4410,7 +4412,7 @@ class IncomingMailServiceTest extends TestCase
     // Subject Location Parsing Tests
     // ========================================
 
-    public function test_parse_subject_extracts_type_item_and_location(): void
+    public function test_parseSubject_extracts_type_item_and_location(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'parseSubject');
         $method->setAccessible(true);
@@ -4422,7 +4424,7 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals('Edinburgh', $location);
     }
 
-    public function test_parse_subject_handles_location_with_brackets(): void
+    public function test_parseSubject_handles_location_with_brackets(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'parseSubject');
         $method->setAccessible(true);
@@ -4434,7 +4436,7 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals('London (Central)', $location);
     }
 
-    public function test_parse_subject_handles_no_location(): void
+    public function test_parseSubject_handles_no_location(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'parseSubject');
         $method->setAccessible(true);
@@ -4444,7 +4446,7 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNull($location);
     }
 
-    public function test_parse_subject_handles_no_colon(): void
+    public function test_parseSubject_handles_no_colon(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'parseSubject');
         $method->setAccessible(true);
@@ -4456,14 +4458,14 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNull($location);
     }
 
-    public function test_extract_location_from_subject_finds_location(): void
+    public function test_extractLocationFromSubject_finds_location(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'extractLocationFromSubject');
         $method->setAccessible(true);
 
         // Create a test location
         $locationId = DB::table('locations')->insertGetId([
-            'name' => 'TestLocation'.uniqid(),
+            'name' => 'TestLocation' . uniqid(),
             'type' => 'Postcode',
             'lat' => 55.9533,
             'lng' => -3.1883,
@@ -4484,7 +4486,7 @@ class IncomingMailServiceTest extends TestCase
         DB::table('locations')->where('id', $locationId)->delete();
     }
 
-    public function test_extract_location_from_subject_returns_null_for_unknown_location(): void
+    public function test_extractLocationFromSubject_returns_null_for_unknown_location(): void
     {
         $method = new \ReflectionMethod(IncomingMailService::class, 'extractLocationFromSubject');
         $method->setAccessible(true);
@@ -4500,7 +4502,7 @@ class IncomingMailServiceTest extends TestCase
     {
         // Create a test location
         $locationId = DB::table('locations')->insertGetId([
-            'name' => 'SubjectTestLoc'.uniqid(),
+            'name' => 'SubjectTestLoc' . uniqid(),
             'type' => 'Postcode',
             'lat' => 51.5074,
             'lng' => -0.1278,
@@ -4923,12 +4925,12 @@ class IncomingMailServiceTest extends TestCase
 
         $replierEmail = $replier->emails->first()->email;
         // Simulate email forwarding: envelope-from is a different address
-        $forwardedFrom = 'forwarded-'.uniqid().'@otherdomain.com';
+        $forwardedFrom = 'forwarded-' . uniqid() . '@otherdomain.com';
 
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
             'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: '.$message->subject,
+            'Subject' => 'Re: ' . $message->subject,
         ], 'Is this still available?');
 
         $parsed = $this->parser->parse(
@@ -4948,7 +4950,7 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNotNull($addedEmail, 'Forwarding email should be added to user profile');
     }
 
-    public function test_add_email_to_user_skips_system_addresses(): void
+    public function test_addEmailToUser_skips_system_addresses(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
@@ -4961,7 +4963,7 @@ class IncomingMailServiceTest extends TestCase
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
             'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: '.$message->subject,
+            'Subject' => 'Re: ' . $message->subject,
         ], 'Is this still available?');
 
         // Use a system address as envelope-from (should NOT be added)
@@ -5005,7 +5007,7 @@ class IncomingMailServiceTest extends TestCase
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
             'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: '.$message->subject,
+            'Subject' => 'Re: ' . $message->subject,
         ], 'Is this still available?');
 
         $parsed = $this->parser->parse(
@@ -5070,14 +5072,14 @@ class IncomingMailServiceTest extends TestCase
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Test Big Switch (London)',
         ], 'Test item.');
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
+            $group->nameshort . '@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5106,14 +5108,14 @@ class IncomingMailServiceTest extends TestCase
 
         $email = $this->createMinimalEmail([
             'From' => $modEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Mod Post Test (London)',
         ], 'Test mod post.');
 
         $parsed = $this->parser->parse(
             $email,
             $modEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
+            $group->nameshort . '@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5141,14 +5143,14 @@ class IncomingMailServiceTest extends TestCase
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Moderated Group Test (London)',
         ], 'Test post to moderated group.');
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
+            $group->nameshort . '@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5166,14 +5168,14 @@ class IncomingMailServiceTest extends TestCase
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Postings Record Test (London)',
         ], 'Test post.');
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
+            $group->nameshort . '@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5220,10 +5222,10 @@ class IncomingMailServiceTest extends TestCase
 
         // Create FBL report with Original-Rcpt-To header
         $rawMessage = "From: fbl@hotmail.com\r\n"
-            ."To: fbl@ilovefreegle.org\r\n"
-            ."Subject: Feedback Loop Report\r\n"
-            ."Original-Rcpt-To: {$userEmail}\r\n"
-            ."\r\nFBL report content";
+            . "To: fbl@ilovefreegle.org\r\n"
+            . "Subject: Feedback Loop Report\r\n"
+            . "Original-Rcpt-To: {$userEmail}\r\n"
+            . "\r\nFBL report content";
 
         $parsed = $this->parser->parse($rawMessage, 'fbl@hotmail.com', 'fbl@ilovefreegle.org');
 
@@ -5277,10 +5279,10 @@ class IncomingMailServiceTest extends TestCase
         ]);
 
         $rawMessage = "From: fbl@hotmail.com\r\n"
-            ."To: fbl@ilovefreegle.org\r\n"
-            ."Subject: Feedback Loop Report\r\n"
-            ."Original-Rcpt-To: {$userEmail}\r\n"
-            ."\r\nFBL report content";
+            . "To: fbl@ilovefreegle.org\r\n"
+            . "Subject: Feedback Loop Report\r\n"
+            . "Original-Rcpt-To: {$userEmail}\r\n"
+            . "\r\nFBL report content";
 
         $parsed = $this->parser->parse($rawMessage, 'fbl@hotmail.com', 'fbl@ilovefreegle.org');
 
@@ -5306,10 +5308,10 @@ class IncomingMailServiceTest extends TestCase
         $userEmail = $user->emails->first()->email;
 
         $rawMessage = "From: fbl@hotmail.com\r\n"
-            ."To: fbl@ilovefreegle.org\r\n"
-            ."Subject: Feedback Loop Report\r\n"
-            ."Original-Rcpt-To: {$userEmail}\r\n"
-            ."\r\nFBL report content";
+            . "To: fbl@ilovefreegle.org\r\n"
+            . "Subject: Feedback Loop Report\r\n"
+            . "Original-Rcpt-To: {$userEmail}\r\n"
+            . "\r\nFBL report content";
 
         $parsed = $this->parser->parse($rawMessage, 'fbl@hotmail.com', 'fbl@ilovefreegle.org');
 
@@ -5414,7 +5416,7 @@ class IncomingMailServiceTest extends TestCase
         ]);
 
         DB::table('spam_keywords')->insert([
-            'word' => 'SpamLogTest'.uniqid(),
+            'word' => 'SpamLogTest' . uniqid(),
             'action' => 'Spam',
             'type' => 'Literal',
         ]);
@@ -5426,14 +5428,14 @@ class IncomingMailServiceTest extends TestCase
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Free stuff (London)',
         ], "Get your {$spamWord} here!");
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
+            $group->nameshort . '@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5500,31 +5502,31 @@ class IncomingMailServiceTest extends TestCase
         // The transcript contains Subject:/From:/To: lines that the strip logic
         // would previously eat from those headers to end-of-string.
         $body = "Reporting member \"baduser\" baduser-12345@users.ilovefreegle.org (#12345)\r\n"
-            ."\r\n"
-            ."No response to my messages\r\n"
-            ."\r\n"
-            ."\r\n"
-            ."---------- Conversation Transcript (ordered newest to oldest) ----------\r\n"
-            ."\r\n"
-            ."--- 2026-02-09 14:26:50 --\r\n"
-            ."Subject: OFFER: Test item (AB1)\r\n"
-            ."From: {$userEmail}\r\n"
-            ."To: baduser-12345@users.ilovefreegle.org\r\n"
-            ."\r\n"
-            ."Hi, is this still available? I can collect tomorrow.\r\n"
-            ."\r\n"
-            .'Possible collection times: tomorrow afternoon';
+            . "\r\n"
+            . "No response to my messages\r\n"
+            . "\r\n"
+            . "\r\n"
+            . "---------- Conversation Transcript (ordered newest to oldest) ----------\r\n"
+            . "\r\n"
+            . "--- 2026-02-09 14:26:50 --\r\n"
+            . "Subject: OFFER: Test item (AB1)\r\n"
+            . "From: {$userEmail}\r\n"
+            . "To: baduser-12345@users.ilovefreegle.org\r\n"
+            . "\r\n"
+            . "Hi, is this still available? I can collect tomorrow.\r\n"
+            . "\r\n"
+            . "Possible collection times: tomorrow afternoon";
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'-volunteers@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '-volunteers@groups.ilovefreegle.org',
             'Subject' => 'Reporting member "baduser" baduser-12345@users.ilovefreegle.org (#12345)',
         ], $body);
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'-volunteers@groups.ilovefreegle.org'
+            $group->nameshort . '-volunteers@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5553,20 +5555,20 @@ class IncomingMailServiceTest extends TestCase
 
         // A regular volunteer message (not a TN report) should still strip quoted text
         $body = "I have a question about posting rules.\r\n"
-            ."\r\n"
-            ."On Mon, Feb 10, 2026 at 3:00 PM Someone wrote:\r\n"
-            .'This is the original quoted message that should be stripped.';
+            . "\r\n"
+            . "On Mon, Feb 10, 2026 at 3:00 PM Someone wrote:\r\n"
+            . "This is the original quoted message that should be stripped.";
 
         $email = $this->createMinimalEmail([
             'From' => $userEmail,
-            'To' => $group->nameshort.'-volunteers@groups.ilovefreegle.org',
+            'To' => $group->nameshort . '-volunteers@groups.ilovefreegle.org',
             'Subject' => 'Question about posting',
         ], $body);
 
         $parsed = $this->parser->parse(
             $email,
             $userEmail,
-            $group->nameshort.'-volunteers@groups.ilovefreegle.org'
+            $group->nameshort . '-volunteers@groups.ilovefreegle.org'
         );
 
         $result = $this->service->route($parsed);
@@ -5790,7 +5792,7 @@ class IncomingMailServiceTest extends TestCase
         $messageId = DB::table('messages')->insertGetId([
             'date' => now(),
             'source' => 'Email',
-            'messageid' => 'test-failure-'.uniqid().'@example.com',
+            'messageid' => 'test-failure-' . uniqid() . '@example.com',
             'retrycount' => 0,
             'retrylastfailure' => null,
         ]);
@@ -5807,7 +5809,7 @@ class IncomingMailServiceTest extends TestCase
         $messageId = DB::table('messages')->insertGetId([
             'date' => now(),
             'source' => 'Email',
-            'messageid' => 'test-failure-repeat-'.uniqid().'@example.com',
+            'messageid' => 'test-failure-repeat-' . uniqid() . '@example.com',
             'retrycount' => 0,
             'retrylastfailure' => null,
         ]);
@@ -6026,15 +6028,15 @@ class IncomingMailServiceTest extends TestCase
         $memberEmail = $user->emails->first()->email;
 
         $body = "Hi, I wanted to reply to one of the posts in the digest.\r\n\r\n"
-            ."-----Original Message-----\r\n"
-            .'From: '.$group->nameshort."-auto@groups.ilovefreegle.org\r\n"
-            .'Subject: ['.$group->nameshort."] What's New\r\n"
-            ."\r\nHere is all the digest content...";
+            . "-----Original Message-----\r\n"
+            . "From: ".$group->nameshort."-auto@groups.ilovefreegle.org\r\n"
+            . "Subject: [".$group->nameshort."] What's New\r\n"
+            . "\r\nHere is all the digest content...";
 
         $email = $this->createMinimalEmail([
             'From' => $memberEmail,
             'To' => $group->nameshort.'-auto@groups.ilovefreegle.org',
-            'Subject' => 'Re: ['.$group->nameshort."] What's New",
+            'Subject' => "Re: [".$group->nameshort."] What's New",
         ], $body);
 
         $parsed = $this->parser->parse(
@@ -6070,14 +6072,14 @@ class IncomingMailServiceTest extends TestCase
 
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
         $body = "Yes, I am interested in that item!\r\n\r\n"
-            .'On 10 Jun 2026, at 08:00, '.$group->nameshort.'-auto@'.$groupDomain."> wrote:\r\n"
-            ."\r\n> OFFER: Old sofa (Somewhere)\r\n"
-            .'> Posted by Someone';
+            . "On 10 Jun 2026, at 08:00, ".$group->nameshort."-auto@".$groupDomain."> wrote:\r\n"
+            . "\r\n> OFFER: Old sofa (Somewhere)\r\n"
+            . "> Posted by Someone";
 
         $email = $this->createMinimalEmail([
             'From' => $memberEmail,
             'To' => $group->nameshort.'-auto@'.$groupDomain,
-            'Subject' => 'Re: ['.$group->nameshort."] What's New",
+            'Subject' => "Re: [".$group->nameshort."] What's New",
         ], $body);
 
         $parsed = $this->parser->parse(

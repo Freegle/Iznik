@@ -10,18 +10,18 @@ class EventsDigestMailTest extends TestCase
     private function makeEvent(int $id = 1): array
     {
         return [
-            'id' => $id,
-            'title' => 'Repair Cafe',
-            'location' => 'Town Hall',
-            'description' => 'Bring your broken things along.',
-            'contactname' => null,
+            'id'           => $id,
+            'title'        => 'Repair Cafe',
+            'location'     => 'Town Hall',
+            'description'  => 'Bring your broken things along.',
+            'contactname'  => null,
             'contactphone' => null,
             'contactemail' => null,
-            'contacturl' => null,
-            'start' => 'Sat, 31st May 2:00pm',
-            'end' => '4:00pm',
-            'imageUrl' => null,
-            'url' => config('freegle.sites.user').'/communityevent/'.$id,
+            'contacturl'   => null,
+            'start'        => 'Sat, 31st May 2:00pm',
+            'end'          => '4:00pm',
+            'imageUrl'     => null,
+            'url'          => config('freegle.sites.user') . '/communityevent/' . $id,
         ];
     }
 
@@ -31,8 +31,8 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            events: [$this->makeEvent(42)],
-            unsubscribeUrl: $userSite.'/unsubscribe?email='.urlencode('test@example.com'),
+            events:         [$this->makeEvent(42)],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
 
         $html = $mail->render();
@@ -51,12 +51,12 @@ class EventsDigestMailTest extends TestCase
 
     public function test_unsubscribe_url_contains_no_doubled_https(): void
     {
-        $userSite = config('freegle.sites.user');
-        $unsubscribeUrl = $userSite.'/unsubscribe?email='.urlencode('test@example.com');
+        $userSite       = config('freegle.sites.user');
+        $unsubscribeUrl = $userSite . '/unsubscribe?email=' . urlencode('test@example.com');
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            events: [$this->makeEvent()],
+            events:         [$this->makeEvent()],
             unsubscribeUrl: $unsubscribeUrl,
         );
 
@@ -79,7 +79,7 @@ class EventsDigestMailTest extends TestCase
         // Simulate how EventsDigestService builds the url field.
         // Before the fix: "https://{$userSite}/communityevent/{$id}"
         // After the fix:  "{$userSite}/communityevent/{$id}"
-        $eventUrl = $userSite.'/communityevent/99';
+        $eventUrl = $userSite . '/communityevent/99';
 
         $this->assertStringNotContainsString('https://https://', $eventUrl,
             'Event URL must not contain doubled https://');
@@ -98,8 +98,8 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            events: [$event],
-            unsubscribeUrl: $userSite.'/unsubscribe?email='.urlencode('test@example.com'),
+            events:         [$event],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
 
         $html = $mail->render();
@@ -115,15 +115,15 @@ class EventsDigestMailTest extends TestCase
     {
         $userSite = config('freegle.sites.user');
 
-        $first = $this->makeEvent(1);
+        $first  = $this->makeEvent(1);
         $first['title'] = 'Repair Cafe Lewisham';
         $second = $this->makeEvent(2);
-        $third = $this->makeEvent(3);
+        $third  = $this->makeEvent(3);
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            events: [$first, $second, $third],
-            unsubscribeUrl: $userSite.'/unsubscribe?email='.urlencode('test@example.com'),
+            events:         [$first, $second, $third],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
 
         $html = $mail->render();

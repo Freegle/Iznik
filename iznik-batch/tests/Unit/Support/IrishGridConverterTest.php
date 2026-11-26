@@ -26,7 +26,7 @@ class IrishGridConverterTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->converter = new IrishGridConverter;
+        $this->converter = new IrishGridConverter();
     }
 
     // -------------------------------------------------------------------------
@@ -56,7 +56,7 @@ class IrishGridConverterTest extends TestCase
             [334000.0, 374000.0],
             [315000.0, 234000.0],
             [194000.0, 455000.0],
-            [79000.0,  24000.0],
+            [ 79000.0,  24000.0],
             [215000.0, 235000.0],
         ];
 
@@ -85,12 +85,12 @@ class IrishGridConverterTest extends TestCase
     public static function latitudeRangeProvider(): array
     {
         return [
-            'natural origin' => [200000.0, 250000.0],
-            'Belfast area' => [334000.0, 374000.0],
-            'Dublin area' => [315000.0, 234000.0],
-            'Malin Head area' => [194000.0, 455000.0],
-            'Mizen Head area' => [79000.0,  24000.0],
-            'Athlone area' => [215000.0, 235000.0],
+            'natural origin'   => [200000.0, 250000.0],
+            'Belfast area'     => [334000.0, 374000.0],
+            'Dublin area'      => [315000.0, 234000.0],
+            'Malin Head area'  => [194000.0, 455000.0],
+            'Mizen Head area'  => [ 79000.0,  24000.0],
+            'Athlone area'     => [215000.0, 235000.0],
         ];
     }
 
@@ -126,9 +126,9 @@ class IrishGridConverterTest extends TestCase
     public static function northingLatitudeMonotonicityProvider(): array
     {
         return [
-            'west side, south to mid' => [100000.0,  50000.0, 150000.0],
-            'center, mid to north' => [200000.0, 200000.0, 350000.0],
-            'east side, mid to far N' => [300000.0, 300000.0, 450000.0],
+            'west side, south to mid'  => [100000.0,  50000.0, 150000.0],
+            'center, mid to north'     => [200000.0, 200000.0, 350000.0],
+            'east side, mid to far N'  => [300000.0, 300000.0, 450000.0],
         ];
     }
 
@@ -228,7 +228,7 @@ class IrishGridConverterTest extends TestCase
         return [
             'Dublin is north of Mizen Head' => [
                 315000.0, 234000.0,   // Dublin (north)
-                79000.0,  24000.0,   // Mizen Head (south)
+                 79000.0,  24000.0,   // Mizen Head (south)
                 'Dublin (N=234000) should have higher lat than Mizen Head (N=24000)',
             ],
             'Belfast is north of Dublin' => [
@@ -303,17 +303,17 @@ class IrishGridConverterTest extends TestCase
     {
         return [
             'natural origin (TM75 53.5N 8W shifts ~100m by Helmert)' => [200000.0, 250000.0, 53.50021, -8.00074, 1e-4],
-            'Belfast City Hall' => [333830.0, 374021.0, 54.5967, -5.9301, 1e-4],
-            'Dublin O Connell Bridge' => [315925.0, 234472.0, 53.348, -6.260, 1e-4],
-            'Mizen Head' => [79000.0, 24000.0, 51.4564, -9.7416, 1e-3],
-            'Malin Head' => [194000.0, 455000.0, 55.3418, -8.0953, 1e-3],
-            'west of centre' => [100000.0, 300000.0, 53.93978, -9.52350, 1e-4],
-            'east of centre' => [300000.0, 300000.0, 53.93978, -6.47798, 1e-4],
-            'on central meridian, south' => [200000.0, 0.0, 51.25359, -8.00072, 1e-4],
-            'far east (England side)' => [500000.0, 250000.0, 53.41491, -3.48771, 1e-4],
-            'grid zero' => [0.0, 0.0, 51.21856, -10.86344, 1e-4],
-            'negative eastings/northings' => [-100000.0, -100000.0, 50.27844, -12.20996, 1e-4],
-            'very large inputs (garbage)' => [10000000.0, 10000000.0, -59.09712, -1.87516, 1e-3],
+            'Belfast City Hall'            => [333830.0, 374021.0, 54.5967, -5.9301, 1e-4],
+            'Dublin O Connell Bridge'      => [315925.0, 234472.0, 53.348, -6.260, 1e-4],
+            'Mizen Head'                   => [79000.0, 24000.0, 51.4564, -9.7416, 1e-3],
+            'Malin Head'                   => [194000.0, 455000.0, 55.3418, -8.0953, 1e-3],
+            'west of centre'               => [100000.0, 300000.0, 53.93978, -9.52350, 1e-4],
+            'east of centre'               => [300000.0, 300000.0, 53.93978, -6.47798, 1e-4],
+            'on central meridian, south'   => [200000.0, 0.0, 51.25359, -8.00072, 1e-4],
+            'far east (England side)'      => [500000.0, 250000.0, 53.41491, -3.48771, 1e-4],
+            'grid zero'                    => [0.0, 0.0, 51.21856, -10.86344, 1e-4],
+            'negative eastings/northings'  => [-100000.0, -100000.0, 50.27844, -12.20996, 1e-4],
+            'very large inputs (garbage)'  => [10000000.0, 10000000.0, -59.09712, -1.87516, 1e-3],
         ];
     }
 

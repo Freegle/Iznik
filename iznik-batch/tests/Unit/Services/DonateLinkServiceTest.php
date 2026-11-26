@@ -46,7 +46,7 @@ class DonateLinkServiceTest extends TestCase
 
         $url = $this->svc()->url($user, 3, 'donationask');
 
-        $this->assertStringContainsString('u='.$user->id, $url);
+        $this->assertStringContainsString('u=' . $user->id, $url);
         $this->assertMatchesRegularExpression('/[?&]k=[0-9a-f]{32}/', $url);
         $this->assertStringContainsString('amount=3', $url);
         $this->assertStringContainsString('src=donationask', $url);
@@ -68,7 +68,7 @@ class DonateLinkServiceTest extends TestCase
 
         $url = $this->svc()->urlForUserId((int) $user->id, 2, 'volunteeringdigest');
 
-        $this->assertStringContainsString('u='.$user->id, $url);
+        $this->assertStringContainsString('u=' . $user->id, $url);
     }
 
     public function test_url_for_unknown_user_id_still_produces_a_usable_link(): void

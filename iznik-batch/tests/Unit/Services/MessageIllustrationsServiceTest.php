@@ -383,7 +383,6 @@ class MessageIllustrationsServiceTest extends TestCase
                     $attemptsForEarlier++;
                     if ($attemptsForEarlier === 1) {
                         $failed[$item['name']] = true;
-
                         continue;
                     }
                 }
@@ -417,7 +416,7 @@ class MessageIllustrationsServiceTest extends TestCase
 
         $this->assertTrue(
             DB::table('messages_attachments')->where('msgid', $earlier->id)->exists(),
-            'Medicine Cabinet should be retried and illustrated on a later run, '.
+            'Medicine Cabinet should be retried and illustrated on a later run, ' .
             'not permanently excluded because a later message in the same pass succeeded'
         );
     }

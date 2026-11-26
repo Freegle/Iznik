@@ -19,8 +19,8 @@ class AutoRepostServiceTest extends TestCase
     {
         parent::setUp();
         // Ensure feature flag is enabled for tests.
-        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types').',AutoRepost']);
-        $this->service = new AutoRepostService;
+        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types') . ',AutoRepost']);
+        $this->service = new AutoRepostService();
     }
 
     /**
@@ -48,7 +48,7 @@ class AutoRepostServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $group, [
             'type' => $type,
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -186,7 +186,7 @@ class AutoRepostServiceTest extends TestCase
         ]);
 
         $message = $this->createTestMessage($user, $group, [
-            'fromaddr' => 'test@'.$domain,
+            'fromaddr' => 'test@' . $domain,
             'source' => 'Email',
         ]);
 
@@ -428,7 +428,7 @@ class AutoRepostServiceTest extends TestCase
         // Create a message that's 10 days old (within maxAge window of 18 days, past 72h offer interval)
         $message = $this->createTestMessage($user, $group, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -492,7 +492,7 @@ class AutoRepostServiceTest extends TestCase
         // Create a message that's exactly 90 days old
         $message = $this->createTestMessage($user, $group, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -552,7 +552,7 @@ class AutoRepostServiceTest extends TestCase
         // Create message and post to both groups
         $message = $this->createTestMessage($user, $group1, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -611,7 +611,7 @@ class AutoRepostServiceTest extends TestCase
         // Home posting in the warning window (50h; offer interval 3d => window 48-72h).
         $message = $this->createTestMessage($user, $home, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
         DB::table('messages_groups')
@@ -680,7 +680,7 @@ class AutoRepostServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $home, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -730,7 +730,7 @@ class AutoRepostServiceTest extends TestCase
         // Home posting still fresh (not in any window); rippled posting past the repost window.
         $message = $this->createTestMessage($user, $home, [
             'type' => 'Offer',
-            'fromaddr' => 'test-'.$user->id.'@'.$domain,
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
         DB::table('messages_groups')

@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Models\ChatMessage;
+use App\Models\ChatRoom;
 use App\Services\ChatExpectedService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -14,7 +15,7 @@ class ChatExpectedServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatExpectedService;
+        $this->service = new ChatExpectedService();
     }
 
     // -------------------------------------------------------------------------
@@ -83,9 +84,9 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($spammer, $victim);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         $msg = $this->createTestChatMessage($room, $spammer, [
@@ -128,7 +129,7 @@ class ChatExpectedServiceTest extends TestCase
 
         // user1 sent a message expecting a reply
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -158,7 +159,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -189,7 +190,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -214,7 +215,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -245,7 +246,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -254,11 +255,11 @@ class ChatExpectedServiceTest extends TestCase
         $reply = $this->createTestChatMessage($room, $user2, ['date' => now()->subDays(1)]);
         $post = $this->createTestMessage($user1, $this->createTestGroup());
         DB::table('rippling_held_replies')->insert([
-            'chatid' => $room->id,
-            'chatmsgid' => $reply->id,
-            'msgid' => $post->id,
-            'replieruserid' => $user2->id,
-            'status' => 'held',
+            'chatid'         => $room->id,
+            'chatmsgid'      => $reply->id,
+            'msgid'          => $post->id,
+            'replieruserid'  => $user2->id,
+            'status'         => 'held',
         ]);
 
         $first = $this->service->updateExpected();
@@ -266,7 +267,7 @@ class ChatExpectedServiceTest extends TestCase
 
         // Release it - no new chat message is created, only the status changes.
         DB::table('rippling_held_replies')->where('chatmsgid', $reply->id)->update([
-            'status' => 'released',
+            'status'     => 'released',
             'releasedat' => now(),
         ]);
 
@@ -284,7 +285,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -304,7 +305,7 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -324,7 +325,7 @@ class ChatExpectedServiceTest extends TestCase
 
         // 32 days old — outside LOOKBACK_DAYS=31
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(32),
+            'date'          => now()->subDays(32),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -342,17 +343,17 @@ class ChatExpectedServiceTest extends TestCase
         $room = $this->createTestChatRoom($user1, $user2);
 
         $msg = $this->createTestChatMessage($room, $user1, [
-            'date' => now()->subDays(2),
+            'date'          => now()->subDays(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
 
         // Pre-existing row with waiting value
         DB::table('users_expected')->insert([
-            'expecter' => $user1->id,
-            'expectee' => $user2->id,
+            'expecter'  => $user1->id,
+            'expectee'  => $user2->id,
             'chatmsgid' => $msg->id,
-            'value' => -1,
+            'value'     => -1,
         ]);
 
         // user2 now replied
@@ -439,7 +440,7 @@ class ChatExpectedServiceTest extends TestCase
         $user = $this->createTestUser();
 
         DB::table('users_replytime')->insert([
-            'userid' => $user->id,
+            'userid'    => $user->id,
             'replytime' => 99999,
         ]);
 

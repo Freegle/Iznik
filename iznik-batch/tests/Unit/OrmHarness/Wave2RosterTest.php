@@ -21,13 +21,11 @@ class Wave2RosterTest extends TestCase
 {
     // INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)
     private const SITE_ROSTER_MEMBER = '211ed1484c4b';
-
     private const SITE_ROSTER_MOD = '99d42e86b84c';
 
     // The same statement again, in ChatRoom::getOrCreateUser2Mod - once for the
     // member, once per group moderator.
     private const SITE_ROSTER_MEMBER_2 = '4f88701abf8b';
-
     private const SITE_ROSTER_MOD_2 = '0b34a7e081a2';
 
     // UPDATE chat_roster SET lastmsgemailed = ?
@@ -65,7 +63,7 @@ class Wave2RosterTest extends TestCase
                 ->where('userid', 2)
                 ->where(function ($q) {
                     $q->whereNull('lastmsgemailed')
-                        ->orWhere('lastmsgemailed', '<', 3);
+                      ->orWhere('lastmsgemailed', '<', 3);
                 }),
             ['lastmsgemailed' => 3],
         ]);

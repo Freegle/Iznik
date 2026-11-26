@@ -3,6 +3,7 @@
 namespace Tests\Unit\Support;
 
 use App\Mail\Admin\ModNotifMail;
+use App\Models\UserEmail;
 use App\Support\SafeMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;

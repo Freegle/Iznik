@@ -28,29 +28,17 @@ class Wave3PurgeTest extends TestCase
     private const CHUNK = 500;
 
     private const SITE_LOGIN_LOGOUT = 'b7fe22c9f927';
-
     private const SITE_USER_DELETED = 'ee112faa8fb6';
-
     private const SITE_USER_CREATED = 'e8216202fee1';
-
     private const SITE_BLANK_SUBTYPE = 'bfd91e927d85';
-
     private const SITE_USER_BOUNCE = '06a0736afd38';
-
     private const SITE_BOUNCES_EMAILS = 'af5bd3f5ecb1';
-
     private const SITE_LOGS_EMAILS = '0f525ed7d096';
-
     private const SITE_LOGS_BY_GROUP = 'f88d2c32b9f2';
-
     private const SITE_LOGS_SRC = 'd3c47e835355';
-
     private const SITE_LOGS_ERRORS = '978d17107d12';
-
     private const SITE_LOGS_PLUGIN = 'a0abe6e079a4';
-
     private const SITE_LOGS_SQL = '91a2a946f8f3';
-
     private const SITE_USERS_ACTIVE = '6f40faa9e18c';
 
     private const CUTOFF = '2026-01-01 00:00:00';

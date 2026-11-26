@@ -72,7 +72,7 @@ class GroupAttachmentModelTest extends TestCase
 
         $this->assertSame('https://images.example.com/archive/gimg_5.jpg', $attachment->getPath(false));
         $this->assertSame(
-            'https://delivery.example.com?w=250&h=250&url='.rawurlencode('https://images.example.com/archive/gimg_5.jpg'),
+            'https://delivery.example.com?w=250&h=250&url=' . rawurlencode('https://images.example.com/archive/gimg_5.jpg'),
             $attachment->getPath(true)
         );
     }
@@ -119,7 +119,7 @@ class GroupAttachmentModelTest extends TestCase
 
     public function test_group_relationship(): void
     {
-        $attachment = new GroupAttachment;
+        $attachment = new GroupAttachment();
         $this->assertTrue(method_exists($attachment, 'group'));
         $relation = $attachment->group();
         $this->assertInstanceOf(\Illuminate\Database\Eloquent\Relations\BelongsTo::class, $relation);

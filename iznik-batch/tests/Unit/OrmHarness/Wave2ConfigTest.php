@@ -24,13 +24,9 @@ use Tests\TestCase;
 class Wave2ConfigTest extends TestCase
 {
     private const SITE_LAST_PRODUCTION_SHA = '134a701c2455';
-
     private const SITE_CLASSIFIER_OTHER = '921547aec4be';
-
     private const SITE_CPI = '78fb60f58d16';
-
     private const SITE_DONATION_THANK = '09285fda88fd';
-
     private const SITE_GIT_SUMMARY = '7b872a43116c';
 
     public function test_config_upserts(): void

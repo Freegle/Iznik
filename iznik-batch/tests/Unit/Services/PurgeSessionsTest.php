@@ -14,7 +14,7 @@ class PurgeSessionsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PurgeService;
+        $this->service = new PurgeService();
     }
 
     public function test_purge_sessions_deletes_old_sessions(): void
@@ -25,7 +25,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('sessions')->insert([
             'userid' => $user->id,
             'series' => 1,
-            'token' => 'old-token-'.uniqid(),
+            'token' => 'old-token-' . uniqid(),
             'date' => now()->subDays(40),
             'lastactive' => now()->subDays(40),
         ]);
@@ -34,7 +34,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('sessions')->insert([
             'userid' => $user->id,
             'series' => 2,
-            'token' => 'recent-token-'.uniqid(),
+            'token' => 'recent-token-' . uniqid(),
             'date' => now()->subDays(5),
             'lastactive' => now()->subDays(5),
         ]);
@@ -71,7 +71,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('sessions')->insert([
             'userid' => $user->id,
             'series' => 1,
-            'token' => 'token-10d-'.uniqid(),
+            'token' => 'token-10d-' . uniqid(),
             'date' => now()->subDays(10),
             'lastactive' => now()->subDays(10),
         ]);
@@ -93,7 +93,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('users_logins')->insert([
             'userid' => $user->id,
             'type' => User::LOGIN_LINK,
-            'uid' => 'old-link-'.uniqid(),
+            'uid' => 'old-link-' . uniqid(),
             'lastaccess' => now()->subDays(40),
             'added' => now()->subDays(40),
         ]);
@@ -102,7 +102,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('users_logins')->insert([
             'userid' => $user->id,
             'type' => User::LOGIN_LINK,
-            'uid' => 'recent-link-'.uniqid(),
+            'uid' => 'recent-link-' . uniqid(),
             'lastaccess' => now()->subDays(5),
             'added' => now()->subDays(5),
         ]);
@@ -111,7 +111,7 @@ class PurgeSessionsTest extends TestCase
         DB::table('users_logins')->insert([
             'userid' => $user->id,
             'type' => 'Native',
-            'uid' => 'native-'.uniqid(),
+            'uid' => 'native-' . uniqid(),
             'lastaccess' => now()->subDays(40),
             'added' => now()->subDays(40),
         ]);

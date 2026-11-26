@@ -26,7 +26,7 @@ class ScheduleProfileTest extends TestCase
             'freegle.schedule.overlay' => $overlay,
         ]);
 
-        $schedule = new Schedule;
+        $schedule = new Schedule();
         $this->app->instance(Schedule::class, $schedule);
         Facade::clearResolvedInstances();
 

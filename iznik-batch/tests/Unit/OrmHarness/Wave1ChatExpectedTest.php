@@ -15,7 +15,6 @@ class Wave1ChatExpectedTest extends TestCase
     // Two identical statements, at the two "stop expecting a reply" call sites.
     // UPDATE chat_messages SET replyexpected = 0 WHERE id = ?
     private const SITE_CLEAR_EXPECTED_A = '2ed1e85ee303';
-
     private const SITE_CLEAR_EXPECTED_B = 'db62be21a27d';
 
     // UPDATE chat_messages SET replyreceived = 1 WHERE id = ?

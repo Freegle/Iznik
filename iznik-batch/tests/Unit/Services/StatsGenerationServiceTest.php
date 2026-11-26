@@ -24,7 +24,7 @@ class StatsGenerationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new StatsGenerationService;
+        $this->service = new StatsGenerationService();
         // Use a fixed date in the past so 30-day window doesn't accidentally
         // sweep up fixtures from other tests running on "today".
         $this->date = '2026-04-01';

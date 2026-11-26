@@ -19,7 +19,7 @@ class LockdownServiceTest extends TestCase
         // The cache is a static, process-wide property (see the class doc), so a row
         // cached by an earlier test in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->service = new LockdownService;
+        $this->service = new LockdownService();
     }
 
     protected function tearDown(): void
@@ -104,7 +104,7 @@ class LockdownServiceTest extends TestCase
         // another LockdownService instance in the same process is seen immediately -
         // this does not depend on the five-second TTL expiring.
         $this->assertFalse($this->service->held('push'));
-        (new LockdownService)->press(null, 'from another process');
+        (new LockdownService())->press(null, 'from another process');
         $this->assertTrue($this->service->held('push'));
     }
 
@@ -142,8 +142,7 @@ class LockdownServiceTest extends TestCase
     {
         $this->service->press(null, 'wave');
 
-        $broken = new class extends LockdownService
-        {
+        $broken = new class extends LockdownService {
             public bool $fail = false;
 
             protected function readNewest(): ?object
@@ -168,8 +167,7 @@ class LockdownServiceTest extends TestCase
 
     public function test_never_read_is_open(): void
     {
-        $broken = new class extends LockdownService
-        {
+        $broken = new class extends LockdownService {
             protected function readNewest(): ?object
             {
                 throw new \RuntimeException('db gone');

@@ -11,8 +11,7 @@ class AmpEmailTokenTest extends TestCase
 {
     private function createAmpEmailInstance(): object
     {
-        return new class
-        {
+        return new class {
             use \App\Mail\Traits\AmpEmail;
 
             public function token(int $userId, int $resourceId): array

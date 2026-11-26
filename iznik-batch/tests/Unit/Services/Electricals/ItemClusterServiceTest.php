@@ -35,7 +35,7 @@ class ItemClusterServiceTest extends TestCase
     private function rows(array $rows): array
     {
         return array_map(
-            fn ($r) => (object) ['name' => $r[0], 'msgid' => $r[1], 'fromuser' => $r[2], 'groupid' => $r[3]],
+            fn($r) => (object) ['name' => $r[0], 'msgid' => $r[1], 'fromuser' => $r[2], 'groupid' => $r[3]],
             $rows
         );
     }
@@ -45,10 +45,10 @@ class ItemClusterServiceTest extends TestCase
     {
         return [
             'canonical' => $canonical,
-            'name' => $canonical,
-            'count' => $count,
-            'users' => $users,
-            'groups' => $groups,
+            'name'      => $canonical,
+            'count'     => $count,
+            'users'     => $users,
+            'groups'    => $groups,
         ];
     }
 
@@ -168,7 +168,7 @@ class ItemClusterServiceTest extends TestCase
     public function it_drops_a_rare_item_that_is_a_qualified_version_of_a_common_one(): void
     {
         $all = [
-            'lamp' => $this->cluster('lamp', 40),
+            'lamp'       => $this->cluster('lamp', 40),
             'table lamp' => $this->cluster('table lamp', 3),
         ];
 
@@ -187,7 +187,7 @@ class ItemClusterServiceTest extends TestCase
     {
         $all = [
             'washing machine' => $this->cluster('washing machine', 40),
-            'sewing machine' => $this->cluster('sewing machine', 3),
+            'sewing machine'  => $this->cluster('sewing machine', 3),
         ];
 
         $kept = $this->svc->suppressVariantsOfPopular(['sewing machine' => $all['sewing machine']], $all);
@@ -200,7 +200,7 @@ class ItemClusterServiceTest extends TestCase
     public function it_keeps_a_rare_item_with_no_popular_rival(): void
     {
         $all = [
-            'lamp' => $this->cluster('lamp', 6),
+            'lamp'       => $this->cluster('lamp', 6),
             'table lamp' => $this->cluster('table lamp', 3),
         ];
 
@@ -220,7 +220,7 @@ class ItemClusterServiceTest extends TestCase
 
         $all = [
             'bread maker' => $this->cluster('bread maker', 40),
-            'breadmaker' => $this->cluster('breadmaker', 3),
+            'breadmaker'  => $this->cluster('breadmaker', 3),
         ];
 
         $kept = $this->svc->suppressVariantsOfPopular(['breadmaker' => $all['breadmaker']], $all);
@@ -239,7 +239,7 @@ class ItemClusterServiceTest extends TestCase
 
         $all = [
             'washing machine' => $this->cluster('washing machine', 40),
-            'sewing machine' => $this->cluster('sewing machine', 3),
+            'sewing machine'  => $this->cluster('sewing machine', 3),
         ];
 
         $kept = $this->svc->suppressVariantsOfPopular(['sewing machine' => $all['sewing machine']], $all);
@@ -256,7 +256,7 @@ class ItemClusterServiceTest extends TestCase
 
         $all = [
             'washing machine' => $this->cluster('washing machine', 40),
-            'sewing machine' => $this->cluster('sewing machine', 3),
+            'sewing machine'  => $this->cluster('sewing machine', 3),
         ];
 
         $kept = $this->svc->suppressVariantsOfPopular(['sewing machine' => $all['sewing machine']], $all);
@@ -272,7 +272,7 @@ class ItemClusterServiceTest extends TestCase
         Http::fake([
             '*' => function ($request) use ($vectors) {
                 return Http::response([
-                    'embeddings' => array_map(fn ($t) => $vectors[$t] ?? [0.0, 0.0], $request['texts']),
+                    'embeddings' => array_map(fn($t) => $vectors[$t] ?? [0.0, 0.0], $request['texts']),
                 ]);
             },
         ]);
@@ -321,7 +321,7 @@ class ItemClusterServiceTest extends TestCase
             13,
             $counts['tv'] ?? null,
             'brand, product name, screen size, panel type and size words should all fold '
-            .'into one item: '.json_encode($counts)
+            . 'into one item: ' . json_encode($counts)
         );
     }
 

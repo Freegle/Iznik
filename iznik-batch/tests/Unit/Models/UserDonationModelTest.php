@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\User;
 use App\Models\UserDonation;
 use Tests\TestCase;
 

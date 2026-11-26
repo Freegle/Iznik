@@ -4,8 +4,8 @@ namespace Tests\Unit\Services;
 
 use App\Mail\Welcome\GroupWelcomeMail;
 use App\Models\Membership;
-use App\Services\MembershipOriginBackfillService;
 use App\Services\MembershipsProcessingService;
+use App\Services\MembershipOriginBackfillService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -18,7 +18,7 @@ class MembershipsProcessingServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MembershipsProcessingService;
+        $this->service = new MembershipsProcessingService();
         Mail::fake();
     }
 

@@ -18,7 +18,7 @@ class AuthorityStatsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new AuthorityStatsService;
+        $this->service = new AuthorityStatsService();
     }
 
     public function test_get_months_returns_the_containing_quarter(): void
@@ -295,7 +295,7 @@ class AuthorityStatsServiceTest extends TestCase
             ['value' => json_encode(['data' => [2011 => 50.0, 2025 => 100.0]])]
         );
 
-        $service = new AuthorityStatsService;
+        $service = new AuthorityStatsService();
 
         // Every year after 2025 is priced at 2025.
         $this->assertSame(1422.0, $service->getBenefitPerTonne());

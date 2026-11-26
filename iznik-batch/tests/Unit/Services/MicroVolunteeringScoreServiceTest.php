@@ -13,7 +13,7 @@ class MicroVolunteeringScoreServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MicroVolunteeringScoreService;
+        $this->service = new MicroVolunteeringScoreService();
         DB::table('microactions')->delete();
     }
 

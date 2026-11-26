@@ -8,13 +8,12 @@ use Tests\TestCase;
 class LogRotationServiceTest extends TestCase
 {
     private string $dir;
-
     private LogRotationService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new LogRotationService;
+        $this->service = new LogRotationService();
         $this->dir = sys_get_temp_dir().'/logrot_test_'.uniqid('', true);
         mkdir($this->dir, 0755, true);
     }
@@ -40,7 +39,7 @@ class LogRotationServiceTest extends TestCase
     private function writeFile(string $name, string $contents, int $ageDays = 0): string
     {
         $path = $this->dir.'/'.$name;
-        if (! is_dir(dirname($path))) {
+        if (!is_dir(dirname($path))) {
             mkdir(dirname($path), 0755, true);
         }
         file_put_contents($path, $contents);
@@ -173,7 +172,6 @@ class LogRotationServiceTest extends TestCase
 
         $this->assertSame(0, $result['compressed']);
     }
-
     public function test_rotate_live_archives_appended_log_and_truncates_in_place(): void
     {
         $path = $this->writeFile('cron/chats_process-spam.log', "run one\n", 0);

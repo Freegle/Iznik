@@ -11,10 +11,10 @@ class MatchedPostsSubjectTest extends TestCase
 {
     private function item(string $type, string $subject): array
     {
-        $m = new Message;
+        $m = new Message();
         $m->type = $type;
         $m->subject = $subject;
-        $reason = new Message;
+        $reason = new Message();
         $reason->type = $type === 'Offer' ? 'Wanted' : 'Offer';
         $reason->subject = 'WANTED: something';
 
@@ -23,7 +23,7 @@ class MatchedPostsSubjectTest extends TestCase
 
     private function mail(array $items): MatchedPosts
     {
-        $u = new User;
+        $u = new User();
         $u->id = 1;
 
         return new MatchedPosts($u, 'test@example.com', $items);

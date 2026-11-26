@@ -37,19 +37,19 @@ class AmpersandEncodingTest extends TestCase
     private function makeVolunteeringDecoded(): array
     {
         return [
-            'id' => 1,
-            'title' => 'Coffee & Cake',  // decoded by VolunteeringDigestService
-            'location' => 'Town Hall',
-            'description' => 'Tea & biscuits provided.',
+            'id'             => 1,
+            'title'          => 'Coffee & Cake',  // decoded by VolunteeringDigestService
+            'location'       => 'Town Hall',
+            'description'    => 'Tea & biscuits provided.',
             'timecommitment' => null,
-            'online' => false,
-            'contactname' => null,
-            'contactphone' => null,
-            'contactemail' => null,
-            'contacturl' => null,
-            'photo_thumb' => null,
-            'applyby' => null,
-            'url' => config('freegle.sites.user').'/volunteering/1',
+            'online'         => false,
+            'contactname'    => null,
+            'contactphone'   => null,
+            'contactemail'   => null,
+            'contacturl'     => null,
+            'photo_thumb'    => null,
+            'applyby'        => null,
+            'url'            => config('freegle.sites.user') . '/volunteering/1',
         ];
     }
 
@@ -62,7 +62,7 @@ class AmpersandEncodingTest extends TestCase
         // which email clients render as a single "&".
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteeringDecoded()],
+            volunteerings:  [$this->makeVolunteeringDecoded()],
             unsubscribeUrl: 'https://example.com/unsubscribe',
         );
 
@@ -107,18 +107,18 @@ class AmpersandEncodingTest extends TestCase
     private function makeEventDecoded(): array
     {
         return [
-            'id' => 1,
-            'title' => 'Soup & Song',  // decoded by EventsDigestService
-            'location' => 'Community Hall',
-            'description' => 'Bring friends & family.',
-            'contactname' => null,
+            'id'           => 1,
+            'title'        => 'Soup & Song',  // decoded by EventsDigestService
+            'location'     => 'Community Hall',
+            'description'  => 'Bring friends & family.',
+            'contactname'  => null,
             'contactphone' => null,
             'contactemail' => null,
-            'contacturl' => null,
-            'start' => 'Sat, 31st May 2:00pm',
-            'end' => '4:00pm',
-            'imageUrl' => null,
-            'url' => config('freegle.sites.user').'/communityevent/1',
+            'contacturl'   => null,
+            'start'        => 'Sat, 31st May 2:00pm',
+            'end'          => '4:00pm',
+            'imageUrl'     => null,
+            'url'          => config('freegle.sites.user') . '/communityevent/1',
         ];
     }
 
@@ -126,7 +126,7 @@ class AmpersandEncodingTest extends TestCase
     {
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            events: [$this->makeEventDecoded()],
+            events:         [$this->makeEventDecoded()],
             unsubscribeUrl: 'https://example.com/unsubscribe',
         );
 
@@ -149,51 +149,51 @@ class AmpersandEncodingTest extends TestCase
     private function unifiedTemplateData(): array
     {
         return [
-            'user' => (object) ['email_preferred' => 'r@example.com', 'firstname' => 'Sam'],
-            'posts' => collect([
+            'user'           => (object) ['email_preferred' => 'r@example.com', 'firstname' => 'Sam'],
+            'posts'          => collect([
                 [
-                    'message' => (object) ['id' => 1, 'type' => 'Offer'],
-                    'messageText' => null,
-                    'messageUrl' => 'https://example.com/message/1',
-                    'viewUrl' => 'https://example.com/message/1',
-                    'imageUrl' => null,
-                    'displayImageUrl' => 'https://example.com/placeholder.png',
-                    'heroImageUrl' => 'https://example.com/placeholder.png',
-                    'thumbImageUrl' => 'https://example.com/placeholder.png',
-                    'trackedImageUrl' => null,
-                    'isPlaceholder' => true,
-                    'groupName' => null,
-                    'groupUrl' => null,
-                    'postedToText' => null,                              // single-group post (preparePosts contract)
-                    'type' => 'Offer',
-                    'subject' => 'OFFER: Bread & Butter (London)',  // decoded
-                    'itemName' => 'Bread & Butter',                 // decoded by preparePosts()
-                    'locationName' => 'London',
-                    'arrivalFormatted' => 'Mon 1 Jan, 12:00pm',
-                    'arrivalIso' => '2025-01-01T12:00:00+00:00',
-                    'distanceText' => null,
-                    'posterName' => 'Alice',
-                    'posterAvatarUrl' => 'https://example.com/avatar.png',
+                    'message'            => (object) ['id' => 1, 'type' => 'Offer'],
+                    'messageText'        => null,
+                    'messageUrl'         => 'https://example.com/message/1',
+                    'viewUrl'            => 'https://example.com/message/1',
+                    'imageUrl'           => null,
+                    'displayImageUrl'    => 'https://example.com/placeholder.png',
+                    'heroImageUrl'       => 'https://example.com/placeholder.png',
+                    'thumbImageUrl'      => 'https://example.com/placeholder.png',
+                    'trackedImageUrl'    => null,
+                    'isPlaceholder'      => true,
+                    'groupName'          => null,
+                    'groupUrl'           => null,
+                    'postedToText'       => null,                              // single-group post (preparePosts contract)
+                    'type'               => 'Offer',
+                    'subject'            => 'OFFER: Bread & Butter (London)',  // decoded
+                    'itemName'           => 'Bread & Butter',                 // decoded by preparePosts()
+                    'locationName'       => 'London',
+                    'arrivalFormatted'   => 'Mon 1 Jan, 12:00pm',
+                    'arrivalIso'         => '2025-01-01T12:00:00+00:00',
+                    'distanceText'       => null,
+                    'posterName'         => 'Alice',
+                    'posterAvatarUrl'    => 'https://example.com/avatar.png',
                     'firstPostedFormatted' => null,
                 ],
             ]),
-            'postCount' => 1,
-            'mode' => UnifiedDigestService::MODE_DAILY,
+            'postCount'      => 1,
+            'mode'           => UnifiedDigestService::MODE_DAILY,
             // UnifiedDigest::build() always passes accentColor to the template
             // (#4895DD for the null-immediate daily case); the shared _jobs
             // partial now needs it in the daily branch too, so mirror it here.
-            'accentColor' => '#4895DD',
-            'sponsors' => collect(),
-            'jobAds' => collect(),
-            'jobsUrl' => 'https://example.com/jobs',
-            'donateUrl' => 'https://example.com/donate',
-            'browseUrl' => 'https://example.com/browse',
-            'settingsUrl' => 'https://example.com/settings',
+            'accentColor'    => '#4895DD',
+            'sponsors'       => collect(),
+            'jobAds'         => collect(),
+            'jobsUrl'        => 'https://example.com/jobs',
+            'donateUrl'      => 'https://example.com/donate',
+            'browseUrl'      => 'https://example.com/browse',
+            'settingsUrl'    => 'https://example.com/settings',
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
-            'userSite' => 'https://example.com',
+            'userSite'       => 'https://example.com',
             'primaryGroupName' => null,
-            'frequencyText' => 'daily',
-            'digestGroups' => collect(),
+            'frequencyText'  => 'daily',
+            'digestGroups'   => collect(),
         ];
     }
 
@@ -216,12 +216,11 @@ class AmpersandEncodingTest extends TestCase
         $data = $this->unifiedTemplateData();
         // Add AMP-required fields to each post.
         $data['posts'] = $data['posts']->map(function ($post) {
-            $post['ampReplyUrl'] = 'https://api.example.com/amp/digest/1/reply?rt=tok&uid=1&exp=9999999999';
-            $post['ampReplyToken'] = 'tok';
-            $post['ampReplyUid'] = 1;
-            $post['ampReplyExp'] = 9999999999;
+            $post['ampReplyUrl']     = 'https://api.example.com/amp/digest/1/reply?rt=tok&uid=1&exp=9999999999';
+            $post['ampReplyToken']   = 'tok';
+            $post['ampReplyUid']     = 1;
+            $post['ampReplyExp']     = 9999999999;
             $post['fallbackReplyUrl'] = $post['messageUrl'];
-
             return $post;
         });
         $html = view('emails.amp.digest.unified', $data)->render();
@@ -255,10 +254,10 @@ class AmpersandEncodingTest extends TestCase
         // The text template uses {!! $job->title !!} (raw output), which is
         // correct for already-decoded values; this test documents that contract.
         $job = (object) [
-            'title' => 'Sales & Marketing', // already decoded by WhatJobsService
-            'location' => 'London',
+            'title'       => 'Sales & Marketing', // already decoded by WhatJobsService
+            'location'    => 'London',
             'tracked_url' => 'https://example.com/job/1',
-            'image_url' => null,
+            'image_url'   => null,
         ];
 
         $data = $this->unifiedTemplateData();
@@ -277,7 +276,7 @@ class AmpersandEncodingTest extends TestCase
      * Integration test: verify UnifiedDigest.preparePosts() decodes the subject
      * so that itemName passed to templates is a plain-text "&" not "&amp;".
      */
-    public function test_unified_digest_prepare_posts_decodes_subject(): void
+    public function test_unified_digest_preparePosts_decodes_subject(): void
     {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -302,49 +301,49 @@ class AmpersandEncodingTest extends TestCase
         // After the fix, preparePosts() decodes the subject, so itemName =
         // "Coffee & Cake". Blade's {{ }} then escapes to "&amp;" in HTML.
         $mjmlSource = view('emails.mjml.digest.unified', [
-            'user' => $user,
-            'posts' => collect([[
-                'message' => $message,
-                'messageText' => null,
-                'messageUrl' => 'https://example.com/message/1',
-                'viewUrl' => 'https://example.com/message/1',
-                'imageUrl' => null,
-                'displayImageUrl' => 'https://example.com/placeholder.png',
-                'heroImageUrl' => 'https://example.com/placeholder.png',
-                'thumbImageUrl' => 'https://example.com/placeholder.png',
-                'trackedImageUrl' => null,
-                'isPlaceholder' => true,
-                'groupName' => null,
-                'groupUrl' => null,
-                'postedToText' => null,                              // single-group post (preparePosts contract)
-                'type' => 'Offer',
-                'subject' => 'OFFER: Coffee & Cake (London)',      // decoded
-                'itemName' => 'Coffee & Cake',                      // decoded
-                'locationName' => 'London',
-                'arrivalFormatted' => 'Mon 1 Jan, 12:00pm',
-                'arrivalIso' => '2025-01-01T12:00:00+00:00',
-                'distanceText' => null,
-                'posterName' => 'Alice',
-                'posterAvatarUrl' => 'https://example.com/avatar.png',
+            'user'           => $user,
+            'posts'          => collect([[
+                'message'            => $message,
+                'messageText'        => null,
+                'messageUrl'         => 'https://example.com/message/1',
+                'viewUrl'            => 'https://example.com/message/1',
+                'imageUrl'           => null,
+                'displayImageUrl'    => 'https://example.com/placeholder.png',
+                'heroImageUrl'       => 'https://example.com/placeholder.png',
+                'thumbImageUrl'      => 'https://example.com/placeholder.png',
+                'trackedImageUrl'    => null,
+                'isPlaceholder'      => true,
+                'groupName'          => null,
+                'groupUrl'           => null,
+                'postedToText'       => null,                              // single-group post (preparePosts contract)
+                'type'               => 'Offer',
+                'subject'            => 'OFFER: Coffee & Cake (London)',      // decoded
+                'itemName'           => 'Coffee & Cake',                      // decoded
+                'locationName'       => 'London',
+                'arrivalFormatted'   => 'Mon 1 Jan, 12:00pm',
+                'arrivalIso'         => '2025-01-01T12:00:00+00:00',
+                'distanceText'       => null,
+                'posterName'         => 'Alice',
+                'posterAvatarUrl'    => 'https://example.com/avatar.png',
                 'firstPostedFormatted' => null,
             ]]),
-            'postCount' => 1,
-            'mode' => UnifiedDigestService::MODE_DAILY,
+            'postCount'      => 1,
+            'mode'           => UnifiedDigestService::MODE_DAILY,
             // UnifiedDigest::build() always passes accentColor to the template
             // (#4895DD for the null-immediate daily case); the shared _jobs
             // partial now needs it in the daily branch too, so mirror it here.
-            'accentColor' => '#4895DD',
-            'sponsors' => collect(),
-            'jobAds' => collect(),
-            'jobsUrl' => 'https://example.com/jobs',
-            'donateUrl' => 'https://example.com/donate',
-            'browseUrl' => 'https://example.com/browse',
-            'settingsUrl' => 'https://example.com/settings',
+            'accentColor'    => '#4895DD',
+            'sponsors'       => collect(),
+            'jobAds'         => collect(),
+            'jobsUrl'        => 'https://example.com/jobs',
+            'donateUrl'      => 'https://example.com/donate',
+            'browseUrl'      => 'https://example.com/browse',
+            'settingsUrl'    => 'https://example.com/settings',
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
-            'userSite' => 'https://example.com',
+            'userSite'       => 'https://example.com',
             'primaryGroupName' => null,
-            'frequencyText' => 'daily',
-            'digestGroups' => collect(),
+            'frequencyText'  => 'daily',
+            'digestGroups'   => collect(),
         ])->render();
 
         // The raw MJML source should have single &amp; (Blade escaped the decoded "&")

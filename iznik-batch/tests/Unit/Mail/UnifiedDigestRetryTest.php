@@ -143,7 +143,7 @@ class UnifiedDigestRetryTest extends TestCase
             'contactname' => 'R',
             'contactemail' => 'r@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         $rebuilt = UnifiedDigest::rebuildFromDescriptor([
@@ -185,7 +185,7 @@ class UnifiedDigestRetryTest extends TestCase
             'contactname' => 'B',
             'contactemail' => 'b@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         $rebuilt = UnifiedDigest::rebuildFromDescriptor([

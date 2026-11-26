@@ -26,7 +26,7 @@ class ReachMemberReconcileServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['added' => now()->subHours(20)]);
 
-        (new ReachMemberReconcileService)->reconcile();
+        (new ReachMemberReconcileService())->reconcile();
 
         $this->assertSame('joined', $this->queued($user->id));
     }
@@ -42,7 +42,7 @@ class ReachMemberReconcileServiceTest extends TestCase
             'msgid' => $msg->id, 'userid' => $user->id, 'notified_at' => now()->subHours(19),
         ]);
 
-        (new ReachMemberReconcileService)->reconcile();
+        (new ReachMemberReconcileService())->reconcile();
 
         $this->assertNull($this->queued($user->id));
     }
@@ -53,7 +53,7 @@ class ReachMemberReconcileServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['added' => now()->subDays(3)]);
 
-        (new ReachMemberReconcileService)->reconcile();
+        (new ReachMemberReconcileService())->reconcile();
 
         $this->assertNull($this->queued($user->id));
     }
@@ -66,7 +66,7 @@ class ReachMemberReconcileServiceTest extends TestCase
             'user' => $user->id, 'byuser' => $user->id,
         ]);
 
-        (new ReachMemberReconcileService)->reconcile();
+        (new ReachMemberReconcileService())->reconcile();
 
         $this->assertSame('moved', $this->queued($user->id));
     }
@@ -89,7 +89,7 @@ class ReachMemberReconcileServiceTest extends TestCase
             'user' => $user->id, 'byuser' => $user->id,
         ]);
 
-        (new ReachMemberReconcileService)->reconcile();
+        (new ReachMemberReconcileService())->reconcile();
 
         $this->assertSame(
             $movedAt->toDateTimeString(),
@@ -104,7 +104,7 @@ class ReachMemberReconcileServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, ['added' => now()->subHours(2)]);
 
-        $stats = (new ReachMemberReconcileService)->reconcile();
+        $stats = (new ReachMemberReconcileService())->reconcile();
 
         $this->assertGreaterThanOrEqual(1, $stats['queued']);
     }

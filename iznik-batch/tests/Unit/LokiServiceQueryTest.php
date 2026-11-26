@@ -30,7 +30,7 @@ class LokiServiceQueryTest extends TestCase
             ], 200),
         ]);
 
-        $svc = new LokiService;
+        $svc = new LokiService();
         $rows = $svc->queryRange(
             '{source="deprecated_endpoint"} |= "GET /foo"',
             Carbon::parse('2026-07-01T00:00:00Z'),
@@ -47,7 +47,7 @@ class LokiServiceQueryTest extends TestCase
         config()->set('freegle.loki.query_url', 'http://loki:3100');
         Http::fake(['*' => Http::response('boom', 500)]);
 
-        $svc = new LokiService;
+        $svc = new LokiService();
         // null (not []) so callers don't mistake a Loki error for "zero hits".
         $this->assertNull($svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now()));
     }
@@ -56,7 +56,7 @@ class LokiServiceQueryTest extends TestCase
     {
         config()->set('freegle.loki.query_url', null);
 
-        $svc = new LokiService;
+        $svc = new LokiService();
         $this->assertNull($svc->queryRange('{source="deprecated_endpoint"}', now()->subDay(), now()));
     }
 }

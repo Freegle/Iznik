@@ -6,10 +6,12 @@ use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
+use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\PushNotificationService;
 use App\Services\UnifiedDigestService;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -29,8 +31,7 @@ use Tests\TestCase;
 class DailyPostsPushTest extends TestCase
 {
     private PushNotificationService $pushService;
-
-    private UnifiedDigestService $digestService;
+    private UnifiedDigestService    $digestService;
 
     protected function setUp(): void
     {
@@ -38,8 +39,8 @@ class DailyPostsPushTest extends TestCase
         // PushNotificationService gracefully no-ops when Firebase creds are
         // absent (logs an error, sets $this->messaging = null). Payload-builder
         // tests don't need messaging; send tests use a mock.
-        $this->pushService = new PushNotificationService;
-        $this->digestService = new UnifiedDigestService;
+        $this->pushService  = new PushNotificationService();
+        $this->digestService = new UnifiedDigestService();
     }
 
     // -------------------------------------------------------------------------
@@ -55,7 +56,7 @@ class DailyPostsPushTest extends TestCase
     public function test_distance_preference_filter_narrows_to_the_members_range(): void
     {
         $poster = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $group  = $this->createTestGroup();
 
         $member = $this->createTestUser();
         $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1], 'browseMaxDistance' => 5];
@@ -63,15 +64,11 @@ class DailyPostsPushTest extends TestCase
         $member->refresh();
 
         $near = $this->createApprovedMessage($poster, $group, 'OFFER: Near sofa (Kingston)');
-        $far = $this->createApprovedMessage($poster, $group, 'OFFER: Far sofa (Aberdeen)');
+        $far  = $this->createApprovedMessage($poster, $group, 'OFFER: Far sofa (Aberdeen)');
 
         // Roughly 2 miles away, and roughly 400 miles away.
-        $near->lat = 51.53;
-        $near->lng = -0.1;
-        $near->fromuser = $poster->id;
-        $far->lat = 57.15;
-        $far->lng = -2.1;
-        $far->fromuser = $poster->id;
+        $near->lat = 51.53; $near->lng = -0.1;  $near->fromuser = $poster->id;
+        $far->lat  = 57.15; $far->lng  = -2.1;  $far->fromuser  = $poster->id;
 
         $kept = $this->digestService->filterByDistancePreference(
             collect([$near, $far]),
@@ -95,11 +92,11 @@ class DailyPostsPushTest extends TestCase
 
     public function test_single_post_title_is_item_name(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('Sofa', $payload['title'],
@@ -116,7 +113,7 @@ class DailyPostsPushTest extends TestCase
         // The daily "new posts near you" digest is informational and must not
         // inflate the app-icon badge with the post count. The badge must equal
         // the user's actual unread items (unseen notifications + unread chats).
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // Three posts in the digest...
@@ -145,9 +142,9 @@ class DailyPostsPushTest extends TestCase
 
     public function test_bulk_offer_shows_item_count(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Office clearance (Brighton)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Office clearance (Brighton)');
         foreach (['Desk', 'Chair', 'Lamp'] as $i => $name) {
             \Illuminate\Support\Facades\DB::table('messages_bulk_items')->insert([
                 'msgid' => $msg->id, 'position' => $i, 'name' => $name, 'quantity' => 1, 'condition' => 'Good',
@@ -162,14 +159,14 @@ class DailyPostsPushTest extends TestCase
 
     public function test_multi_post_title_is_count_new_things(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msgs = [
+        $msgs  = [
             $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
             $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
         ];
 
-        $posts = $this->buildPostsArray($msgs);
+        $posts   = $this->buildPostsArray($msgs);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('2 new things near you', $payload['title']);
@@ -178,7 +175,7 @@ class DailyPostsPushTest extends TestCase
 
     public function test_seven_posts_lines_capped_at_five_and_more_count(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         $msgs = [];
@@ -195,13 +192,13 @@ class DailyPostsPushTest extends TestCase
             $msgs[] = $this->createApprovedMessage($user, $group, $s);
         }
 
-        $posts = $this->buildPostsArray($msgs);
+        $posts   = $this->buildPostsArray($msgs);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('7 new things near you', $payload['title']);
         $this->assertSame('7', $payload['count']);
 
-        $lines = json_decode($payload['lines'], true);
+        $lines = json_decode($payload['lines'], TRUE);
         $this->assertCount(5, $lines, 'lines must contain exactly 5 entries when count > 5');
         $this->assertSame('2', $payload['moreCount'], 'moreCount must be count - 5 = 2');
 
@@ -214,11 +211,11 @@ class DailyPostsPushTest extends TestCase
 
     public function test_payload_required_fields_are_strings(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Lamp (Ealing)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Lamp (Ealing)');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         // FCM requires ALL data values to be strings.
@@ -234,36 +231,36 @@ class DailyPostsPushTest extends TestCase
 
     public function test_payload_constant_fields(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Box (Ealing)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Box (Ealing)');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
-        $this->assertSame('new_posts', $payload['channel_id']);
-        $this->assertSame('NEW_POSTS', $payload['category']);
-        $this->assertSame('200000001', $payload['notId'],
+        $this->assertSame('new_posts',     $payload['channel_id']);
+        $this->assertSame('NEW_POSTS',     $payload['category']);
+        $this->assertSame('200000001',     $payload['notId'],
             'notId must be a constant so Android replaces (not stacks) the tray entry');
-        $this->assertSame('/browse', $payload['route']);
-        $this->assertSame('1', $payload['content-available']);
-        $this->assertSame('false', $payload['modtools']);
+        $this->assertSame('/browse',       $payload['route']);
+        $this->assertSame('1',             $payload['content-available']);
+        $this->assertSame('false',         $payload['modtools']);
     }
 
     public function test_lines_are_json_encoded_array(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msgs = [
+        $msgs  = [
             $this->createApprovedMessage($user, $group, 'OFFER: Sofa (Kingston)'),
             $this->createApprovedMessage($user, $group, 'WANTED: Bike (Surbiton)'),
         ];
 
-        $posts = $this->buildPostsArray($msgs);
+        $posts   = $this->buildPostsArray($msgs);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertIsString($payload['lines']);
-        $lines = json_decode($payload['lines'], true);
+        $lines = json_decode($payload['lines'], TRUE);
         $this->assertIsArray($lines);
         $this->assertCount(2, $lines);
         $this->assertStringContainsString('Offer:', $lines[0]);
@@ -272,11 +269,11 @@ class DailyPostsPushTest extends TestCase
 
     public function test_image_is_empty_string_when_no_attachment(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Books (London)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Books (London)');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('', $payload['image']);
@@ -284,22 +281,22 @@ class DailyPostsPushTest extends TestCase
 
     public function test_image_url_from_attachment_externalurl(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Vase (London)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Vase (London)');
 
         // Add a usable attachment with externalurl.
         MessageAttachment::create([
-            'msgid' => $msg->id,
+            'msgid'       => $msg->id,
             'externalurl' => 'https://cdn.example.com/img123.jpg',
-            'archived' => 0,
-            'primary' => 1,
+            'archived'    => 0,
+            'primary'     => 1,
         ]);
 
         // Reload with attachments relation.
         $msg->load('attachments');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('https://cdn.example.com/img123.jpg', $payload['image']);
@@ -307,7 +304,7 @@ class DailyPostsPushTest extends TestCase
 
     public function test_images_collects_top_post_photos_for_collage(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // Two posts with photos, one without — images[] should hold the two photo URLs
@@ -321,7 +318,7 @@ class DailyPostsPushTest extends TestCase
             $m->load('attachments');
         }
 
-        $posts = $this->buildPostsArray([$m1, $m2, $m3]);
+        $posts   = $this->buildPostsArray([$m1, $m2, $m3]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $images = json_decode($payload['images'], true);
@@ -337,10 +334,10 @@ class DailyPostsPushTest extends TestCase
     {
         $msg = $this->createApprovedMessage($user, $group, $subject);
         MessageAttachment::create([
-            'msgid' => $msg->id,
-            'externalurl' => $url,
-            'archived' => 0,
-            'primary' => $primary,
+            'msgid'        => $msg->id,
+            'externalurl'  => $url,
+            'archived'     => 0,
+            'primary'      => $primary,
             'externalmods' => $ai ? json_encode(['ai' => true]) : null,
         ]);
         $msg->load('attachments');
@@ -350,7 +347,7 @@ class DailyPostsPushTest extends TestCase
 
     public function test_collage_puts_real_photos_before_ai_and_pads_with_ai(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // Interleaved real/AI posts: real A, AI X, real B, AI Y, real C.
@@ -364,7 +361,7 @@ class DailyPostsPushTest extends TestCase
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
-        $images = json_decode($payload['images'], true);
+        $images  = json_decode($payload['images'], true);
 
         // 3 real first (digest order), then 1 AI to fill the 4-photo collage.
         $this->assertSame([
@@ -379,7 +376,7 @@ class DailyPostsPushTest extends TestCase
 
     public function test_collage_pads_with_ai_when_too_few_real(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // Only one real photo available; AI photos fill the remaining slots so the
@@ -391,7 +388,7 @@ class DailyPostsPushTest extends TestCase
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
-        $images = json_decode($payload['images'], true);
+        $images  = json_decode($payload['images'], true);
 
         $this->assertSame([
             'https://cdn.example.com/realA.jpg',
@@ -404,7 +401,7 @@ class DailyPostsPushTest extends TestCase
 
     public function test_collage_uses_ai_when_no_real_photos(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // No real photos at all — AI photos are the only option, so use them.
@@ -414,7 +411,7 @@ class DailyPostsPushTest extends TestCase
         ]);
 
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
-        $images = json_decode($payload['images'], true);
+        $images  = json_decode($payload['images'], true);
 
         $this->assertSame([
             'https://cdn.example.com/aiX.jpg',
@@ -424,29 +421,29 @@ class DailyPostsPushTest extends TestCase
 
     public function test_within_post_prefers_real_attachment_over_ai(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // A single post carrying BOTH an AI illustration (primary) and a real photo.
         // The post must contribute its real photo, even though the AI one is primary.
         $msg = $this->createApprovedMessage($user, $group, 'OFFER: Sofa (London)');
         MessageAttachment::create([
-            'msgid' => $msg->id,
-            'externalurl' => 'https://cdn.example.com/ai.jpg',
-            'archived' => 0,
-            'primary' => 1,
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/ai.jpg',
+            'archived'     => 0,
+            'primary'      => 1,
             'externalmods' => json_encode(['ai' => true]),
         ]);
         MessageAttachment::create([
-            'msgid' => $msg->id,
-            'externalurl' => 'https://cdn.example.com/real.jpg',
-            'archived' => 0,
-            'primary' => 0,
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/real.jpg',
+            'archived'     => 0,
+            'primary'      => 0,
             'externalmods' => null,
         ]);
         $msg->load('attachments');
 
-        $posts = $this->buildPostsArray([$msg]);
+        $posts   = $this->buildPostsArray([$msg]);
         $payload = $this->pushService->buildDailyNewPostsPayload($user->id, $posts);
 
         $this->assertSame('https://cdn.example.com/real.jpg', $payload['image']);
@@ -470,9 +467,9 @@ class DailyPostsPushTest extends TestCase
 
     public function test_notify_excludes_users_own_posts(): void
     {
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($user, $group, 'OFFER: Self (London)');
+        $msg   = $this->createApprovedMessage($user, $group, 'OFFER: Self (London)');
 
         // Insert a push token so it's present for the DB query (even though
         // Firebase is unavailable, the method returns 0 after own-post filter).
@@ -488,10 +485,10 @@ class DailyPostsPushTest extends TestCase
 
     public function test_notify_returns_zero_when_no_fcm_token(): void
     {
-        $user = $this->createTestUser();
-        $other = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $msg = $this->createApprovedMessage($other, $group, 'OFFER: Lamp (Oxford)');
+        $user    = $this->createTestUser();
+        $other   = $this->createTestUser();
+        $group   = $this->createTestGroup();
+        $msg     = $this->createApprovedMessage($other, $group, 'OFFER: Lamp (Oxford)');
 
         // No push token inserted for $user.
         $posts = $this->buildPostsArray([$msg]);
@@ -542,20 +539,19 @@ class DailyPostsPushTest extends TestCase
         $mockPush->method('buildDailyNewPostsPayload')
             ->willReturnCallback(function (int $userId) use (&$seen) {
                 $seen[] = $userId;
-
                 return ['title' => 't', 'count' => '1'];
             });
         $this->app->instance(PushNotificationService::class, $mockPush);
 
         foreach (range(0, $shards - 1) as $shard) {
             $this->artisan('push:daily-posts', [
-                '--shard' => $shard,
-                '--shards' => $shards,
-                '--dry-run' => true,
+                '--shard'   => $shard,
+                '--shards'  => $shards,
+                '--dry-run' => TRUE,
             ])->assertExitCode(0);
         }
 
-        $counts = array_count_values(array_filter($seen, fn ($id) => in_array($id, $ours, true)));
+        $counts = array_count_values(array_filter($seen, fn ($id) => in_array($id, $ours, TRUE)));
         foreach ($ours as $id) {
             $this->assertSame(1, $counts[$id] ?? 0, "member {$id} must be in exactly one shard");
         }
@@ -573,7 +569,7 @@ class DailyPostsPushTest extends TestCase
     {
         Config::set('freegle.posts_push_allowlist', '*');
 
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group, [
             'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
@@ -590,8 +586,8 @@ class DailyPostsPushTest extends TestCase
         $this->app->instance(PushNotificationService::class, $mockPush);
 
         $this->artisan('push:daily-posts', [
-            '--user' => $user->id,
-            '--dry-run' => true,
+            '--user'    => $user->id,
+            '--dry-run' => TRUE,
         ])->assertExitCode(0);
 
         $cursor = UserDigest::where('userid', $user->id)->where('mode', 'push')->first();
@@ -606,7 +602,7 @@ class DailyPostsPushTest extends TestCase
         // User has opted out of daily-posts push.
         $user = $this->createTestUser();
         DB::table('users')->where('id', $user->id)->update([
-            'settings' => json_encode(['notifications' => ['dailypostspush' => false]]),
+            'settings' => json_encode(['notifications' => ['dailypostspush' => FALSE]]),
         ]);
         $user = $user->fresh();
 
@@ -632,7 +628,7 @@ class DailyPostsPushTest extends TestCase
     {
         Config::set('freegle.posts_push_allowlist', '*');
 
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $other = $this->createTestUser();
         $group = $this->createTestGroup();
 
@@ -648,7 +644,7 @@ class DailyPostsPushTest extends TestCase
         $msg = $this->createApprovedMessage($other, $group, 'OFFER: Far away item (Aberdeen)');
         DB::table('messages')->where('id', $msg->id)->update(['lat' => 57.15, 'lng' => -2.1]);
         DB::table('messages_spatial')->where('msgid', $msg->id)->update([
-            'point' => DB::raw('ST_SRID(POINT(-2.1, 57.15), 3857)'),
+            'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), 3857)"),
         ]);
         $this->createUserPushToken($user->id);
 
@@ -669,7 +665,7 @@ class DailyPostsPushTest extends TestCase
     {
         Config::set('freegle.posts_push_allowlist', '*');
 
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $other = $this->createTestUser();
         $group = $this->createTestGroup();
 
@@ -700,9 +696,9 @@ class DailyPostsPushTest extends TestCase
     {
         Config::set('freegle.posts_push_allowlist', '*');
 
-        $user = $this->createTestUser();
-        $other = $this->createTestUser();
-        $group = $this->createTestGroup();
+        $user    = $this->createTestUser();
+        $other   = $this->createTestUser();
+        $group   = $this->createTestGroup();
 
         $this->createMembership($user, $group, [
             'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
@@ -732,7 +728,7 @@ class DailyPostsPushTest extends TestCase
     {
         Config::set('freegle.posts_push_allowlist', '*');
 
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $other = $this->createTestUser();
         $group = $this->createTestGroup();
 
@@ -744,11 +740,11 @@ class DailyPostsPushTest extends TestCase
 
         // Seed a cursor with lastsent = today (London) to simulate already-sent.
         UserDigest::create([
-            'userid' => $user->id,
-            'mode' => 'push',
-            'lastmsgid' => null,
+            'userid'      => $user->id,
+            'mode'        => 'push',
+            'lastmsgid'   => null,
             'lastmsgdate' => now()->subDay(),
-            'lastsent' => now(),  // today
+            'lastsent'    => now(),  // today
         ]);
 
         $mockPush = $this->createMock(PushNotificationService::class);
@@ -768,7 +764,7 @@ class DailyPostsPushTest extends TestCase
         $user2 = $this->createTestUser();
 
         // Only user1's email is in the allowlist.
-        $email1 = 'test'.$user1->id.'@test.com';
+        $email1 = 'test' . $user1->id . '@test.com';
         Config::set('freegle.posts_push_allowlist', $email1);
 
         $group = $this->createTestGroup();
@@ -786,7 +782,6 @@ class DailyPostsPushTest extends TestCase
         $mockPush->method('notifyDailyNewPosts')
             ->willReturnCallback(function (int $userId) use (&$calledFor) {
                 $calledFor[] = $userId;
-
                 return 1;
             });
         $mockPush->method('buildDailyNewPostsPayload')->willReturn(['title' => 't', 'count' => '1']);
@@ -811,7 +806,7 @@ class DailyPostsPushTest extends TestCase
     {
         return $this->createTestMessage($user, $group, [
             'subject' => $subject,
-            'type' => str_starts_with(strtolower($subject), 'offer') ? Message::TYPE_OFFER : Message::TYPE_WANTED,
+            'type'    => str_starts_with(strtolower($subject), 'offer') ? Message::TYPE_OFFER : Message::TYPE_WANTED,
         ]);
     }
 
@@ -826,7 +821,6 @@ class DailyPostsPushTest extends TestCase
             $msg->groupid = (int) DB::table('messages_groups')
                 ->where('msgid', $msg->id)
                 ->value('groupid');
-
             return $msg;
         });
 
@@ -839,11 +833,11 @@ class DailyPostsPushTest extends TestCase
     private function createUserPushToken(int $userId, string $type = 'FCMAndroid'): void
     {
         DB::table('users_push_notifications')->insert([
-            'userid' => $userId,
-            'apptype' => 'User',
-            'type' => $type,
-            'subscription' => 'test_token_'.bin2hex(random_bytes(16)),
-            'added' => now(),
+            'userid'       => $userId,
+            'apptype'      => 'User',
+            'type'         => $type,
+            'subscription' => 'test_token_' . bin2hex(random_bytes(16)),
+            'added'        => now(),
         ]);
     }
 
@@ -854,6 +848,6 @@ class DailyPostsPushTest extends TestCase
      */
     private function createPartialMockService(): PushNotificationService
     {
-        return new PushNotificationService;
+        return new PushNotificationService();
     }
 }

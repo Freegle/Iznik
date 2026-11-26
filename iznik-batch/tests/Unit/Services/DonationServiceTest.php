@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Mail\Donation\AskForDonation;
 use App\Mail\Donation\DonationThankYou;
 use App\Models\UserDonation;
 use App\Services\DonationService;
@@ -16,7 +17,7 @@ class DonationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new DonationService;
+        $this->service = new DonationService();
         Mail::fake();
     }
 

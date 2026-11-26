@@ -145,5 +145,4 @@ class BetaBinomialTest extends TestCase
         $strict = BetaBinomial::adoptPower(0.5, 150, 0.05, 0.8, 0.005);
         $loose = BetaBinomial::adoptPower(0.5, 150, 0.05, 0.8, 0.02);
         $this->assertGreaterThan($strict, $loose);
-    }
-}
+    }}

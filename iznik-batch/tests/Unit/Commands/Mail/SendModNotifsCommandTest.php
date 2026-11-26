@@ -76,13 +76,13 @@ class SendModNotifsCommandTest extends TestCase
     public function test_sends_notification_in_normal_mode(): void
     {
         $notification = [
-            'user_id' => 99,
-            'email' => 'mod@example.com',
-            'name' => 'Test Mod',
+            'user_id'      => 99,
+            'email'        => 'mod@example.com',
+            'name'         => 'Test Mod',
             'text_summary' => '1 message to review',
             'html_summary' => '<p>1 message</p>',
-            'total' => 1,
-            'subject' => 'MODERATE: 1 thing to do',
+            'total'        => 1,
+            'subject'      => 'MODERATE: 1 thing to do',
         ];
 
         $service = $this->createMock(ModNotifService::class);
@@ -129,7 +129,6 @@ class SendModNotifsCommandTest extends TestCase
             if ($calls === 1) {
                 throw new \RuntimeException('simulated transient MJML render failure');
             }
-
             return 'spooled-id';
         });
         $this->app->instance(EmailSpoolerService::class, $spooler);

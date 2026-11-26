@@ -19,12 +19,12 @@ class StoriesNewsletterMailTest extends TestCase
     private function makeStory(string $headline, string $story = 'Something wonderful happened.'): array
     {
         return [
-            'headline' => $headline,
-            'story' => $story,
-            'username' => 'Test Freegler',
-            'groupname' => 'Freegle Testown',
+            'headline'   => $headline,
+            'story'      => $story,
+            'username'   => 'Test Freegler',
+            'groupname'  => 'Freegle Testown',
             'profileurl' => null,
-            'photo' => null,
+            'photo'      => null,
         ];
     }
 
@@ -35,15 +35,15 @@ class StoriesNewsletterMailTest extends TestCase
     private function renderView(array $stories): string
     {
         return view('emails.mjml.stories.newsletter', [
-            'stories' => $stories,
+            'stories'        => $stories,
             'headerImageUrl' => 'https://example.com/header.jpg',
-            'tellUrl' => 'https://www.ilovefreegle.org/stories',
-            'giveUrl' => 'https://www.ilovefreegle.org/give',
-            'askUrl' => 'https://www.ilovefreegle.org/ask',
-            'previewText' => '',
-            'email' => 'reader@example.com',
+            'tellUrl'        => 'https://www.ilovefreegle.org/stories',
+            'giveUrl'        => 'https://www.ilovefreegle.org/give',
+            'askUrl'        => 'https://www.ilovefreegle.org/ask',
+            'previewText'    => '',
+            'email'          => 'reader@example.com',
             'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',
-            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
+            'settingsUrl'    => 'https://www.ilovefreegle.org/settings',
         ])->render();
     }
 
@@ -98,8 +98,8 @@ class StoriesNewsletterMailTest extends TestCase
     public function test_preheader_truncates_long_headline_to_70_chars(): void
     {
         // Str::limit($headline, 70) appends "..." when the headline exceeds 70 characters.
-        $longHeadline = 'This is a very long headline that definitely exceeds seventy characters in total length here';
-        $truncated = \Illuminate\Support\Str::limit($longHeadline, 70);
+        $longHeadline  = 'This is a very long headline that definitely exceeds seventy characters in total length here';
+        $truncated     = \Illuminate\Support\Str::limit($longHeadline, 70);
 
         $stories = [$this->makeStory($longHeadline)];
 

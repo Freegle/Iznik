@@ -12,7 +12,7 @@ use Tests\TestCase;
  */
 class ReachDriveMetricsTest extends TestCase
 {
-    public function test_maps_results_back_to_caller_keys(): void
+    public function testMapsResultsBackToCallerKeys(): void
     {
         Http::fake([
             '*/v1/drive-metrics*' => Http::response([
@@ -31,7 +31,7 @@ class ReachDriveMetricsTest extends TestCase
         $this->assertSame([12345 => 3.2], $out);
     }
 
-    public function test_failure_is_quiet_and_empty(): void
+    public function testFailureIsQuietAndEmpty(): void
     {
         Http::fake(['*/v1/drive-metrics*' => Http::response('not configured', 503)]);
 

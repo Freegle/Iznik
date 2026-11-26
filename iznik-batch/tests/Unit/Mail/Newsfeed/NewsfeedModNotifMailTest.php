@@ -22,11 +22,11 @@ class NewsfeedModNotifMailTest extends TestCase
     {
         return [
             [
-                'id' => 42,
-                'action' => 'posted on ChitChat',
-                'preview' => 'Anyone know a good plumber nearby?',
-                'added' => '2026-05-22 10:30:00',
-                'userName' => 'Jane Plumber',
+                'id'         => 42,
+                'action'     => 'posted on ChitChat',
+                'preview'    => 'Anyone know a good plumber nearby?',
+                'added'      => '2026-05-22 10:30:00',
+                'userName'   => 'Jane Plumber',
                 'userAvatar' => 'https://www.ilovefreegle.org/avatar/jane-plumber.png',
             ],
         ];
@@ -64,19 +64,19 @@ class NewsfeedModNotifMailTest extends TestCase
 
         $html = $mail->render();
 
-        $modSite = config('freegle.sites.mod');   // https://modtools.org
+        $modSite  = config('freegle.sites.mod');   // https://modtools.org
         $userSite = config('freegle.sites.user');  // https://www.ilovefreegle.org
 
         $this->assertStringNotContainsString(
-            $modSite.'/chitchat',
+            $modSite . '/chitchat',
             $html,
-            'Chitchat link must not go to '.$modSite.'/chitchat — that route does not exist in the Modtools app'
+            'Chitchat link must not go to ' . $modSite . '/chitchat — that route does not exist in the Modtools app'
         );
 
         $this->assertStringContainsString(
-            $userSite.'/chitchat',
+            $userSite . '/chitchat',
             $html,
-            'Chitchat link must go to '.$userSite.'/chitchat where the page actually exists'
+            'Chitchat link must go to ' . $userSite . '/chitchat where the page actually exists'
         );
     }
 
@@ -94,7 +94,7 @@ class NewsfeedModNotifMailTest extends TestCase
         // V1 parity: each "View" button must link to /chitchat/{id} so mods
         // land on the specific post, not the general listing.
         $this->assertStringContainsString(
-            $userSite.'/chitchat/42',
+            $userSite . '/chitchat/42',
             $html,
             'Per-post "View" button must link to /chitchat/{id} matching V1 behaviour'
         );
@@ -113,9 +113,9 @@ class NewsfeedModNotifMailTest extends TestCase
 
         // The "View all chitchat" footer button goes to the general listing.
         $this->assertStringContainsString(
-            $userSite.'/chitchat',
+            $userSite . '/chitchat',
             $html,
-            '"View all chitchat" button must link to '.$userSite.'/chitchat'
+            '"View all chitchat" button must link to ' . $userSite . '/chitchat'
         );
     }
 
@@ -126,19 +126,19 @@ class NewsfeedModNotifMailTest extends TestCase
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         $html = view('emails.mjml.newsfeed.mod-notif', [
-            'posts' => [
+            'posts'    => [
                 [
-                    'id' => 42,
-                    'action' => 'posted on ChitChat',
-                    'preview' => 'Anyone know a good plumber nearby?',
-                    'added' => '2026-05-22 10:30:00',
-                    'userName' => 'Jane Plumber',
+                    'id'         => 42,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'Anyone know a good plumber nearby?',
+                    'added'      => '2026-05-22 10:30:00',
+                    'userName'   => 'Jane Plumber',
                     'userAvatar' => null,
                 ],
             ],
-            'count' => 1,
+            'count'    => 1,
             'userSite' => $userSite,
-            'email' => 'mod@example.com',
+            'email'    => 'mod@example.com',
         ])->render();
 
         $this->assertStringContainsString('1 chitchat post from your members', $html);
@@ -151,27 +151,27 @@ class NewsfeedModNotifMailTest extends TestCase
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         $html = view('emails.mjml.newsfeed.mod-notif', [
-            'posts' => [
+            'posts'    => [
                 [
-                    'id' => 1,
-                    'action' => 'posted on ChitChat',
-                    'preview' => 'First post preview text here',
-                    'added' => '2026-05-22 10:00:00',
-                    'userName' => 'Alice',
+                    'id'         => 1,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'First post preview text here',
+                    'added'      => '2026-05-22 10:00:00',
+                    'userName'   => 'Alice',
                     'userAvatar' => null,
                 ],
                 [
-                    'id' => 2,
-                    'action' => 'posted on ChitChat',
-                    'preview' => 'Second post preview text here',
-                    'added' => '2026-05-22 11:00:00',
-                    'userName' => 'Bob',
+                    'id'         => 2,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => 'Second post preview text here',
+                    'added'      => '2026-05-22 11:00:00',
+                    'userName'   => 'Bob',
                     'userAvatar' => null,
                 ],
             ],
-            'count' => 2,
+            'count'    => 2,
             'userSite' => $userSite,
-            'email' => 'mod@example.com',
+            'email'    => 'mod@example.com',
         ])->render();
 
         $this->assertStringContainsString('2 chitchat posts from your members', $html);
@@ -184,19 +184,19 @@ class NewsfeedModNotifMailTest extends TestCase
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         $html = view('emails.mjml.newsfeed.mod-notif', [
-            'posts' => [
+            'posts'    => [
                 [
-                    'id' => 5,
-                    'action' => 'posted on ChitChat',
-                    'preview' => '',
-                    'added' => '2026-05-22 09:00:00',
-                    'userName' => 'Maria Garcia',
+                    'id'         => 5,
+                    'action'     => 'posted on ChitChat',
+                    'preview'    => '',
+                    'added'      => '2026-05-22 09:00:00',
+                    'userName'   => 'Maria Garcia',
                     'userAvatar' => null,
                 ],
             ],
-            'count' => 1,
+            'count'    => 1,
             'userSite' => $userSite,
-            'email' => 'mod@example.com',
+            'email'    => 'mod@example.com',
         ])->render();
 
         $this->assertStringContainsString('Maria Garcia posted', $html);

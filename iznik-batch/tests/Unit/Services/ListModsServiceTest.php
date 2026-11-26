@@ -29,16 +29,16 @@ class ListModsServiceTest extends TestCase
             }
         }
 
-        return null;
+        return NULL;
     }
 
-    private function mod(array $userAttrs = [], string $role = Membership::ROLE_MODERATOR, ?array $settings = null): array
+    private function mod(array $userAttrs = [], string $role = Membership::ROLE_MODERATOR, ?array $settings = NULL): array
     {
         $user = $this->createTestUser($userAttrs);
         $group = $this->createTestGroup();
         $attrs = ['role' => $role];
 
-        if ($settings !== null) {
+        if ($settings !== NULL) {
             $attrs['settings'] = $settings;
         }
 
@@ -74,7 +74,7 @@ class ListModsServiceTest extends TestCase
 
     public function test_row_contents_for_simple_mod(): void
     {
-        [$user, $group] = $this->mod(['email_preferred' => 'simplemod_'.uniqid().'@example.org']);
+        [$user, $group] = $this->mod(['email_preferred' => 'simplemod_' . uniqid() . '@example.org']);
         $row = $this->rowFor($user);
 
         $this->assertSame($user->emailPreferred ?? $row[1], $row[1]);
@@ -151,7 +151,7 @@ class ListModsServiceTest extends TestCase
         $tag = uniqid();
         $z = $this->createTestGroup();
         $m = $this->createTestGroup();
-        $z->update(['namefull' => null]);
+        $z->update(['namefull' => NULL]);
         $m->update(['namefull' => "mmm $tag"]);
         $this->createMembership($user, $z, ['role' => Membership::ROLE_MODERATOR]);
         $this->createMembership($user, $m, ['role' => Membership::ROLE_MODERATOR]);
@@ -164,7 +164,7 @@ class ListModsServiceTest extends TestCase
 
     public function test_internal_preferred_email_is_skipped_for_external(): void
     {
-        [$user] = $this->mod(['email_preferred' => 'u'.uniqid().'@users.ilovefreegle.org']);
+        [$user] = $this->mod(['email_preferred' => 'u' . uniqid() . '@users.ilovefreegle.org']);
         $external = $this->createTestUserEmail($user, ['preferred' => 0]);
 
         $row = $this->rowFor($user);
@@ -176,7 +176,7 @@ class ListModsServiceTest extends TestCase
 
     public function test_no_external_email_gives_null_preferred(): void
     {
-        [$user] = $this->mod(['email_preferred' => 'u'.uniqid().'@groups.ilovefreegle.org']);
+        [$user] = $this->mod(['email_preferred' => 'u' . uniqid() . '@groups.ilovefreegle.org']);
 
         $row = $this->rowFor($user);
 
@@ -185,7 +185,7 @@ class ListModsServiceTest extends TestCase
 
     public function test_other_known_emails_exclude_preferred_and_are_alphabetical(): void
     {
-        [$user] = $this->mod(['email_preferred' => 'main_'.uniqid().'@example.org']);
+        [$user] = $this->mod(['email_preferred' => 'main_' . uniqid() . '@example.org']);
         $tag = uniqid();
         $this->createTestUserEmail($user)->update(['email' => "zzz_$tag@example.net"]);
         $this->createTestUserEmail($user)->update(['email' => "aaa_$tag@example.net"]);
@@ -198,8 +198,8 @@ class ListModsServiceTest extends TestCase
 
     public function test_yahoogroups_address_appears_in_other_emails_but_never_preferred(): void
     {
-        [$user] = $this->mod(['email_preferred' => 'main_'.uniqid().'@example.org']);
-        $yahoo = 'grp_'.uniqid().'@yahoogroups.com';
+        [$user] = $this->mod(['email_preferred' => 'main_' . uniqid() . '@example.org']);
+        $yahoo = 'grp_' . uniqid() . '@yahoogroups.com';
         $this->createTestUserEmail($user, ['preferred' => 1])->update(['email' => $yahoo]);
 
         $row = $this->rowFor($user);
@@ -211,7 +211,7 @@ class ListModsServiceTest extends TestCase
     #[DataProvider('nameProvider')]
     public function test_name_derivation(array $attrs, ?string $expected): void
     {
-        $base = ['fullname' => null, 'firstname' => null, 'lastname' => null];
+        $base = ['fullname' => NULL, 'firstname' => NULL, 'lastname' => NULL];
         [$user] = $this->mod(array_merge($base, $attrs));
 
         $this->assertSame($expected, $this->rowFor($user)[2]);
@@ -224,10 +224,10 @@ class ListModsServiceTest extends TestCase
             'first and last' => [['firstname' => 'Ann', 'lastname' => 'Lee'], 'Ann Lee'],
             'first only' => [['firstname' => 'Ann'], 'Ann'],
             'last only' => [['lastname' => 'Lee'], 'Lee'],
-            'no name' => [[], null],
+            'no name' => [[], NULL],
             'stripped from at sign' => [['fullname' => 'bob@example.org'], 'bob'],
             'exactly 32 chars kept' => [['fullname' => str_repeat('x', 32)], str_repeat('x', 32)],
-            'over 32 truncated' => [['fullname' => str_repeat('y', 40)], str_repeat('y', 32).'...'],
+            'over 32 truncated' => [['fullname' => str_repeat('y', 40)], str_repeat('y', 32) . '...'],
             'numeric disambiguated' => [['fullname' => '12345'], '12345.'],
             'TN suffix removed' => [['fullname' => 'Jane-g123'], 'Jane'],
         ];

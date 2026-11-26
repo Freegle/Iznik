@@ -13,7 +13,7 @@ class GroupModelTest extends TestCase
      */
     private function uniqueName(string $prefix): string
     {
-        return $prefix.'_'.uniqid();
+        return $prefix . '_' . uniqid();
     }
 
     public function test_freegle_scope_filters_freegle_groups(): void

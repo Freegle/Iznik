@@ -26,12 +26,12 @@ class ChatPreheaderTest extends TestCase
     public function test_chaseup_mods_preheader_shows_member_and_group_name(): void
     {
         $html = view('emails.mjml.chat.chaseup-mods', [
-            'groupName' => 'Freegle Leeds',
-            'memberName' => 'Frank Member',
+            'groupName'   => 'Freegle Leeds',
+            'memberName'  => 'Frank Member',
             'memberEmail' => 'frank@example.com',
             'textSummary' => 'Hello, I need help.',
-            'chatUrl' => 'https://modtools.org/chats/42',
-            'email' => 'mods@example.com',
+            'chatUrl'     => 'https://modtools.org/chats/42',
+            'email'       => 'mods@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -50,11 +50,11 @@ class ChatPreheaderTest extends TestCase
     public function test_review_pending_preheader_shows_count_and_group_name_plural(): void
     {
         $html = view('emails.mjml.chat.review-pending', [
-            'groupName' => 'Freegle Manchester',
-            'count' => 3,
-            'reviewUrl' => 'https://modtools.org/chats/review',
+            'groupName'   => 'Freegle Manchester',
+            'count'       => 3,
+            'reviewUrl'   => 'https://modtools.org/chats/review',
             'mentorsAddr' => 'mentors@ilovefreegle.org',
-            'email' => 'mods@example.com',
+            'email'       => 'mods@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -69,11 +69,11 @@ class ChatPreheaderTest extends TestCase
     public function test_review_pending_preheader_singular_when_count_is_one(): void
     {
         $html = view('emails.mjml.chat.review-pending', [
-            'groupName' => 'Freegle Bristol',
-            'count' => 1,
-            'reviewUrl' => 'https://modtools.org/chats/review',
+            'groupName'   => 'Freegle Bristol',
+            'count'       => 1,
+            'reviewUrl'   => 'https://modtools.org/chats/review',
             'mentorsAddr' => 'mentors@ilovefreegle.org',
-            'email' => 'mods@example.com',
+            'email'       => 'mods@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -92,9 +92,9 @@ class ChatPreheaderTest extends TestCase
     public function test_review_summary_preheader_shows_total_plural(): void
     {
         $html = view('emails.mjml.chat.review-summary', [
-            'total' => 7,
+            'total'   => 7,
             'summary' => 'Freegle Leeds: 4 messages, Freegle Bradford: 3 messages',
-            'email' => 'admin@example.com',
+            'email'   => 'admin@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -109,9 +109,9 @@ class ChatPreheaderTest extends TestCase
     public function test_review_summary_preheader_singular_when_total_is_one(): void
     {
         $html = view('emails.mjml.chat.review-summary', [
-            'total' => 1,
+            'total'   => 1,
             'summary' => 'Freegle Leeds: 1 message',
-            'email' => 'admin@example.com',
+            'email'   => 'admin@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -130,9 +130,9 @@ class ChatPreheaderTest extends TestCase
     public function test_spam_warning_preheader_with_subject_shows_spammer_and_subject(): void
     {
         $html = view('emails.mjml.chat.spam-warning', [
-            'spammerName' => 'Suspicious Pete',
+            'spammerName'    => 'Suspicious Pete',
             'messageSubject' => 'OFFER: Free laptop (London)',
-            'siteName' => 'Freegle',
+            'siteName'       => 'Freegle',
         ])->render();
 
         $this->assertStringContainsString(
@@ -147,9 +147,9 @@ class ChatPreheaderTest extends TestCase
     public function test_spam_warning_preheader_without_subject_omits_about_clause(): void
     {
         $html = view('emails.mjml.chat.spam-warning', [
-            'spammerName' => 'Suspicious Pete',
+            'spammerName'    => 'Suspicious Pete',
             'messageSubject' => null,
-            'siteName' => 'Freegle',
+            'siteName'       => 'Freegle',
         ])->render();
 
         $this->assertStringContainsString(

@@ -153,7 +153,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_drop_sequence_runs_and_removes_every_legacy_column(): void
     {
-        $issued = (new LegacyGeometryDrop)->run(self::CLONE);
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertNotEmpty($issued, 'the sequence issued no statements at all');
 
@@ -173,7 +173,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_it_takes_exactly_three_operations(): void
     {
-        $issued = (new LegacyGeometryDrop)->run(self::CLONE);
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertCount(3, $issued,
             "the drop must be three statements, got:\n - ".implode("\n - ", $issued));
@@ -186,7 +186,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_columns_and_foreign_keys_go_in_a_single_inplace_alter(): void
     {
-        $issued = (new LegacyGeometryDrop)->run(self::CLONE);
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $combined = array_values(array_filter($issued, fn ($s) => str_contains($s, 'DROP COLUMN `polygon`')));
         $this->assertCount(1, $combined, 'the geometry columns must be dropped in exactly one statement');
@@ -218,7 +218,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_single_column_indexes_are_left_implicit(): void
     {
-        $issued = (new LegacyGeometryDrop)->run(self::CLONE);
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
         $all = implode(' | ', $issued);
 
         foreach (['polygon', 'polygon_hash', 'max_polygon_hash'] as $suffix) {
@@ -241,7 +241,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_generated_columns_and_their_indexes_are_regenerated(): void
     {
-        (new LegacyGeometryDrop)->run(self::CLONE);
+        (new LegacyGeometryDrop())->run(self::CLONE);
 
         $cols = $this->columns();
         $this->assertContains('has_overflow', $cols);
@@ -263,7 +263,7 @@ class LegacyGeometryDropTest extends TestCase
     /** has_overflow must now derive from the cells, not the dropped column. */
     public function test_has_overflow_is_regenerated_over_the_cells(): void
     {
-        (new LegacyGeometryDrop)->run(self::CLONE);
+        (new LegacyGeometryDrop())->run(self::CLONE);
 
         $row = DB::selectOne(
             'SELECT generation_expression AS e FROM information_schema.columns
@@ -279,8 +279,8 @@ class LegacyGeometryDropTest extends TestCase
     /** Re-running must be a no-op, not an error: an RSU pass can be repeated. */
     public function test_the_sequence_is_idempotent(): void
     {
-        (new LegacyGeometryDrop)->run(self::CLONE);
-        $second = (new LegacyGeometryDrop)->run(self::CLONE);
+        (new LegacyGeometryDrop())->run(self::CLONE);
+        $second = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertSame([], $second, 'a second run should have nothing left to do');
 
@@ -299,7 +299,7 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_outer_bound_rtree_survives(): void
     {
-        (new LegacyGeometryDrop)->run(self::CLONE);
+        (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertContains('outer_bound', $this->columns(), 'outer_bound must survive');
         $this->assertSame(['outer_bound'], $this->indexColumns(self::CLONE.'_outer'),
@@ -319,7 +319,7 @@ class LegacyGeometryDropTest extends TestCase
                 'cellbytes', 'maxbytes', NOW(), 'drive', 1, 1, 0, 30, 'done', NOW(), NOW())"
         );
 
-        (new LegacyGeometryDrop)->run(self::CLONE);
+        (new LegacyGeometryDrop())->run(self::CLONE);
 
         $row = DB::selectOne('SELECT polygon_cells, max_polygon_cells, has_max_reach FROM `'.self::CLONE.'` WHERE msgid = 1');
         $this->assertNotNull($row, 'the row did not survive the rebuild');

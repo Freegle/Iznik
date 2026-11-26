@@ -19,12 +19,11 @@ class AmpEmailValidationTest extends TestCase
      */
     private function createAmpEmailInstance(): object
     {
-        return new class
-        {
+        return new class {
             use \App\Mail\Traits\AmpEmail;
 
             // Expose the protected method for testing.
-            public function test_validate_amp_css(string $html): void
+            public function testValidateAmpCss(string $html): void
             {
                 $this->validateAmpCss($html);
             }

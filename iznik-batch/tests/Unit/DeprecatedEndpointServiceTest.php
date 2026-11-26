@@ -24,7 +24,7 @@ class DeprecatedEndpointServiceTest extends TestCase
         config()->set('freegle.apiv2_deprecated_url', 'http://apiv2:8192/deprecated');
         Http::fake(['http://apiv2:8192/*' => Http::response($this->fakeRegistry(), 200)]);
 
-        $svc = new DeprecatedEndpointService;
+        $svc = new DeprecatedEndpointService();
         $out = $svc->pastSunset(Carbon::parse('2026-07-09'));
 
         $keys = array_map(fn ($e) => $e['endpoint'], $out);
@@ -42,7 +42,7 @@ class DeprecatedEndpointServiceTest extends TestCase
         config()->set('freegle.apiv2_deprecated_url', 'http://apiv2:8192/deprecated');
         Http::fake(['*' => Http::response('nope', 503)]);
 
-        $svc = new DeprecatedEndpointService;
+        $svc = new DeprecatedEndpointService();
         // null (not []) so the command can surface "apiv2 unreachable" loudly.
         $this->assertNull($svc->pastSunset(Carbon::parse('2026-07-09')));
     }

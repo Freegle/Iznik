@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Models\ChatMessage;
+use App\Models\ChatRoom;
 use App\Services\PurgeService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -14,7 +15,7 @@ class DeduplicateTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PurgeService;
+        $this->service = new PurgeService();
     }
 
     // --- Search History Deduplication ---
@@ -79,13 +80,13 @@ class DeduplicateTest extends TestCase
         $group = $this->createTestGroup();
 
         $loc1 = \App\Models\Location::create([
-            'name' => 'TestLoc1_'.uniqid(),
+            'name' => 'TestLoc1_' . uniqid(),
             'type' => 'Postcode',
             'lat' => 51.5,
             'lng' => -0.1,
         ]);
         $loc2 = \App\Models\Location::create([
-            'name' => 'TestLoc2_'.uniqid(),
+            'name' => 'TestLoc2_' . uniqid(),
             'type' => 'Postcode',
             'lat' => 52.0,
             'lng' => -1.0,

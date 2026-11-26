@@ -12,8 +12,7 @@ class MjmlMailableTest extends TestCase
 {
     public function test_get_default_data_returns_expected_keys(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -38,8 +37,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_mjml_view_sets_template_and_data(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -63,7 +61,7 @@ class MjmlMailableTest extends TestCase
 
         // Use a real template that exists in the codebase.
         // Provide the required variables that the thank-you template expects.
-        $mockUser = new \stdClass;
+        $mockUser = new \stdClass();
         $mockUser->displayname = 'Test User';
         $mockUser->email_preferred = $this->uniqueEmail('mjml');
         $mailable->exposeMjmlView('emails.mjml.donation.thank-you', [
@@ -82,8 +80,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_envelope_returns_correct_subject(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'My Custom Subject';
@@ -109,8 +106,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_envelope_throws_if_not_overridden(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -123,8 +119,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_attachments_returns_empty_array_by_default(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -139,8 +134,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_compile_mjml_throws_on_invalid_mjml(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -202,8 +196,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_compile_mjml_with_valid_mjml(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -237,8 +230,7 @@ class MjmlMailableTest extends TestCase
 
     public function test_get_trace_id_uses_default_when_no_tracking(): void
     {
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             protected function getSubject(): string
             {
                 return 'Test Subject';
@@ -259,8 +251,7 @@ class MjmlMailableTest extends TestCase
     public function test_get_trace_id_uses_tracking_id_when_tracking_enabled(): void
     {
         // Create a mailable that uses TrackableEmail trait
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             use TrackableEmail;
 
             public ?EmailTracking $testTracking = null;
@@ -299,8 +290,7 @@ class MjmlMailableTest extends TestCase
     public function test_get_trace_id_falls_back_to_default_when_tracking_null(): void
     {
         // Create a mailable that uses TrackableEmail trait but has null tracking
-        $mailable = new class extends MjmlMailable
-        {
+        $mailable = new class extends MjmlMailable {
             use TrackableEmail;
 
             protected function getSubject(): string

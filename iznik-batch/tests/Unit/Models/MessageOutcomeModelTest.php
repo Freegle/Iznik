@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\Message;
 use App\Models\MessageOutcome;
 use Tests\TestCase;
 

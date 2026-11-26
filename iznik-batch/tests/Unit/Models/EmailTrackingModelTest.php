@@ -245,12 +245,12 @@ class EmailTrackingModelTest extends TestCase
 
         // Signature over "redirect:" + destination, verified by the Go
         // Click handler (hasValidLinkSignature) to allow external sites.
-        $expected = hash_hmac('sha256', 'redirect:'.$destination, 'test-link-signing-secret');
-        $this->assertStringContainsString('sig='.$expected, $url);
+        $expected = hash_hmac('sha256', 'redirect:' . $destination, 'test-link-signing-secret');
+        $this->assertStringContainsString('sig=' . $expected, $url);
 
         // The base64 url param must be percent-encoded so '+' and '/'
         // survive the query string.
-        $this->assertStringContainsString('url='.rawurlencode(base64_encode($destination)), $url);
+        $this->assertStringContainsString('url=' . rawurlencode(base64_encode($destination)), $url);
     }
 
     public function test_get_tracked_link_url_no_signature_without_secret(): void

@@ -24,7 +24,7 @@ class DeprivationDataServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new DeprivationDataService;
+        $this->service = new DeprivationDataService();
         $this->outputPath = sys_get_temp_dir().'/deprivation-test-'.uniqid().'.csv';
     }
 
@@ -57,7 +57,6 @@ class DeprivationDataServiceTest extends TestCase
     {
         $lines = array_filter(explode("\n", trim(file_get_contents($this->outputPath))));
         array_shift($lines); // drop header
-
         return array_map(fn ($line) => str_getcsv($line), $lines);
     }
 
@@ -353,7 +352,7 @@ class DeprivationDataServiceTest extends TestCase
 
     public function test_imd_csv_with_only_a_header_row_throws(): void
     {
-        $this->fakeAll(['raw.githubusercontent.com/*' => Http::response('lsoa,UK_IMD_E_pop_quintile', 200)]);
+        $this->fakeAll(['raw.githubusercontent.com/*' => Http::response("lsoa,UK_IMD_E_pop_quintile", 200)]);
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('IMD CSV has no data rows');

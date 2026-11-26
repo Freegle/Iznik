@@ -65,7 +65,7 @@ class EmailPathMirrorDriftTest extends TestCase
         // Re-pinned on 25 September: the approval update now skips a copy marked
         // messages_groups.needs_moderator, which only a moderator's Approve clears.
         // The API mirror's approval update carries the same guard.
-        'handleGroupPost' => 'ed0b06f9e8de0f7c0ab41532b2b521bbed8e2bb63bebcc24b966df9674db9e31',
+        'handleGroupPost'         => 'ed0b06f9e8de0f7c0ab41532b2b521bbed8e2bb63bebcc24b966df9674db9e31',
         // Re-pinned on 21 September: createGroupPostMessage now checks that the
         // location id the spatial index hands back still exists in `locations`
         // before writing it to users.lastlocation, and ingests without a location
@@ -76,13 +76,13 @@ class EmailPathMirrorDriftTest extends TestCase
         // Re-pinned on 1 October: a TN member's lastlocation is only filled in by a
         // post when it is empty, because TN is the master for it. The API mirror makes
         // the same check.
-        'createGroupPostMessage' => '2e541f310c4733ee124793d71b07d99cebc20be4adfde5dcf04fb6da3d6073bf',
+        'createGroupPostMessage'  => '2e541f310c4733ee124793d71b07d99cebc20be4adfde5dcf04fb6da3d6073bf',
     ];
 
     public static function mirroredMethods(): array
     {
         return [
-            'handleGroupPost' => ['handleGroupPost'],
+            'handleGroupPost'        => ['handleGroupPost'],
             'createGroupPostMessage' => ['createGroupPostMessage'],
         ];
     }
@@ -97,8 +97,8 @@ class EmailPathMirrorDriftTest extends TestCase
             $actual,
             sprintf(
                 "IncomingMailService::%s() has changed.\n\n"
-                .'It is mirrored by hand in %s. Check whether this change also belongs there, '
-                ."make it if so, then re-pin PINNED_DIGESTS['%s'] in %s to:\n\n    %s\n",
+                . "It is mirrored by hand in %s. Check whether this change also belongs there, "
+                . "make it if so, then re-pin PINNED_DIGESTS['%s'] in %s to:\n\n    %s\n",
                 $method,
                 GroupPostIngestionService::class,
                 $method,
@@ -121,8 +121,8 @@ class EmailPathMirrorDriftTest extends TestCase
             $this->assertTrue(
                 (new ReflectionClass(IncomingMailService::class))->hasMethod($method),
                 "IncomingMailService::{$method}() is pinned here but no longer exists — "
-                .'if it was renamed, update this test; if it was deleted, the API path is '
-                .'now the only implementation and this guard can go.',
+                . 'if it was renamed, update this test; if it was deleted, the API path is '
+                . 'now the only implementation and this guard can go.',
             );
         }
     }
@@ -135,8 +135,8 @@ class EmailPathMirrorDriftTest extends TestCase
     private static function digestOf(string $class, string $method): string
     {
         $reflection = new ReflectionMethod($class, $method);
-        $source = file($reflection->getFileName());
-        $body = array_slice(
+        $source     = file($reflection->getFileName());
+        $body       = array_slice(
             $source,
             $reflection->getStartLine() - 1,
             $reflection->getEndLine() - $reflection->getStartLine() + 1,

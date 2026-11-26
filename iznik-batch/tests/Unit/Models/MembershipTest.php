@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
 use Tests\TestCase;

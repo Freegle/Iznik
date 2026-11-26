@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Services\ChatMaintenanceService;
@@ -15,7 +16,7 @@ class ChatMaintenanceServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatMaintenanceService;
+        $this->service = new ChatMaintenanceService();
     }
 
     public function test_updates_valid_message_counts(): void

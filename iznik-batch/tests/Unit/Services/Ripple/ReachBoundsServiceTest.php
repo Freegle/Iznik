@@ -43,7 +43,7 @@ class ReachBoundsServiceTest extends TestCase
 
     private function service(): ReachBoundsService
     {
-        return new ReachBoundsService;
+        return new ReachBoundsService();
     }
 
     /** Seed a message + rippling_reach row whose reach is the given WKT; returns the msgid. */

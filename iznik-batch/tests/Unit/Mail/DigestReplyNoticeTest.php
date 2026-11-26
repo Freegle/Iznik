@@ -54,10 +54,10 @@ class DigestReplyNoticeTest extends TestCase
         // literal text appears in the rendered Blade/MJML output so we catch
         // any accidental change to the preheader copy.
         $html = view('emails.mjml.digest.reply-notice', [
-            'recipientName' => 'Test User',
-            'recipientEmail' => 'test@example.com',
-            'browseUrl' => 'https://example.com/browse',
-            'settingsUrl' => 'https://example.com/settings',
+            'recipientName'    => 'Test User',
+            'recipientEmail'   => 'test@example.com',
+            'browseUrl'        => 'https://example.com/browse',
+            'settingsUrl'      => 'https://example.com/settings',
             'trackingPixelHtml' => '',
         ])->render();
 

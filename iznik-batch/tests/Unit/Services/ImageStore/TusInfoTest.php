@@ -17,9 +17,9 @@ class TusInfoTest extends TestCase
     {
         // Verbatim shape of a production .info (filestore, tusd v2.4.0).
         return '{"ID":"00000f3dd6e041c729c199a978fd7bfe","Size":33524,"SizeIsDeferred":false,"Offset":0,'
-            .'"MetaData":{"filename":"image.webp","filetype":"image/webp","name":"image/jpeg","relativePath":"null","type":"image/webp"},'
-            .'"IsPartial":false,"IsFinal":false,"PartialUploads":null,'
-            .'"Storage":{"Path":"/images/00000f3dd6e041c729c199a978fd7bfe","Type":"filestore"}}';
+            . '"MetaData":{"filename":"image.webp","filetype":"image/webp","name":"image/jpeg","relativePath":"null","type":"image/webp"},'
+            . '"IsPartial":false,"IsFinal":false,"PartialUploads":null,'
+            . '"Storage":{"Path":"/images/00000f3dd6e041c729c199a978fd7bfe","Type":"filestore"}}';
     }
 
     public function test_parses_a_production_info_file(): void
@@ -73,7 +73,7 @@ class TusInfoTest extends TestCase
         $jpeg = "\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00";
         // libmagic wants the IHDR chunk after the signature, as every real PNG has.
         $png = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
-        $gif = 'GIF89a'.str_repeat("\x00", 16);
+        $gif = 'GIF89a' . str_repeat("\x00", 16);
 
         $this->assertSame('image/jpeg', ImageContentType::detect($jpeg, 'image/webp'));
         $this->assertSame('image/png', ImageContentType::detect($png, null));

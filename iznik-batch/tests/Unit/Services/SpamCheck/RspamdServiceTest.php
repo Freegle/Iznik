@@ -14,13 +14,13 @@ class RspamdServiceTest extends TestCase
 
     public function test_has_check_rspamd_method(): void
     {
-        $service = new RspamdService;
+        $service = new RspamdService();
         $this->assertTrue(method_exists($service, 'checkRspamd'));
     }
 
     public function test_has_check_all_method(): void
     {
-        $service = new RspamdService;
+        $service = new RspamdService();
         $this->assertTrue(method_exists($service, 'checkAll'));
     }
 }

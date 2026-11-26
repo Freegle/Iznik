@@ -33,10 +33,10 @@ class EeeClassificationServiceTest extends TestCase
     {
         parent::setUp();
 
-        $vision = $this->createMock(EeeVisionService::class);
-        $sqlite = $this->createMock(EeeSqliteService::class);
+        $vision    = $this->createMock(EeeVisionService::class);
+        $sqlite    = $this->createMock(EeeSqliteService::class);
         $component = $this->createMock(EeeComponentService::class);
-        $store = $this->createMock(EeeProductionStore::class);
+        $store     = $this->createMock(EeeProductionStore::class);
 
         $this->service = new EeeClassificationService($vision, $sqlite, $component, $store);
     }
@@ -236,7 +236,6 @@ class EeeClassificationServiceTest extends TestCase
     {
         $method = new ReflectionMethod(EeeClassificationService::class, 'computeConsensus');
         $method->setAccessible(true);
-
         return $method->invoke($this->service, $results);
     }
 
@@ -244,10 +243,10 @@ class EeeClassificationServiceTest extends TestCase
     private function makeResult(array $overrides = []): array
     {
         return array_merge([
-            'is_eee' => null,
-            'is_eee_from_text' => null,
+            'is_eee'                         => null,
+            'is_eee_from_text'               => null,
             'electrical_components_observed' => [],
-            'weee_category' => null,
+            'weee_category'                  => null,
         ], $overrides);
     }
 

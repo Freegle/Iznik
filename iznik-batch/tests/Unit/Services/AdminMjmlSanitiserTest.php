@@ -9,17 +9,17 @@ class AdminMjmlSanitiserTest extends TestCase
 {
     private function clean(string $mjml): string
     {
-        return (new AdminMjmlSanitiser)->sanitise($mjml);
+        return (new AdminMjmlSanitiser())->sanitise($mjml);
     }
 
     public function test_ordinary_mjml_passes_through(): void
     {
         $mjml = '<mj-section background-color="#ffffff"><mj-column>'
-            .'<mj-image src="https://www.ilovefreegle.org/logo.png" alt="Logo" />'
-            .'<mj-text font-size="14px">Hello <b>there</b>, <a href="https://www.ilovefreegle.org">visit</a>'
-            .' or <a href="mailto:info@ilovefreegle.org">mail</a>.</mj-text>'
-            .'<mj-button href="https://www.ilovefreegle.org/donate">Donate</mj-button>'
-            .'</mj-column></mj-section>';
+            . '<mj-image src="https://www.ilovefreegle.org/logo.png" alt="Logo" />'
+            . '<mj-text font-size="14px">Hello <b>there</b>, <a href="https://www.ilovefreegle.org">visit</a>'
+            . ' or <a href="mailto:info@ilovefreegle.org">mail</a>.</mj-text>'
+            . '<mj-button href="https://www.ilovefreegle.org/donate">Donate</mj-button>'
+            . '</mj-column></mj-section>';
 
         $this->assertSame($mjml, $this->clean($mjml));
     }
@@ -36,7 +36,7 @@ class AdminMjmlSanitiserTest extends TestCase
             '<svg><script>alert(1)</script></svg>',
             '<mj-raw><script>alert(1)</script></mj-raw>',
         ] as $bad) {
-            $out = $this->clean('<mj-section><mj-column><mj-text>Before'.$bad.'After</mj-text></mj-column></mj-section>');
+            $out = $this->clean('<mj-section><mj-column><mj-text>Before' . $bad . 'After</mj-text></mj-column></mj-section>');
             $this->assertStringContainsString('BeforeAfter', strip_tags(str_replace(['<mj-raw>', '</mj-raw>'], '', $out)), $bad);
             $this->assertDoesNotMatchRegularExpression('/<\s*(script|iframe|object|embed|form|input|style|svg)/i', $out, $bad);
             $this->assertStringNotContainsString('alert', $out, $bad);
@@ -52,8 +52,8 @@ class AdminMjmlSanitiserTest extends TestCase
     public function test_document_level_mjml_and_includes_are_removed(): void
     {
         $out = $this->clean('<mjml><mj-head><mj-style>.x{}</mj-style></mj-head><mj-body>'
-            .'<mj-include path="/etc/passwd" />'
-            .'<mj-section><mj-column><mj-text>Body</mj-text></mj-column></mj-section></mj-body></mjml>');
+            . '<mj-include path="/etc/passwd" />'
+            . '<mj-section><mj-column><mj-text>Body</mj-text></mj-column></mj-section></mj-body></mjml>');
 
         $this->assertSame('<mj-section><mj-column><mj-text>Body</mj-text></mj-column></mj-section>', $out);
     }
@@ -61,7 +61,7 @@ class AdminMjmlSanitiserTest extends TestCase
     public function test_event_handlers_are_removed(): void
     {
         $out = $this->clean('<mj-text><img src="https://x.example/a.png" onerror="alert(1)" ONLOAD=alert(2)>'
-            .'<img/src=x onerror=alert(3)></mj-text>');
+            . '<img/src=x onerror=alert(3)></mj-text>');
 
         $this->assertStringNotContainsString('onerror', strtolower($out));
         $this->assertStringNotContainsString('onload', strtolower($out));
@@ -83,7 +83,7 @@ class AdminMjmlSanitiserTest extends TestCase
             'vbscript:msgbox(1)',
             'data:text/html;base64,PHNjcmlwdD4=',
         ] as $url) {
-            $out = $this->clean('<mj-button href="'.$url.'">Go</mj-button><mj-section background-url="'.$url.'"></mj-section>');
+            $out = $this->clean('<mj-button href="' . $url . '">Go</mj-button><mj-section background-url="' . $url . '"></mj-section>');
             $this->assertStringNotContainsString('href', $out, $url);
             $this->assertStringNotContainsString('background-url', $out, $url);
         }
@@ -96,7 +96,7 @@ class AdminMjmlSanitiserTest extends TestCase
     public function test_scripted_styles_are_removed(): void
     {
         $out = $this->clean('<div style="width: expression(alert(1))">x</div>'
-            .'<div style="background:url(javascript:alert(1))">y</div><div style="color: red">z</div>');
+            . '<div style="background:url(javascript:alert(1))">y</div><div style="color: red">z</div>');
 
         $this->assertSame('<div>x</div><div>y</div><div style="color: red">z</div>', $out);
     }

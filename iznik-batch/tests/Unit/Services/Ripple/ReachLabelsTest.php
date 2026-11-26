@@ -45,7 +45,7 @@ class ReachLabelsTest extends TestCase
         return (int) $message->id;
     }
 
-    public function test_stores_labels_and_leaves(): void
+    public function testStoresLabelsAndLeaves(): void
     {
         $msgid = $this->seedReach();
         $blob = random_bytes(64);
@@ -66,7 +66,7 @@ class ReachLabelsTest extends TestCase
         $this->assertSame([7, 42, 99], $leaves);
     }
 
-    public function test_replaces_leaves_on_restore(): void
+    public function testReplacesLeavesOnRestore(): void
     {
         $msgid = $this->seedReach();
         DB::table('rippling_reach_leaves')->insert([
@@ -85,7 +85,7 @@ class ReachLabelsTest extends TestCase
         $this->assertSame([2, 3], $leaves);
     }
 
-    public function test_engine_unconfigured_is_quiet_no_op(): void
+    public function testEngineUnconfiguredIsQuietNoOp(): void
     {
         $msgid = $this->seedReach();
         Http::fake(['*/v1/reach-labels*' => Http::response('reach engine not configured', 503)]);
@@ -95,7 +95,7 @@ class ReachLabelsTest extends TestCase
         $this->assertSame(0, DB::table('rippling_reach_leaves')->where('msgid', $msgid)->count());
     }
 
-    public function test_malformed_response_leaves_row_untouched(): void
+    public function testMalformedResponseLeavesRowUntouched(): void
     {
         $msgid = $this->seedReach();
         Http::fake(['*/v1/reach-labels*' => Http::response(['labels' => '***not-base64***', 'leaves' => 'nope'])]);
@@ -104,7 +104,7 @@ class ReachLabelsTest extends TestCase
         $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('reach_labels'));
     }
 
-    public function test_backfill_command_fills_missing_rows(): void
+    public function testBackfillCommandFillsMissingRows(): void
     {
         $msgid = $this->seedReach();
         Http::fake([
@@ -121,7 +121,7 @@ class ReachLabelsTest extends TestCase
         $this->assertSame([5], DB::table('rippling_reach_leaves')->where('msgid', $msgid)->pluck('leaf')->all());
     }
 
-    public function test_backfill_all_refetches_rows_with_labels(): void
+    public function testBackfillAllRefetchesRowsWithLabels(): void
     {
         $msgid = $this->seedReach();
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'stale-partition-blob']);
@@ -143,7 +143,8 @@ class ReachLabelsTest extends TestCase
         $this->assertSame([8, 9], DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->pluck('leaf')->all());
     }
 
-    public function test_stores_union_threshold_and_fingerprint_inline(): void
+
+    public function testStoresUnionThresholdAndFingerprintInline(): void
     {
         // The grid-removal endgame fields ride along with the labels fetch:
         // the road-native union threshold, the union regions (merged into the
@@ -172,10 +173,10 @@ class ReachLabelsTest extends TestCase
         }
         // The request asked with the msgid, so the server could resolve the
         // origin group.
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'msgid='.$msgid));
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'msgid=' . $msgid));
     }
 
-    public function test_store_union_secs_backfills_from_stored_blob(): void
+    public function testStoreUnionSecsBackfillsFromStoredBlob(): void
     {
         // The backfill face: labels already stored, one reach-union call
         // fills the threshold, stamps the existing leaves with the build
@@ -206,7 +207,7 @@ class ReachLabelsTest extends TestCase
         Http::assertSent(fn ($req) => ($req['labels'] ?? '') === base64_encode($blob));
     }
 
-    public function test_store_union_secs_stale_build_is_quiet(): void
+    public function testStoreUnionSecsStaleBuildIsQuiet(): void
     {
         // 422 = the blob belongs to a partition build the routing server no
         // longer holds: the row keeps NULL (transitional behaviour) until the

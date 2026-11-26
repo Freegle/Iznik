@@ -163,6 +163,7 @@ class MaxReachServiceTest extends TestCase
         $this->assertSame(0, $this->service()->computePassthroughSavings()['scanned']);
     }
 
+
     public function test_max_reach_prefers_the_stored_label_verdict(): void
     {
         // The cells say INSIDE_TICK1 is within reach; the stored label knows
@@ -184,6 +185,7 @@ class MaxReachServiceTest extends TestCase
         );
     }
 
+
     public function test_populate_fills_cumulative_users_for_labelled_rows_without_a_grid(): void
     {
         $msgid = $this->seedRipplingPost();
@@ -196,6 +198,7 @@ class MaxReachServiceTest extends TestCase
         $this->assertSame(4000, (int) $row->max_cumulative_users, 'the schedule final tick audience feeds the nudge');
         $this->assertNull($row->max_polygon_cells, 'a labelled row needs no grid - its label answers the gate');
     }
+
 
     public function test_label_in_verdict_admits(): void
     {

@@ -36,7 +36,7 @@ class ReleaseRepliesCommandTest extends TestCase
         // The stored label admits the held replier's point, so the release
         // cron frees them - the label is the reach record, faked here.
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (! str_contains($request->url(), 'reach-eval')) {
+            if (!str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             $results = array_map(

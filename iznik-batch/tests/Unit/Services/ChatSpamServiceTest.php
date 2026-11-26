@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Mail\Chat\SpamWarningMail;
+use App\Models\ChatRoom;
 use App\Services\ChatSpamService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -15,7 +16,7 @@ class ChatSpamServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatSpamService;
+        $this->service = new ChatSpamService();
     }
 
     // -------------------------------------------------------------------------
@@ -28,19 +29,19 @@ class ChatSpamServiceTest extends TestCase
         $innocent = $this->createTestUser();
         $room = $this->createTestChatRoom($spammer, $innocent, [
             'latestmessage' => now()->subDays(3),
-            'flaggedspam' => 0,
+            'flaggedspam'   => 0,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         // Create a visible message in the room
         $this->createTestChatMessage($room, $spammer, [
-            'reviewrequired' => 0,
-            'reviewrejected' => 0,
+            'reviewrequired'      => 0,
+            'reviewrejected'      => 0,
             'processingsuccessful' => 1,
         ]);
 
@@ -62,13 +63,13 @@ class ChatSpamServiceTest extends TestCase
         $innocent = $this->createTestUser();
         $room = $this->createTestChatRoom($spammer, $innocent, [
             'latestmessage' => now()->subDays(3),
-            'flaggedspam' => 1,
+            'flaggedspam'   => 1,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         $this->createTestChatMessage($room, $spammer);
@@ -86,19 +87,19 @@ class ChatSpamServiceTest extends TestCase
         $innocent = $this->createTestUser();
         $room = $this->createTestChatRoom($spammer, $innocent, [
             'latestmessage' => now()->subDays(3),
-            'flaggedspam' => 0,
+            'flaggedspam'   => 0,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         // Message held for review — not visible
         $this->createTestChatMessage($room, $spammer, [
-            'reviewrequired' => 1,
-            'reviewrejected' => 0,
+            'reviewrequired'      => 1,
+            'reviewrejected'      => 0,
             'processingsuccessful' => 0,
         ]);
 
@@ -115,13 +116,13 @@ class ChatSpamServiceTest extends TestCase
         $innocent = $this->createTestUser();
         $room = $this->createTestChatRoom($spammer, $innocent, [
             'latestmessage' => now()->subDays(10),
-            'flaggedspam' => 0,
+            'flaggedspam'   => 0,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         $this->createTestChatMessage($room, $spammer);
@@ -149,21 +150,21 @@ class ChatSpamServiceTest extends TestCase
         ]);
         $room = $this->createTestChatRoom($spammer, $innocent, [
             'latestmessage' => now()->subDays(3),
-            'flaggedspam' => 0,
+            'flaggedspam'   => 0,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         // Visible chat message that references the offer — exercises the
         // findReplyDetails path that queries messages_groups for the group.
         $this->createTestChatMessage($room, $spammer, [
-            'refmsgid' => $msg->id,
-            'reviewrequired' => 0,
-            'reviewrejected' => 0,
+            'refmsgid'             => $msg->id,
+            'reviewrequired'       => 0,
+            'reviewrejected'       => 0,
             'processingsuccessful' => 1,
         ]);
 
@@ -183,18 +184,18 @@ class ChatSpamServiceTest extends TestCase
         // Room where innocent=user1, spammer=user2
         $room = $this->createTestChatRoom($innocent, $spammer, [
             'latestmessage' => now()->subDays(3),
-            'flaggedspam' => 0,
+            'flaggedspam'   => 0,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid' => $spammer->id,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
         $this->createTestChatMessage($room, $spammer, [
-            'reviewrequired' => 0,
-            'reviewrejected' => 0,
+            'reviewrequired'      => 0,
+            'reviewrejected'      => 0,
             'processingsuccessful' => 1,
         ]);
 
@@ -221,20 +222,20 @@ class ChatSpamServiceTest extends TestCase
         // 6 rejected messages
         for ($i = 0; $i < 6; $i++) {
             $this->createTestChatMessage($room, $user, [
-                'date' => now()->subDays(5),
-                'reviewrequired' => 0,
+                'date'                => now()->subDays(5),
+                'reviewrequired'      => 0,
                 'processingsuccessful' => 0,
-                'reviewrejected' => 1,
+                'reviewrejected'      => 1,
             ]);
         }
 
         // 1 pending message
         $pending = $this->createTestChatMessage($room, $user, [
-            'date' => now()->subDays(1),
-            'reviewrequired' => 1,
-            'processingrequired' => 1,
+            'date'                => now()->subDays(1),
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
             'processingsuccessful' => 0,
-            'reviewrejected' => 0,
+            'reviewrejected'      => 0,
         ]);
 
         $count = $this->service->autoMarkSpam();
@@ -255,9 +256,9 @@ class ChatSpamServiceTest extends TestCase
         // Only 3 rejected messages — below threshold of 5
         for ($i = 0; $i < 3; $i++) {
             $this->createTestChatMessage($room, $user, [
-                'reviewrequired' => 0,
+                'reviewrequired'      => 0,
                 'processingsuccessful' => 0,
-                'reviewrejected' => 1,
+                'reviewrejected'      => 1,
             ]);
         }
 
@@ -275,27 +276,27 @@ class ChatSpamServiceTest extends TestCase
         // 6 rejected messages
         for ($i = 0; $i < 6; $i++) {
             $this->createTestChatMessage($room, $user, [
-                'reviewrequired' => 0,
+                'reviewrequired'      => 0,
                 'processingsuccessful' => 0,
-                'reviewrejected' => 1,
+                'reviewrejected'      => 1,
             ]);
         }
 
         // 1 previously approved message (review cleared, reviewedby is set, reviewrejected=0)
         $reviewer = $this->createTestUser();
         $this->createTestChatMessage($room, $user, [
-            'reviewrequired' => 0,
+            'reviewrequired'      => 0,
             'processingsuccessful' => 1,
-            'reviewrejected' => 0,
-            'reviewedby' => $reviewer->id,
+            'reviewrejected'      => 0,
+            'reviewedby'          => $reviewer->id,
         ]);
 
         // 1 message held for review, which must be left alone.
         $pending = $this->createTestChatMessage($room, $user, [
-            'reviewrequired' => 1,
-            'processingrequired' => 1,
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
             'processingsuccessful' => 0,
-            'reviewrejected' => 0,
+            'reviewrejected'      => 0,
         ]);
 
         $count = $this->service->autoMarkSpam();
@@ -314,32 +315,32 @@ class ChatSpamServiceTest extends TestCase
         // Approving a message in review clears reviewrequired and records the reviewer.
         for ($i = 0; $i < 3; $i++) {
             $this->createTestChatMessage($room, $user, [
-                'date' => now()->subDays(40),
-                'reviewrequired' => 0,
+                'date'                => now()->subDays(40),
+                'reviewrequired'      => 0,
                 'processingsuccessful' => 1,
-                'reviewrejected' => 0,
-                'reviewedby' => $mod->id,
+                'reviewrejected'      => 0,
+                'reviewedby'          => $mod->id,
             ]);
         }
 
         // 6 rejected messages in the lookback window.
         for ($i = 0; $i < 6; $i++) {
             $this->createTestChatMessage($room, $user, [
-                'date' => now()->subDays(5),
-                'reviewrequired' => 0,
+                'date'                => now()->subDays(5),
+                'reviewrequired'      => 0,
                 'processingsuccessful' => 0,
-                'reviewrejected' => 1,
-                'reviewedby' => $mod->id,
+                'reviewrejected'      => 1,
+                'reviewedby'          => $mod->id,
             ]);
         }
 
         // 1 message held for review.
         $pending = $this->createTestChatMessage($room, $user, [
-            'date' => now()->subDays(1),
-            'reviewrequired' => 1,
-            'processingrequired' => 1,
+            'date'                => now()->subDays(1),
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
             'processingsuccessful' => 0,
-            'reviewrejected' => 0,
+            'reviewrejected'      => 0,
         ]);
 
         $count = $this->service->autoMarkSpam();

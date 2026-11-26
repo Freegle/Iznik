@@ -75,13 +75,13 @@ class RippleIntroMailTest extends TestCase
         ]);
 
         $html = view('emails.mjml.ripple.intro', [
-            'firstName' => $user->firstname,
-            'postSubject' => $message->subject,
-            'email' => 'test@example.com',
-            'userSite' => config('freegle.sites.user'),
-            'settingsUrl' => config('freegle.sites.user').'/settings',
-            'unsubscribeUrl' => config('freegle.sites.user').'/unsubscribe',
-            'welcomeGroups' => [],
+            'firstName'      => $user->firstname,
+            'postSubject'    => $message->subject,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
         ])->render();
 
         $this->assertStringContainsString(
@@ -98,13 +98,13 @@ class RippleIntroMailTest extends TestCase
         $user = $this->createTestUser();
 
         $html = view('emails.mjml.ripple.intro', [
-            'firstName' => null,
-            'postSubject' => null,
-            'email' => 'test@example.com',
-            'userSite' => config('freegle.sites.user'),
-            'settingsUrl' => config('freegle.sites.user').'/settings',
-            'unsubscribeUrl' => config('freegle.sites.user').'/unsubscribe',
-            'welcomeGroups' => [],
+            'firstName'      => null,
+            'postSubject'    => null,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
         ])->render();
 
         $this->assertStringContainsString(
@@ -118,20 +118,20 @@ class RippleIntroMailTest extends TestCase
     {
         // Str::limit($postSubject, 60) is applied in the template, so subjects
         // longer than 60 characters should be truncated with "..." in the preheader.
-        $user = $this->createTestUser();
+        $user  = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
         $longSubject = 'OFFER: Very Long Item Name That Exceeds Sixty Characters Easily Here (London)';
         $message = $this->createTestMessage($user, $group, ['subject' => $longSubject]);
 
         $html = view('emails.mjml.ripple.intro', [
-            'firstName' => null,
-            'postSubject' => $message->subject,
-            'email' => 'test@example.com',
-            'userSite' => config('freegle.sites.user'),
-            'settingsUrl' => config('freegle.sites.user').'/settings',
-            'unsubscribeUrl' => config('freegle.sites.user').'/unsubscribe',
-            'welcomeGroups' => [],
+            'firstName'      => null,
+            'postSubject'    => $message->subject,
+            'email'          => 'test@example.com',
+            'userSite'       => config('freegle.sites.user'),
+            'settingsUrl'    => config('freegle.sites.user') . '/settings',
+            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
+            'welcomeGroups'  => [],
         ])->render();
 
         // The full long subject must NOT appear verbatim.

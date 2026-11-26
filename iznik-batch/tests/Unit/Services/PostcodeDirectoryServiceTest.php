@@ -21,7 +21,7 @@ class PostcodeDirectoryServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PostcodeDirectoryService;
+        $this->service = new PostcodeDirectoryService();
         $this->srid = (int) config('freegle.srid', 3857);
     }
 
@@ -169,7 +169,7 @@ class PostcodeDirectoryServiceTest extends TestCase
     private function releaseZip(): string
     {
         $zipPath = tempnam(sys_get_temp_dir(), 'onspdzip');
-        $zip = new \ZipArchive;
+        $zip = new \ZipArchive();
         $zip->open($zipPath, \ZipArchive::OVERWRITE);
         $zip->addFromString('Documents/CTRY Country names and codes UK as at 05_25.csv', "CTRY25CD,CTRY25NM\n");
         $zip->addFromString('Data/multi_csv/ONSPD_AUG_2026_UK_AB.csv', "pcds,doterm,lat,long\nAB1 0AA,,57.1,-2.2\n");

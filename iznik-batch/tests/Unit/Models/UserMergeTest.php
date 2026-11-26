@@ -18,7 +18,6 @@ use Tests\TestCase;
 class UserMergeTest extends TestCase
 {
     private const MERGE_REASON = 'Test merge';
-
     private const OLDER_DATE = '2020-01-01 00:00:00';
 
     public function test_merge_consolidates_emails(): void
@@ -364,10 +363,10 @@ class UserMergeTest extends TestCase
     {
         Exceptions::fake();
 
-        $freegle = $this->createTestUser();
-        $stamped = $this->createTestUser(['tnuserid' => 99020206]);
+        $freegle  = $this->createTestUser();
+        $stamped  = $this->createTestUser(['tnuserid' => 99020206]);
         $byAddress = $this->createTestUser([
-            'email_preferred' => 'byaddress-'.uniqid().'-g1@user.trashnothing.com',
+            'email_preferred' => 'byaddress-' . uniqid() . '-g1@user.trashnothing.com',
         ]);
 
         $this->assertFalse(User::merge($freegle->id, $stamped->id, self::MERGE_REASON));
@@ -381,7 +380,8 @@ class UserMergeTest extends TestCase
         $this->assertNull(DB::table('users')->where('id', $freegle->id)->value('tnuserid'));
 
         Exceptions::assertReportedCount(3);
-        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) => str_contains($e->getMessage(), 'Refused merge of a Trash Nothing account'));
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge of a Trash Nothing account'));
     }
 
     /**
@@ -392,9 +392,9 @@ class UserMergeTest extends TestCase
     {
         Exceptions::fake();
 
-        $username = 'twin-'.uniqid();
-        $stamped = $this->createTestUser([
-            'tnuserid' => 99020207,
+        $username = 'twin-' . uniqid();
+        $stamped  = $this->createTestUser([
+            'tnuserid'        => 99020207,
             'email_preferred' => "{$username}-g1@user.trashnothing.com",
         ]);
         $twin = $this->createTestUser(['email_preferred' => "{$username}-g2@user.trashnothing.com"]);
@@ -420,7 +420,8 @@ class UserMergeTest extends TestCase
 
         // Reported, so it reaches Sentry: one report naming both accounts.
         Exceptions::assertReportedCount(1);
-        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) => str_contains($e->getMessage(), 'Refused merge')
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge')
             && str_contains($e->getMessage(), '99020201')
             && str_contains($e->getMessage(), '99020202'));
     }
@@ -439,14 +440,15 @@ class UserMergeTest extends TestCase
         $this->assertEquals(99020204, DB::table('users')->where('id', $user2->id)->value('tnuserid'));
 
         Exceptions::assertReportedCount(1);
-        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) => str_contains($e->getMessage(), 'Refused merge'));
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge'));
     }
 
     private function giveTnAddress(User $user, string $localPart): void
     {
         DB::table('users_emails')->insert([
-            'userid' => $user->id,
-            'email' => $localPart.'-'.uniqid().'-g1@user.trashnothing.com',
+            'userid'    => $user->id,
+            'email'     => $localPart . '-' . uniqid() . '-g1@user.trashnothing.com',
             'preferred' => 0,
         ]);
     }
@@ -470,7 +472,8 @@ class UserMergeTest extends TestCase
         $this->assertNotNull(User::find($user2->id));
 
         Exceptions::assertReportedCount(1);
-        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) => str_contains($e->getMessage(), 'Refused merge')
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge')
             && str_contains($e->getMessage(), 'two TN usernames'));
     }
 
@@ -488,7 +491,8 @@ class UserMergeTest extends TestCase
         $this->assertNotNull(User::find($user2->id));
 
         Exceptions::assertReportedCount(1);
-        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) => str_contains($e->getMessage(), 'Refused merge of two TN usernames'));
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge of two TN usernames'));
     }
 
     public function test_merge_of_two_freegle_accounts_is_not_reported(): void
@@ -496,13 +500,13 @@ class UserMergeTest extends TestCase
         Exceptions::fake();
 
         // One TN username on both, neither as the preferred address: two Freegle accounts.
-        $username = 'same-'.uniqid();
+        $username = 'same-' . uniqid();
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         foreach ([[$user1, 'g1'], [$user2, 'g2']] as [$user, $group]) {
             DB::table('users_emails')->insert([
-                'userid' => $user->id,
-                'email' => "{$username}-{$group}@user.trashnothing.com",
+                'userid'    => $user->id,
+                'email'     => "{$username}-{$group}@user.trashnothing.com",
                 'preferred' => 0,
             ]);
         }

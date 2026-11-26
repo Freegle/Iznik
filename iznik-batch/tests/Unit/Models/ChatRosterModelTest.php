@@ -5,6 +5,7 @@ namespace Tests\Unit\Models;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
+use App\Models\User;
 use Tests\TestCase;
 
 class ChatRosterModelTest extends TestCase

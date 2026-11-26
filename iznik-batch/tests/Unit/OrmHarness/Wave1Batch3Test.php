@@ -28,7 +28,6 @@ class Wave1Batch3Test extends TestCase
     // UPDATE users_donations SET giftaidconsent = 1
     //   WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?
     private const SITE_CONSENT_PAST4 = '3d1dc34753bd';
-
     private const SITE_CONSENT_SINCE = '54bddc06f05c';
 
     public function test_pending_background_tasks(): void

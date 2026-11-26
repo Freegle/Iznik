@@ -35,7 +35,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         // The cache is a static, process-wide property (section 11.6), so a row cached
         // by an earlier test class in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->lockdown = new LockdownService;
+        $this->lockdown = new LockdownService();
     }
 
     protected function tearDown(): void
@@ -60,7 +60,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $id = $this->spooler->spool($mailable, $email, 'welcome');
 
         $this->assertNotSame('', $id, 'spool() must never refuse - the file is written, only counted');
-        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
         $this->assertSame(1, $this->counterFor('spooled_held:welcome'));
     }
 
@@ -73,7 +73,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $id = $this->spooler->spool($mailable, $email, 'verify_email');
 
         $this->assertNotSame('', $id);
-        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
         $this->assertSame(0, $this->counterFor('spooled_held:verify_email'), 'allowlisted mail is not held, so nothing to count at spool time');
         $this->assertSame(
             0,
@@ -93,7 +93,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
 
         $id = $this->spooler->spool(new WelcomeMail($email), $email, 'welcome');
         $this->assertNotSame('', $id);
-        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
         // Not held any more, so this second file adds nothing to the earlier count.
         $this->assertSame(1, $this->counterFor('spooled_held:welcome'));
     }
@@ -104,7 +104,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $mailable = new WelcomeMail($email);
         // Spooled while email was NOT held - lands in pending/ normally.
         $id = $this->spooler->spool($mailable, $email, 'welcome');
-        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
 
         $this->lockdown->press(null, 'test lockdown');
 
@@ -113,7 +113,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $this->assertSame(1, $stats['held_by_lockdown']);
         $this->assertSame(0, $stats['sent']);
         $this->assertFileExists(
-            $this->testSpoolDir.'/pending/'.$id.'.json',
+            $this->testSpoolDir . '/pending/' . $id . '.json',
             'a held file goes back to pending unchanged, not to sent or failed'
         );
         // Nothing was written to spool WHILE held, so nothing is counted here -
@@ -135,7 +135,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $this->spooler->processSpool();
         $this->spooler->processSpool();
 
-        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
         $this->assertSame(1, $this->counterFor('spooled_held:welcome'));
     }
 
@@ -151,7 +151,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
 
         $this->assertSame(1, $stats['sent']);
         $this->assertSame(0, $stats['held_by_lockdown']);
-        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
         $this->assertSame(1, $this->counterFor('leaked:email:verify_email'), 'counted at the send, the actual relay handoff');
     }
 
@@ -160,7 +160,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $email = $this->uniqueEmail('recipient');
         $this->lockdown->press(null, 'test lockdown');
         $id = $this->spooler->spool(new WelcomeMail($email), $email, 'welcome');
-        $path = $this->testSpoolDir.'/pending/'.$id.'.json';
+        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
 
         // Back-date the file as if it had sat waiting for many hours.
         touch($path, now()->subHours(30)->timestamp);
@@ -170,7 +170,7 @@ class EmailSpoolerServiceLockdownTest extends TestCase
         $this->assertSame(1, $stats['held_by_lockdown']);
         $this->assertSame(0, $stats['invalid'] ?? 0);
         $this->assertFileExists($path, 'age alone must never move a held file to failed/');
-        $this->assertFileDoesNotExist($this->testSpoolDir.'/failed/'.$id.'.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/failed/' . $id . '.json');
 
         // cleanupSent() only ever prunes sent/ (and its ledger markers) - it must not
         // reach into pending/ regardless of how old a waiting file has become.

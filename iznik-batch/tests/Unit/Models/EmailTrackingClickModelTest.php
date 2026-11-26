@@ -10,19 +10,19 @@ class EmailTrackingClickModelTest extends TestCase
 {
     public function test_email_tracking_click_has_correct_table(): void
     {
-        $click = new EmailTrackingClick;
+        $click = new EmailTrackingClick();
         $this->assertEquals('email_tracking_clicks', $click->getTable());
     }
 
     public function test_email_tracking_click_has_no_timestamps(): void
     {
-        $click = new EmailTrackingClick;
+        $click = new EmailTrackingClick();
         $this->assertFalse($click->timestamps);
     }
 
     public function test_email_tracking_click_casts(): void
     {
-        $click = new EmailTrackingClick;
+        $click = new EmailTrackingClick();
         $casts = $click->getCasts();
 
         $this->assertArrayHasKey('clicked_at', $casts);
@@ -31,7 +31,7 @@ class EmailTrackingClickModelTest extends TestCase
 
     public function test_email_tracking_click_fillable(): void
     {
-        $click = new EmailTrackingClick;
+        $click = new EmailTrackingClick();
         $fillable = $click->getFillable();
 
         $this->assertContains('email_tracking_id', $fillable);
@@ -46,7 +46,7 @@ class EmailTrackingClickModelTest extends TestCase
     public function test_email_tracking_click_belongs_to_tracking(): void
     {
         $user = $this->createTestUser();
-
+        
         $tracking = EmailTracking::create([
             'user_id' => $user->id,
             'email_type' => 'chat_notification',

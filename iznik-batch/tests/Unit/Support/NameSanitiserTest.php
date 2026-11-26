@@ -206,11 +206,11 @@ class NameSanitiserTest extends TestCase
         // In normalise() it exercises the multi-byte non-combining letter branch (lines ~158-161)
         // and in tokenise() the equivalent branch (~195-197).
         // 'Αdmin' normalises token 'αdmin' which is not in any Tier, so the name is clean.
-        $this->assertSame('Αdmin', NameSanitiser::sanitize('Αdmin', isExempt: false));
+        $this->assertSame("Αdmin", NameSanitiser::sanitize("Αdmin", isExempt: false));
 
         // Combined: Greek letter + authority word. Only 'support' is Tier B; 'αdmin' is not,
         // so allTierB=false and none of the suspicious rules fire.
-        $this->assertSame('Αdmin Support', NameSanitiser::sanitize('Αdmin Support', isExempt: false));
+        $this->assertSame("Αdmin Support", NameSanitiser::sanitize("Αdmin Support", isExempt: false));
     }
 
     public function test_non_alnum_multibyte_symbol_acts_as_token_separator(): void
@@ -234,9 +234,9 @@ class NameSanitiserTest extends TestCase
         // exercises the 4-byte path (~lines 334-337).
         //
         // '🎁 Admin Support' → emoji is separator → tokens ['admin', 'support'] → all Tier B.
-        $this->assertSame('A freegler', NameSanitiser::sanitize('🎁 Admin Support', isExempt: false));
+        $this->assertSame('A freegler', NameSanitiser::sanitize("🎁 Admin Support", isExempt: false));
 
         // 'Emma 🎁 Jones' → tokens ['emma', 'jones'] → not suspicious → unchanged.
-        $this->assertSame('Emma 🎁 Jones', NameSanitiser::sanitize('Emma 🎁 Jones', isExempt: false));
+        $this->assertSame("Emma 🎁 Jones", NameSanitiser::sanitize("Emma 🎁 Jones", isExempt: false));
     }
 }

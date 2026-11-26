@@ -65,8 +65,8 @@ class MxGrouperTest extends TestCase
     public function test_extracts_relay_from_a_said_style_delay_reason(): void
     {
         $reason = 'host mta7.am0.yahoodns.net[67.195.228.94] said: 421 4.7.0 [TSS04] '
-            .'Messages from 185.53.57.161 temporarily deferred due to unexpected volume '
-            .'or user complaints - 4.16.55.1 (in reply to MAIL FROM command)';
+            . 'Messages from 185.53.57.161 temporarily deferred due to unexpected volume '
+            . 'or user complaints - 4.16.55.1 (in reply to MAIL FROM command)';
 
         $this->assertSame('yahoodns.net', MxGrouper::fromDelayReason($reason));
     }
@@ -83,7 +83,7 @@ class MxGrouperTest extends TestCase
     public function test_extracts_relay_from_a_quota_delay_reason(): void
     {
         $reason = 'host mx.example.com[203.0.113.10] said: 452 4.2.2 The email account '
-            .'that you tried to reach is over quota (in reply to RCPT TO command)';
+            . 'that you tried to reach is over quota (in reply to RCPT TO command)';
 
         $this->assertSame('example.com', MxGrouper::fromDelayReason($reason));
     }

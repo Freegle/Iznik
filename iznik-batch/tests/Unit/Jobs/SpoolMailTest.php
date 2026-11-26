@@ -28,8 +28,7 @@ class SpoolMailTest extends TestCase
      */
     private function capturingSpooler(?\Throwable $throw = null): EmailSpoolerService
     {
-        return new class($throw) extends EmailSpoolerService
-        {
+        return new class ($throw) extends EmailSpoolerService {
             public array $calls = [];
 
             public function __construct(private ?\Throwable $throw)

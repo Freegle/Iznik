@@ -56,12 +56,11 @@ class TrashNothingRateLimiterTest extends TestCase
         // Both syncers must draw on the SAME limiter, so a ratings backlog
         // cannot burn the whole budget and leave the posts sync taking 429s.
         Http::fake([
-            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response(['changes' => []], 200),
         ]);
 
-        $limiter = new class extends TrashNothingRateLimiter
-        {
+        $limiter = new class extends TrashNothingRateLimiter {
             public int $calls = 0;
 
             public function __construct()
@@ -78,7 +77,7 @@ class TrashNothingRateLimiterTest extends TestCase
 
         $loki = app(LokiService::class);
         $from = '2026-03-20T10:00:00Z';
-        $to = '2026-03-20T11:00:00Z';
+        $to   = '2026-03-20T11:00:00Z';
 
         (new RatingsSyncer(true, false, 'test-key', 'https://example.test/api', $loki, $limiter))->sync($from, $to);
         (new UserChangesSyncer(true, false, 'test-key', 'https://example.test/api', $loki, $limiter))->sync($from, $to);

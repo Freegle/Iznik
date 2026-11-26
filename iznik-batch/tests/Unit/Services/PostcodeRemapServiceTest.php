@@ -99,7 +99,7 @@ class PostcodeRemapServiceTest extends TestCase
         Http::fake(['*/v1/locations/knn*' => Http::response(['results' => [['id' => 1]]], 200)]);
 
         $polygon = 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))';
-        $result = $this->service->remapPostcodes(null, $polygon);
+        $result  = $this->service->remapPostcodes(null, $polygon);
 
         $this->assertEquals(0, $result);
     }
@@ -112,15 +112,15 @@ class PostcodeRemapServiceTest extends TestCase
         // until the nightly full remap (Discourse #9950).
         Http::fake([
             '*/v1/locations/upsert' => Http::response(['upserted' => 1], 200),
-            '*/v1/locations/knn*' => Http::response(['results' => []], 200),
+            '*/v1/locations/knn*'   => Http::response(['results' => []], 200),
         ]);
 
-        $id = 990000001;
+        $id  = 990000001;
         $wkt = 'POLYGON((-1 53, -0.9 53, -0.9 53.1, -1 53.1, -1 53))';
         DB::table('locations')->insert([
-            'id' => $id,
-            'name' => 'Seedville',
-            'type' => 'Polygon',
+            'id'       => $id,
+            'name'     => 'Seedville',
+            'type'     => 'Polygon',
             'geometry' => DB::raw("ST_GeomFromText('{$wkt}', 3857)"),
         ]);
 
@@ -136,7 +136,7 @@ class PostcodeRemapServiceTest extends TestCase
     {
         Http::fake([
             '*/v1/locations/upsert' => Http::response(['upserted' => 1], 200),
-            '*/v1/locations/knn*' => Http::response(['results' => []], 200),
+            '*/v1/locations/knn*'   => Http::response(['results' => []], 200),
         ]);
 
         $this->service->remapPostcodes(null, 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))');

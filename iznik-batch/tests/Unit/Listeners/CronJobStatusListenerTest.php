@@ -35,14 +35,14 @@ class CronJobStatusListenerTest extends TestCase
 
     public function test_extract_command_handles_simple_artisan(): void
     {
-        $raw = 'php artisan deploy:watch';
+        $raw = "php artisan deploy:watch";
         $result = CronJobStatusListener::extractCommand($raw);
         $this->assertEquals('deploy:watch', $result);
     }
 
     public function test_extract_command_returns_null_for_non_artisan(): void
     {
-        $raw = 'some-other-command --flag';
+        $raw = "some-other-command --flag";
         $result = CronJobStatusListener::extractCommand($raw);
         $this->assertNull($result);
     }
@@ -51,7 +51,7 @@ class CronJobStatusListenerTest extends TestCase
     {
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:starting-command");
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
         $listener->handleStarting(new ScheduledTaskStarting($event));
 
         $row = DB::table('cron_job_status')
@@ -67,7 +67,7 @@ class CronJobStatusListenerTest extends TestCase
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:finished-command");
         $event->exitCode = 0;
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
         $listener->handleFinished(new ScheduledTaskFinished($event, 1.5));
 
         $row = DB::table('cron_job_status')
@@ -84,7 +84,7 @@ class CronJobStatusListenerTest extends TestCase
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:failed-command");
         $event->exitCode = 1;
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
         $listener->handleFinished(new ScheduledTaskFinished($event, 0.5));
 
         $row = DB::table('cron_job_status')
@@ -100,7 +100,7 @@ class CronJobStatusListenerTest extends TestCase
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:full-cycle");
         $event->exitCode = 0;
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
 
         // Start
         $listener->handleStarting(new ScheduledTaskStarting($event));
@@ -129,7 +129,7 @@ class CronJobStatusListenerTest extends TestCase
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:background-command");
         $event->runInBackground();
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
         $listener->handleStarting(new ScheduledTaskStarting($event));
         $listener->handleFinished(new ScheduledTaskFinished($event, 0.01));
 
@@ -157,7 +157,7 @@ class CronJobStatusListenerTest extends TestCase
         $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:background-failed");
         $event->runInBackground();
 
-        $listener = new CronJobStatusListener;
+        $listener = new CronJobStatusListener();
         $listener->handleFinished(new ScheduledTaskFinished($event, 0.01));
 
         $this->assertEquals(1, DB::table('cron_job_status')->where('command', 'test:background-failed')->value('last_exit_code'));

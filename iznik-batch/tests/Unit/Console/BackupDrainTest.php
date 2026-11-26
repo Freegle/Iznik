@@ -120,7 +120,7 @@ class BackupDrainTest extends TestCase
 
     private function scheduleWith(string ...$commands): Schedule
     {
-        $schedule = new Schedule;
+        $schedule = new Schedule();
         foreach ($commands as $command) {
             $schedule->command($command)->everyMinute();
         }
@@ -197,7 +197,7 @@ class BackupDrainTest extends TestCase
         $this->configure(['always_run' => []]);
         $this->at('2026-09-18 04:00:00');
 
-        $schedule = new Schedule;
+        $schedule = new Schedule();
         $schedule->call(fn () => null)->everyFiveMinutes()->name('scheduler-heartbeat');
         $schedule->command('monitor:scheduled-outcomes')->everyTenMinutes();
         $schedule->call(fn () => null)->everyMinute()->name('some-other-closure');
@@ -214,7 +214,7 @@ class BackupDrainTest extends TestCase
         $this->configure(['always_run' => ['keep-me']]);
         $this->at('2026-09-18 04:00:00');
 
-        $schedule = new Schedule;
+        $schedule = new Schedule();
         $schedule->call(fn () => null)->everyMinute()->name('keep-me');
         $schedule->call(fn () => null)->everyMinute()->name('hold-me');
         BackupDrain::apply($schedule);

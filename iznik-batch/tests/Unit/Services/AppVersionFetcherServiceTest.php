@@ -47,7 +47,7 @@ class AppVersionFetcherServiceTest extends TestCase
             'play.google.com/*modtools*' => Http::response($this->fakeAndroidHtml('2.7.1', 'Feb 15, 2024'), 200),
         ]);
 
-        $service = new AppVersionFetcherService;
+        $service = new AppVersionFetcherService();
         $result = $service->fetchAll();
 
         $this->assertContains('ios_fd', $result['fetched']);
@@ -68,7 +68,7 @@ class AppVersionFetcherServiceTest extends TestCase
             'play.google.com/*modtools*' => Http::response($this->fakeAndroidHtml('4.1.3', 'Apr 5, 2024'), 200),
         ]);
 
-        $service = new AppVersionFetcherService;
+        $service = new AppVersionFetcherService();
         $result = $service->fetchAll();
 
         $this->assertContains('android_fd', $result['fetched']);
@@ -89,7 +89,7 @@ class AppVersionFetcherServiceTest extends TestCase
             'play.google.com/*modtools*' => Http::response($this->fakeAndroidHtml('4.1.3', 'Apr 5, 2024'), 200),
         ]);
 
-        $service = new AppVersionFetcherService;
+        $service = new AppVersionFetcherService();
         $result = $service->fetchAll();
 
         $this->assertContains('ios_fd', $result['fetched']);
@@ -111,7 +111,7 @@ class AppVersionFetcherServiceTest extends TestCase
             'play.google.com/*' => Http::response('no version here', 200),
         ]);
 
-        $service = new AppVersionFetcherService;
+        $service = new AppVersionFetcherService();
         $service->fetchAll();
 
         $this->assertEquals('3.2.0', DB::table('config')->where('key', 'app_fd_version_ios_latest')->value('value'));

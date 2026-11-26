@@ -3,6 +3,7 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Volunteering\VolunteeringDigestMail;
+use Illuminate\Support\Collection;
 use Tests\TestCase;
 
 class VolunteeringDigestMailTest extends TestCase
@@ -10,19 +11,19 @@ class VolunteeringDigestMailTest extends TestCase
     private function makeVolunteering(int $id = 1): array
     {
         return [
-            'id' => $id,
-            'title' => 'Help at local food bank',
-            'location' => 'Town Hall',
-            'description' => 'We need helpers every Saturday.',
+            'id'             => $id,
+            'title'          => 'Help at local food bank',
+            'location'       => 'Town Hall',
+            'description'    => 'We need helpers every Saturday.',
             'timecommitment' => '3 hours per week',
-            'online' => false,
-            'contactname' => null,
-            'contactphone' => null,
-            'contactemail' => null,
-            'contacturl' => null,
-            'photo_thumb' => null,
-            'applyby' => null,
-            'url' => config('freegle.sites.user').'/volunteering/'.$id,
+            'online'         => false,
+            'contactname'    => null,
+            'contactphone'   => null,
+            'contactemail'   => null,
+            'contacturl'     => null,
+            'photo_thumb'    => null,
+            'applyby'        => null,
+            'url'            => config('freegle.sites.user') . '/volunteering/' . $id,
         ];
     }
 
@@ -32,8 +33,8 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteering(42)],
-            unsubscribeUrl: $userSite.'/unsubscribe?email='.urlencode('test@example.com'),
+            volunteerings:  [$this->makeVolunteering(42)],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
 
         $html = $mail->render();
@@ -50,12 +51,12 @@ class VolunteeringDigestMailTest extends TestCase
 
     public function test_unsubscribe_url_contains_no_doubled_https(): void
     {
-        $userSite = config('freegle.sites.user');
-        $unsubscribeUrl = $userSite.'/unsubscribe?email='.urlencode('test@example.com');
+        $userSite      = config('freegle.sites.user');
+        $unsubscribeUrl = $userSite . '/unsubscribe?email=' . urlencode('test@example.com');
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteering()],
+            volunteerings:  [$this->makeVolunteering()],
             unsubscribeUrl: $unsubscribeUrl,
         );
 
@@ -70,10 +71,10 @@ class VolunteeringDigestMailTest extends TestCase
 
     private function makeJobAd(int $id = 1): object
     {
-        return (object) [
-            'id' => $id,
-            'title' => 'Test Volunteer Co-ordinator',
-            'location' => 'Testville',
+        return (object)[
+            'id'        => $id,
+            'title'     => 'Test Volunteer Co-ordinator',
+            'location'  => 'Testville',
             'image_url' => null,
         ];
     }
@@ -102,7 +103,6 @@ class VolunteeringDigestMailTest extends TestCase
         if (preg_match('/href=["\']([^"\']*(?:\/donate|freegle\.in)[^"\']*)["\']/', $html, $match)) {
             return html_entity_decode($match[1]);
         }
-
         return null;
     }
 
@@ -121,9 +121,9 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteering(1)],
-            unsubscribeUrl: "{$userSite}/unsubscribe?email=".urlencode('test@example.com'),
-            jobAds: collect([$this->makeJobAd(99)]),
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(99)]),
         );
 
         $html = $mail->render();
@@ -152,9 +152,9 @@ class VolunteeringDigestMailTest extends TestCase
 
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteering(1)],
-            unsubscribeUrl: "{$userSite}/unsubscribe?email=".urlencode('test@example.com'),
-            jobAds: collect([$this->makeJobAd(99)]),
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(99)]),
         );
 
         $html = $mail->render();
@@ -173,7 +173,7 @@ class VolunteeringDigestMailTest extends TestCase
         // Simulate how VolunteeringDigestService builds the url field.
         // Before the fix: "https://{$userSite}/volunteering/{$id}"
         // After the fix:  "{$userSite}/volunteering/{$id}"
-        $volUrl = $userSite.'/volunteering/99';
+        $volUrl = $userSite . '/volunteering/99';
 
         $this->assertStringNotContainsString('https://https://', $volUrl,
             'Volunteering URL must not contain doubled https://');
@@ -193,13 +193,13 @@ class VolunteeringDigestMailTest extends TestCase
         $vol['title'] = 'Help at the Riverside Food Bank';
 
         $html = view('emails.mjml.volunteering.digest', [
-            'volunteerings' => [$vol],
-            'userSite' => $userSite,
-            'unsubscribeUrl' => $userSite.'/unsubscribe',
-            'email' => 'test@example.com',
-            'jobAds' => collect(),
-            'jobsUrl' => $userSite.'/jobs',
-            'donateUrl' => 'https://freegle.in/paypal1510',
+            'volunteerings'  => [$vol],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
         ])->render();
 
         $this->assertStringContainsString(
@@ -224,13 +224,13 @@ class VolunteeringDigestMailTest extends TestCase
         $vol3['title'] = 'Admin helper for local charity';
 
         $html = view('emails.mjml.volunteering.digest', [
-            'volunteerings' => [$vol1, $vol2, $vol3],
-            'userSite' => $userSite,
-            'unsubscribeUrl' => $userSite.'/unsubscribe',
-            'email' => 'test@example.com',
-            'jobAds' => collect(),
-            'jobsUrl' => $userSite.'/jobs',
-            'donateUrl' => 'https://freegle.in/paypal1510',
+            'volunteerings'  => [$vol1, $vol2, $vol3],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
         ])->render();
 
         $this->assertStringContainsString(
@@ -247,13 +247,13 @@ class VolunteeringDigestMailTest extends TestCase
         $userSite = config('freegle.sites.user');
 
         $html = view('emails.mjml.volunteering.digest', [
-            'volunteerings' => [],
-            'userSite' => $userSite,
-            'unsubscribeUrl' => $userSite.'/unsubscribe',
-            'email' => 'test@example.com',
-            'jobAds' => collect(),
-            'jobsUrl' => $userSite.'/jobs',
-            'donateUrl' => 'https://freegle.in/paypal1510',
+            'volunteerings'  => [],
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email'          => 'test@example.com',
+            'jobAds'         => collect(),
+            'jobsUrl'        => $userSite . '/jobs',
+            'donateUrl'      => 'https://freegle.in/paypal1510',
         ])->render();
 
         $this->assertStringContainsString(
@@ -283,7 +283,6 @@ class VolunteeringDigestMailTest extends TestCase
             }
         }
         ksort($out);
-
         return array_values($out);
     }
 
@@ -296,9 +295,9 @@ class VolunteeringDigestMailTest extends TestCase
         $userSite = config('freegle.sites.user');
         $mail = new VolunteeringDigestMail(
             recipientEmail: 'test@example.com',
-            volunteerings: [$this->makeVolunteering(1)],
-            unsubscribeUrl: "{$userSite}/unsubscribe?email=".urlencode('test@example.com'),
-            jobAds: collect([$this->makeJobAd(98), $this->makeJobAd(99)]),
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(98), $this->makeJobAd(99)]),
         );
         $html = $mail->render();
 

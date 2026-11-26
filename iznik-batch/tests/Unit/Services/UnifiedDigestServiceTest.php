@@ -28,7 +28,7 @@ class UnifiedDigestServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new UnifiedDigestService;
+        $this->service = new UnifiedDigestService();
         Mail::fake();
         // Rippling ships dark; enable it so the reach-coordination ledger path is exercised.
         config(['freegle.ripple.enabled' => true]);
@@ -178,7 +178,6 @@ class UnifiedDigestServiceTest extends TestCase
             $row = $msg->fresh();
             $row->locationid = $msg->locationid;
             $row->groupid = $groupid;
-
             return $row;
         };
         $posts = collect([
@@ -595,7 +594,6 @@ class UnifiedDigestServiceTest extends TestCase
             $u->lastaccess = now();
             $u->save();
             $this->createMembership($u, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-
             return $u->fresh();
         };
 
@@ -829,7 +827,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Test Contact',
             'contactemail' => 'test@essex.gov.uk',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
         DB::table('groups_sponsorship')->insert([
             'groupid' => $group2->id,
@@ -842,7 +840,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Test Contact',
             'contactemail' => 'test@essex.gov.uk',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         // Different sponsor on group2 only.
@@ -857,7 +855,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Biz Contact',
             'contactemail' => 'biz@example.com',
             'amount' => 50,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         // Get sponsors for this user — should deduplicate Essex across groups.
@@ -896,7 +894,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'A',
             'contactemail' => 'a@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
         DB::table('groups_sponsorship')->insert([
             'groupid' => $groupB->id,
@@ -909,7 +907,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'B',
             'contactemail' => 'b@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         $sponsors = $this->service->getSponsorsForGroup($groupA->id);
@@ -935,7 +933,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'X',
             'contactemail' => 'x@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
         // Hidden.
         DB::table('groups_sponsorship')->insert([
@@ -949,7 +947,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Y',
             'contactemail' => 'y@example.com',
             'amount' => 100,
-            'visible' => false,
+            'visible' => FALSE,
         ]);
         // Active + visible.
         DB::table('groups_sponsorship')->insert([
@@ -963,7 +961,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Z',
             'contactemail' => 'z@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         $sponsors = $this->service->getSponsorsForGroup($group->id);
@@ -992,7 +990,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Old',
             'contactemail' => 'old@example.com',
             'amount' => 100,
-            'visible' => true,
+            'visible' => TRUE,
         ]);
 
         // Hidden sponsor.
@@ -1004,7 +1002,7 @@ class UnifiedDigestServiceTest extends TestCase
             'contactname' => 'Hidden',
             'contactemail' => 'hidden@example.com',
             'amount' => 100,
-            'visible' => false,
+            'visible' => FALSE,
         ]);
 
         $sponsors = $this->service->getSponsorsForUser($user);
@@ -1080,7 +1078,6 @@ class UnifiedDigestServiceTest extends TestCase
         $sent = [];
         Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
             $sent[] = $m;
-
             return true;
         });
         $this->assertCount(1, $sent);
@@ -1101,7 +1098,6 @@ class UnifiedDigestServiceTest extends TestCase
         $sent = [];
         Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
             $sent[] = $m;
-
             return true;
         });
         $shown = array_map(fn ($p) => (int) $p['msgid'], $sent[0]->mailDescriptor()['posts']);
@@ -1259,7 +1255,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame(array_slice($dropped, 0, $cap), $carried, 'and it keeps the head');
     }
 
-    public function test_the_carryover_is_not_o_red_into_the_window_query(): void
+    public function test_the_carryover_is_not_ORed_into_the_window_query(): void
     {
         // The carryover list is on messages.id; the window's range column is
         // messages_groups.arrival. ORing them puts a predicate on a DIFFERENT table inside
@@ -1297,7 +1293,7 @@ class UnifiedDigestServiceTest extends TestCase
         foreach ($queries as $sql) {
             $this->assertFalse(
                 $isWindow($sql) && $hasIdList($sql),
-                "the carryover is ORed into the windowed query, which costs the groupid index:\n".$sql
+                "the carryover is ORed into the windowed query, which costs the groupid index:\n" . $sql
             );
         }
 
@@ -1336,7 +1332,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
 
-        $pairs = $posts->map(fn ($p) => (int) $p->id.':'.(int) $p->groupid)->all();
+        $pairs = $posts->map(fn ($p) => (int) $p->id . ':' . (int) $p->groupid)->all();
         $this->assertSame(
             count($pairs),
             count(array_unique($pairs)),
@@ -1383,8 +1379,8 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotNull($cursorAfterSecondRun);
         $this->assertTrue(
             $cursorAfterSecondRun->greaterThanOrEqualTo($cursorAfterFirstRun),
-            'a carryover-only run dragged the cursor back into a window already sent: '
-                ."{$cursorAfterFirstRun} -> {$cursorAfterSecondRun}"
+            "a carryover-only run dragged the cursor back into a window already sent: "
+                . "{$cursorAfterFirstRun} -> {$cursorAfterSecondRun}"
         );
     }
 
@@ -1400,7 +1396,7 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
 
         // Set the fraction in SQL: the model formats dates to whole seconds on the way in.
-        $arrival = now()->subHour()->format('Y-m-d H:i:s').'.400000';
+        $arrival = now()->subHour()->format('Y-m-d H:i:s') . '.400000';
         DB::table('messages_groups')->where('msgid', $message->id)->update(['arrival' => $arrival]);
 
         Mail::fake();
@@ -1472,7 +1468,7 @@ class UnifiedDigestServiceTest extends TestCase
     /**
      * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
      *
-     * @param  int[]  $carryover
+     * @param int[] $carryover
      */
     private function trackerWithCarryover(User $recipient, array $carryover, \DateTimeInterface $cursor): UserDigest
     {
@@ -1527,7 +1523,6 @@ class UnifiedDigestServiceTest extends TestCase
         $sent = [];
         Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($m) use (&$sent) {
             $sent[] = $m;
-
             return true;
         });
 
@@ -1722,7 +1717,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $msg->id)
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('a', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
@@ -1767,7 +1762,7 @@ class UnifiedDigestServiceTest extends TestCase
         $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rippling (TestLocation)']);
         DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('b', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
@@ -1825,7 +1820,7 @@ class UnifiedDigestServiceTest extends TestCase
         $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: window (TestLocation)']);
         DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedImmediateCursor($group);
@@ -2001,8 +1996,8 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_outcomes')->insert(['msgid' => $taken->id, 'outcome' => Message::OUTCOME_TAKEN]);
         // Degraded bounds, as completion pruning writes them.
         DB::statement(
-            'UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
-              WHERE msgid = ?',
+            "UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
+              WHERE msgid = ?",
             [$taken->id]
         );
 
@@ -2061,9 +2056,9 @@ class UnifiedDigestServiceTest extends TestCase
     protected function seedReach(int $msgid, string $wkt): void
     {
         DB::statement(
-            'INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, '
-            .'total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) '
-            ."VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
@@ -2074,10 +2069,10 @@ class UnifiedDigestServiceTest extends TestCase
         // ONE callback is installed and it reads $this->reachArrivalBox -
         // a test that grows the reach updates the property, not the fake.
         $this->reachArrivalBox = $this->wktBounds($wkt);
-        if (! $this->reachArrivalFakeInstalled) {
+        if (!$this->reachArrivalFakeInstalled) {
             $this->reachArrivalFakeInstalled = true;
             Http::fake(function ($request) {
-                if (! str_contains($request->url(), 'reach-arrival')) {
+                if (!str_contains($request->url(), 'reach-arrival')) {
                     return null;
                 }
                 [$minLng, $minLat, $maxLng, $maxLat] = $this->reachArrivalBox;
@@ -2123,7 +2118,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->createMembership($poster, $group);
         $this->createMembership($recipient, $group);
         $this->seedImmediateCursor($group);
-
         return [$group, $poster, $recipient];
     }
 
@@ -2498,7 +2492,7 @@ class UnifiedDigestServiceTest extends TestCase
             DB::table('messages_groups')->where('msgid', $msg->id)
                 ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
             DB::table('messages_attachments')->insert([
-                'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat($copy, 32),
+                'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat($copy, 32),
                 'primary' => 1, 'archived' => 0,
             ]);
             $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
@@ -2905,7 +2899,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id,
-            'externaluid' => 'freegletusd-'.str_repeat('a', 32),
+            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
             'primary' => 1,
             'archived' => 0,
         ]);
@@ -2962,7 +2956,7 @@ class UnifiedDigestServiceTest extends TestCase
             $this->createMembership($recipient, $g);
             $this->seedImmediateCursor($g);
             $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
-            DB::table('messages_groups')->where('msgid', DB::table('messages')->where('subject', 'like', "OFFER: Item {$i}%")->max('id'))
+            DB::table('messages_groups')->where('msgid', DB::table('messages')->where('subject','like',"OFFER: Item {$i}%")->max('id'))
                 ->update(['arrival' => now()->subMinutes(10)]); // older than the AI-wait deadline so they all send
             $groups[$i] = $g;
         }
@@ -2978,8 +2972,8 @@ class UnifiedDigestServiceTest extends TestCase
             null, null, false, null, 1, 2
         );
 
-        $evenGroupCount = collect($groups)->filter(fn ($g) => $g->id % 2 === 0)->count();
-        $oddGroupCount = collect($groups)->filter(fn ($g) => $g->id % 2 === 1)->count();
+        $evenGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 0)->count();
+        $oddGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 1)->count();
 
         $this->assertEquals($evenGroupCount, $statsShard0['groups_processed'], 'Shard 0 must process even-id groups');
         $this->assertEquals($oddGroupCount, $statsShard1['groups_processed'], 'Shard 1 must process odd-id groups');
@@ -3041,7 +3035,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $b->id)->update(['arrival' => $now->copy()->addSecond()]);
         DB::table('messages_attachments')->insert([
             'msgid' => $b->id,
-            'externaluid' => 'freegletusd-'.str_repeat('b', 32),
+            'externaluid' => 'freegletusd-' . str_repeat('b', 32),
             'primary' => 1,
             'archived' => 0,
         ]);
@@ -3296,9 +3290,8 @@ class UnifiedDigestServiceTest extends TestCase
             $prop = new \ReflectionProperty($mail, 'posts');
             $prop->setAccessible(true);
             $subjects = $prop->getValue($mail)->map(fn ($p) => $p['message']->subject)->all();
-
             return in_array($dailyMsg->subject, $subjects, true)
-                && ! in_array($immediateMsg->subject, $subjects, true);
+                && !in_array($immediateMsg->subject, $subjects, true);
         });
     }
 
@@ -3338,7 +3331,6 @@ class UnifiedDigestServiceTest extends TestCase
     {
         $ref = new \ReflectionMethod($obj, $method);
         $ref->setAccessible(true);
-
         return $ref->invokeArgs($obj, $args);
     }
 
@@ -3498,14 +3490,13 @@ class UnifiedDigestServiceTest extends TestCase
         $latlng = [0.0, 0.0]; // recipient [lat, lng]
 
         $mk = function (int $id, float $lat, float $lng, int $ageH, int $views) {
-            $p = new \stdClass;
+            $p = new \stdClass();
             $p->id = $id;
             $p->lat = $lat;
             $p->lng = $lng;
             $p->arrival = now()->subHours($ageH);
             $p->views = $views;
             $p->replies = 0;
-
             return $p;
         };
 
@@ -3513,10 +3504,10 @@ class UnifiedDigestServiceTest extends TestCase
         // score; the rest then follow the score order. id1 ~55m, id2 ~110m are the two
         // nearest. id3/id4 are both ~1.1km, so the rest are ordered by the budget term:
         // id3 unseen (higher score) before id4 heavily viewed (lower score).
-        $nearest = $mk(1, 0.0005, 0.0, 1, 0);   // ~55m   -> pinned #1
-        $second = $mk(2, 0.0010, 0.0, 1, 0);   // ~110m  -> pinned #2
+        $nearest  = $mk(1, 0.0005, 0.0, 1, 0);   // ~55m   -> pinned #1
+        $second   = $mk(2, 0.0010, 0.0, 1, 0);   // ~110m  -> pinned #2
         $farFresh = $mk(3, 0.0100, 0.0, 1, 0);   // ~1.1km, unseen      -> rest, higher score
-        $farBusy = $mk(4, 0.0100, 0.0, 1, 500); // ~1.1km, 500 views   -> rest, lower score
+        $farBusy  = $mk(4, 0.0100, 0.0, 1, 500); // ~1.1km, 500 views   -> rest, lower score
 
         $sorted = $this->callPrivate(
             $this->service,
@@ -3567,7 +3558,6 @@ class UnifiedDigestServiceTest extends TestCase
         $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
         $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
             $captured = $mailable;
-
             return 'spooled';
         });
         $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
@@ -3619,7 +3609,6 @@ class UnifiedDigestServiceTest extends TestCase
         $spy = \Mockery::mock(\App\Services\EmailSpoolerService::class);
         $spy->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$captured) {
             $captured = $mailable;
-
             return 'spooled';
         });
         $this->app->instance(\App\Services\EmailSpoolerService::class, $spy);
@@ -3690,9 +3679,9 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
         // Reach (status 'expanding', just updated) covering the member's location.
         DB::statement(
-            'INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, '
-            .'total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) '
-            ."VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
         DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
@@ -3700,7 +3689,7 @@ class UnifiedDigestServiceTest extends TestCase
         // The stored label admits every asked point: the reach-mail pass is
         // under test, not the geometry.
         Http::fake(function ($request) {
-            if (! str_contains($request->url(), 'reach-arrival')) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
                 return null;
             }
             $results = array_map(
@@ -4422,10 +4411,10 @@ class UnifiedDigestServiceTest extends TestCase
             'subject' => 'OFFER: Sofa (London)',
         ]);
         MessageAttachment::create([
-            'msgid' => $msg->id,
-            'externalurl' => 'https://cdn.example.com/ai.jpg',
-            'archived' => 0,
-            'primary' => 1,
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/ai.jpg',
+            'archived'     => 0,
+            'primary'      => 1,
             'externalmods' => json_encode(['ai' => true]),
         ]);
 
@@ -4712,6 +4701,7 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+
     public function test_newly_reached_mail_answers_from_the_label_for_a_retired_grid(): void
     {
         // A retired grid (label stored, squares drained): the "you are now in
@@ -4730,7 +4720,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $msg->id)
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('a', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
@@ -4905,7 +4895,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $msg->id)
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('b', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('b', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
@@ -5210,7 +5200,7 @@ class UnifiedDigestServiceTest extends TestCase
         config(['freegle.digest.immediate_allowlist' => '*', 'freegle.ripple.rural_access.enabled' => true]);
         $msg = $this->seedRuralRingDigestPost('sparse');
         DB::table('messages_attachments')->insert([
-            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('c', 32),
             'primary' => 1, 'archived' => 0,
         ]);
         DB::table('config')->upsert(

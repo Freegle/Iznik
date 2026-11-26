@@ -2,9 +2,9 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Membership;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Ripple\RippleIntroMail;
-use App\Models\Membership;
 use App\Models\Message;
 use App\Services\EmailSpoolerService;
 use App\Services\Ripple\CellSetService;
@@ -55,9 +55,7 @@ class ResumedReachTest extends TestCase
     use SeedsReachCells;
 
     private const P1 = 'POLYGON((-0.20 51.45, 0.00 51.45, 0.00 51.55, -0.20 51.55, -0.20 51.45))';
-
     private const P2 = 'POLYGON((-0.20 51.45, 0.12 51.45, 0.12 51.55, -0.20 51.55, -0.20 51.45))';
-
     private const P3 = 'POLYGON((-0.20 51.45, 0.30 51.45, 0.30 51.55, -0.20 51.55, -0.20 51.45))';
 
     /** Where N and W are: inside tick 1, so a copy could have rippled in there at the start. */
@@ -71,19 +69,12 @@ class ResumedReachTest extends TestCase
 
     /** [lat, lng] of each member. */
     private const AT_A = [51.50, -0.15];
-
     private const AT_B = [51.50, 0.06];
-
     private const AT_C = [51.50, 0.20];
-
     private const AT_D = [51.48, -0.16];
-
     private const AT_NM = [51.50, -0.14];
-
     private const AT_WM = [51.50, -0.13];
-
     private const AT_FM = [51.50, 0.07];
-
     private const AT_GM = [51.50, 0.22];
 
     /** Drive-time budget of each tick, in seconds, as the stored schedule below gives them. */
@@ -221,11 +212,11 @@ class ResumedReachTest extends TestCase
      * label and its union threshold, so the grid has been drained and the label is the only record
      * of the reach (what most live rows look like).
      *
-     * @param  string[]  $told  the members already in rippling_reach_notified
+     * @param string[] $told the members already in rippling_reach_notified
      */
     private function frozenReach(string $shape = 'grid', int $tick = 1, int $arrivedHoursAgo = 4, array $told = ['A']): \stdClass
     {
-        $f = new \stdClass;
+        $f = new \stdClass();
         $arrival = now()->subHours($arrivedHoursAgo);
 
         $f->mod = $this->createTestUser();
@@ -341,7 +332,7 @@ class ResumedReachTest extends TestCase
     /** One run of ripple:expand. */
     private function engineRun(): array
     {
-        return (new ExpandService(new ReachService))->process(false, 500);
+        return (new ExpandService(new ReachService()))->process(false, 500);
     }
 
     /**
@@ -354,7 +345,7 @@ class ResumedReachTest extends TestCase
         $this->spooled = [];
         $this->labelBudgets = [];
 
-        $stats = (new UnifiedDigestService)->sendReachDigests();
+        $stats = (new UnifiedDigestService())->sendReachDigests();
 
         return [$stats, $this->mailedUserIds()];
     }
@@ -429,7 +420,7 @@ class ResumedReachTest extends TestCase
         $cells = DB::table('rippling_reach')->where('msgid', $f->msgid)->value('polygon_cells');
         $this->assertNotNull($cells, 'the row must hold a reach grid to probe');
 
-        return (new CellSetService)->containsEncoded($cells, $at[1], $at[0]) === true;
+        return (new CellSetService())->containsEncoded($cells, $at[1], $at[0]) === true;
     }
 
     private function copy(\stdClass $f, string $community): ?object
@@ -672,7 +663,7 @@ class ResumedReachTest extends TestCase
         // Neither a second mailer run nor a direct ask mails anyone again.
         [, $again] = $this->mailerRun();
         $this->assertSame([], $again);
-        $this->assertSame(0, (new UnifiedDigestService)->mailNewlyReachedForPost($f->msgid));
+        $this->assertSame(0, (new UnifiedDigestService())->mailNewlyReachedForPost($f->msgid));
 
         // Time passes: tick 3 is due, the reach widens to C and to G, and only they are new.
         DB::table('rippling_reach')->where('msgid', $f->msgid)->update([

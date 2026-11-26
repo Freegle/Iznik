@@ -27,7 +27,7 @@ class PostLogCsvFetcherTest extends TestCase
     {
         parent::setUp();
 
-        $this->fetcher = new PostLogCsvFetcher;
+        $this->fetcher = new PostLogCsvFetcher();
 
         if (is_file($this->fetcher->cachePath())) {
             $this->savedCache = (string) file_get_contents($this->fetcher->cachePath());

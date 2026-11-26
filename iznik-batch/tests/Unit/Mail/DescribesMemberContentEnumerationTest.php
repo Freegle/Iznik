@@ -112,8 +112,8 @@ class DescribesMemberContentEnumerationTest extends TestCase
         $unclassified = array_diff($found, $classified);
         $this->assertEmpty(
             $unclassified,
-            'New Mailable(s) not classified in '.static::class.' - add to IMPLEMENTERS, '
-            .'EXEMPT, or KNOWN_GAPS: '.implode(', ', $unclassified)
+            "New Mailable(s) not classified in " . static::class . " - add to IMPLEMENTERS, "
+            . "EXEMPT, or KNOWN_GAPS: " . implode(', ', $unclassified)
         );
 
         // A class listed here that no longer extends MjmlMailable (renamed, removed) would
@@ -122,7 +122,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
         $this->assertEmpty(
             $stale,
             'Class(es) listed in this test no longer exist as a concrete Mailable under app/Mail - '
-            .'remove from IMPLEMENTERS, EXEMPT or KNOWN_GAPS: '.implode(', ', $stale)
+            . 'remove from IMPLEMENTERS, EXEMPT or KNOWN_GAPS: ' . implode(', ', $stale)
         );
     }
 
@@ -155,7 +155,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
                 DescribesMemberContent::class,
                 class_implements($class) ?: [],
                 "{$class} implements DescribesMemberContent but is listed as EXEMPT or a KNOWN GAP - "
-                .'move it to IMPLEMENTERS and give it an about() method'
+                . 'move it to IMPLEMENTERS and give it an about() method'
             );
         }
     }
@@ -178,9 +178,9 @@ class DescribesMemberContentEnumerationTest extends TestCase
 
         foreach (File::allFiles(app_path('Mail')) as $file) {
             $relative = $file->getRelativePathname();
-            $class = 'App\\Mail\\'.str_replace(['/', '.php'], ['\\', ''], $relative);
+            $class = 'App\\Mail\\' . str_replace(['/', '.php'], ['\\', ''], $relative);
 
-            if (! class_exists($class)) {
+            if (!class_exists($class)) {
                 // Interfaces (Contracts/) and traits (Traits/) are not classes.
                 continue;
             }

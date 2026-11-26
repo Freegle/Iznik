@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Models\MessageOutcome;
 use App\Services\AutoApproveService;
 use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +21,7 @@ class AutoApproveServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new AutoApproveService;
+        $this->service = new AutoApproveService();
     }
 
     public function test_stats_structure(): void
@@ -138,14 +139,14 @@ class AutoApproveServiceTest extends TestCase
         // Reach (status 'done') covering the member's location; the stored
         // label is the record and the faked routing server admits the point.
         DB::statement(
-            'INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, '
-            .'total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) '
-            ."VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
         DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (! str_contains($request->url(), 'reach-arrival')) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
                 return null;
             }
             $results = array_map(fn ($pt) => ['arrival' => 100, 'in' => true], $request['points'] ?? []);
@@ -183,9 +184,9 @@ class AutoApproveServiceTest extends TestCase
             'arrival' => now()->subHours(1),
         ]);
         DB::statement(
-            'INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, '
-            .'total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) '
-            ."VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
+            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
         // The item has been collected before the newly-reached mail runs.
@@ -1289,4 +1290,5 @@ class AutoApproveServiceTest extends TestCase
         $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection,
             'a content-check flag is a description of the row, not a hold by the group\'s rules');
     }
+
 }

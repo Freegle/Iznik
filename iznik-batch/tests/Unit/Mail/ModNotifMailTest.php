@@ -35,9 +35,9 @@ class ModNotifMailTest extends TestCase
         // "There's stuff to do on ModTools" rather than leaving the preview blank.
         $html = view('emails.mjml.admin.mod-notif', [
             'recipientName' => 'Bob Mod',
-            'email' => 'bob@example.com',
-            'htmlSummary' => '<p>Some items await.</p>',
-            'settingsUrl' => 'https://modtools.org/settings',
+            'email'         => 'bob@example.com',
+            'htmlSummary'   => '<p>Some items await.</p>',
+            'settingsUrl'   => 'https://modtools.org/settings',
             // modNotifSubject absent — triggers the ?? fallback in the template
         ])->render();
 

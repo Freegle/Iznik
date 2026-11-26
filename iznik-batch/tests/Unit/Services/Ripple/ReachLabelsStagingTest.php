@@ -46,7 +46,7 @@ class ReachLabelsStagingTest extends TestCase
         return (object) ['reach_labels' => $live, 'reach_labels_next' => $next, 'reach_labels_next_fp' => $nextFp];
     }
 
-    public function test_no_pairing_record_means_the_live_column(): void
+    public function testNoPairingRecordMeansTheLiveColumn(): void
     {
         $this->setPairing(null);
 
@@ -56,7 +56,7 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame('live', ReachService::pickLabels($this->row('live', 'staged', self::FP)));
     }
 
-    public function test_matching_stamp_picks_the_staged_label(): void
+    public function testMatchingStampPicksTheStagedLabel(): void
     {
         $this->setPairing((string) self::FP);
 
@@ -73,7 +73,7 @@ class ReachLabelsStagingTest extends TestCase
      * an integer such a value became the largest integer: the SQL then matched no stamp, and in PHP any
      * two large fingerprints looked the same. It must be matched exactly in both.
      */
-    public function test_a_fingerprint_above_the_largest_integer_still_picks_the_staged_label(): void
+    public function testAFingerprintAboveTheLargestIntegerStillPicksTheStagedLabel(): void
     {
         $big = '12345678901234567890';
         $this->setPairing($big);
@@ -111,7 +111,7 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame('live', $stale->picked);
     }
 
-    public function test_stale_stamp_falls_back_to_the_live_column(): void
+    public function testStaleStampFallsBackToTheLiveColumn(): void
     {
         $this->setPairing((string) self::FP);
 
@@ -122,7 +122,7 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertNull(ReachService::pickLabels(null));
     }
 
-    public function test_non_numeric_record_is_treated_as_absent(): void
+    public function testNonNumericRecordIsTreatedAsAbsent(): void
     {
         $this->setPairing('not a fingerprint');
 
@@ -130,7 +130,7 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame('reach_labels', ReachService::liveLabelsSql());
     }
 
-    public function test_sql_expression_selects_the_same_blob_as_php(): void
+    public function testSqlExpressionSelectsTheSameBlobAsPhp(): void
     {
         $this->setPairing((string) self::FP);
 

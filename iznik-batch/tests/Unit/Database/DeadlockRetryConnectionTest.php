@@ -75,12 +75,9 @@ class DeadlockRetryConnectionTest extends TestCase
         // Subclass that fails with a deadlock the first N times runQueryCallback
         // is invoked, then succeeds. Proves the retry loop actually reruns the
         // callback rather than just swallowing the exception.
-        $testable = new class($conn->getPdo(), $conn->getDatabaseName(), $conn->getTablePrefix(), $conn->getConfig()) extends DeadlockRetryConnection
-        {
+        $testable = new class($conn->getPdo(), $conn->getDatabaseName(), $conn->getTablePrefix(), $conn->getConfig()) extends DeadlockRetryConnection {
             public int $callCount = 0;
-
             public int $failUntilAttempt = 2;
-
             public int $lastDelayMs = 0;
 
             protected function runQueryCallback($query, $bindings, \Closure $callback)
@@ -92,7 +89,6 @@ class DeadlockRetryConnectionTest extends TestCase
                         new \PDOException('SQLSTATE[40001]: Deadlock found when trying to get lock; try restarting transaction', 40001)
                     );
                 }
-
                 return 1;
             }
         };
@@ -114,8 +110,7 @@ class DeadlockRetryConnectionTest extends TestCase
         $conn = DB::connection();
 
         // Always fails with deadlock — after maxRetries attempts, should rethrow.
-        $testable = new class($conn->getPdo(), $conn->getDatabaseName(), $conn->getTablePrefix(), $conn->getConfig()) extends DeadlockRetryConnection
-        {
+        $testable = new class($conn->getPdo(), $conn->getDatabaseName(), $conn->getTablePrefix(), $conn->getConfig()) extends DeadlockRetryConnection {
             public int $callCount = 0;
 
             protected function runQueryCallback($query, $bindings, \Closure $callback)

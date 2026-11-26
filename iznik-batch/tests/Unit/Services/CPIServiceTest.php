@@ -17,7 +17,7 @@ class CPIServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new CPIService;
+        $this->service = new CPIService();
         Mail::fake();
     }
 
@@ -67,7 +67,7 @@ class CPIServiceTest extends TestCase
         $stored = DB::table('config')->where('key', CPIService::CONFIG_KEY)->first();
         $this->assertNotNull($stored);
 
-        $decoded = json_decode($stored->value, true);
+        $decoded = json_decode($stored->value, TRUE);
         $this->assertArrayHasKey('data', $decoded);
         $this->assertEquals(93.4, $decoded['data'][2011]);
 
@@ -78,7 +78,7 @@ class CPIServiceTest extends TestCase
     public function test_fetch_cpi_handles_api_failure(): void
     {
         Http::fake([
-            CPIService::ONS_API_URL => Http::response(null, 500),
+            CPIService::ONS_API_URL => Http::response(NULL, 500),
         ]);
 
         $result = $this->service->fetchAndStoreCPI();
@@ -108,7 +108,7 @@ class CPIServiceTest extends TestCase
         // Remove 2011 from the data.
         $invalidData['years'] = array_filter(
             $invalidData['years'],
-            fn ($y) => $y['year'] !== '2011'
+            fn($y) => $y['year'] !== '2011'
         );
 
         Http::fake([
@@ -261,7 +261,7 @@ class CPIServiceTest extends TestCase
         // This should succeed if ONS is up.
         $this->assertTrue(
             $result['success'],
-            'Failed to fetch from ONS API: '.($result['message'] ?? 'unknown error')
+            'Failed to fetch from ONS API: ' . ($result['message'] ?? 'unknown error')
         );
 
         // Should have data for 2011 and recent years.

@@ -5,8 +5,8 @@ namespace Tests\Unit\Services;
 use App\Services\AuthorityStatsService;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
-use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\SeedsAuthorityStats;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -24,7 +24,7 @@ class AuthorityStatsServiceCoverageTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new AuthorityStatsService;
+        $this->service = new AuthorityStatsService();
     }
 
     // --- pure helpers --------------------------------------------------------

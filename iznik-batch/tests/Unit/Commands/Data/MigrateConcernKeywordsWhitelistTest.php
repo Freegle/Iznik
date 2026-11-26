@@ -26,16 +26,16 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ContentCheckService;
+        $this->service = new ContentCheckService();
     }
 
     private function seedSpamKeyword(string $suffix, string $action): string
     {
-        $word = 'ckmigrate'.$suffix.uniqid();
+        $word = 'ckmigrate' . $suffix . uniqid();
         DB::table('spam_keywords')->insert([
-            'word' => $word,
+            'word'   => $word,
             'action' => $action,
-            'type' => 'Literal',
+            'type'   => 'Literal',
         ]);
         $this->words[] = $word;
 
@@ -87,12 +87,12 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
         // the end of this test.)
         $plant = 'purple pampas grass';
         DB::table('concern_keywords')->insert([
-            'keyword' => $plant,
-            'category' => 'substance_regulated',
+            'keyword'    => $plant,
+            'category'   => 'substance_regulated',
             'match_mode' => 'fuzzy',
-            'scope' => 'global',
-            'group_id' => 0,
-            'action' => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'flag',
         ]);
         $this->words[] = $plant;
 
@@ -103,12 +103,12 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
         // Whitelisting 'grass' cuts the word out of the text first, and the
         // plant keyword can no longer match.
         DB::table('concern_keywords')->insert([
-            'keyword' => 'grass',
-            'category' => 'allowed',
+            'keyword'    => 'grass',
+            'category'   => 'allowed',
             'match_mode' => 'literal',
-            'scope' => 'global',
-            'group_id' => 0,
-            'action' => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'flag',
         ]);
         $this->words[] = 'grass';
 
@@ -121,12 +121,12 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
         // a block keyword would switch that keyword off with no error.
         $blocked = 'blocked pampas grass';
         DB::table('concern_keywords')->insert([
-            'keyword' => $blocked,
-            'category' => 'substance_regulated',
+            'keyword'    => $blocked,
+            'category'   => 'substance_regulated',
             'match_mode' => 'fuzzy',
-            'scope' => 'global',
-            'group_id' => 0,
-            'action' => 'block',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'block',
         ]);
         $this->words[] = $blocked;
 
@@ -138,7 +138,7 @@ class MigrateConcernKeywordsWhitelistTest extends TestCase
     public function test_review_and_spam_actions_keep_their_own_categories(): void
     {
         $review = $this->seedSpamKeyword('_rv', 'Review');
-        $spam = $this->seedSpamKeyword('_sp', 'Spam');
+        $spam   = $this->seedSpamKeyword('_sp', 'Spam');
 
         $this->artisan('data:migrate-concern-keywords --force')->assertSuccessful();
 

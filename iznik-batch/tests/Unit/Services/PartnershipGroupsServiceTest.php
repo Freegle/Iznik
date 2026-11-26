@@ -29,7 +29,7 @@ class PartnershipGroupsServiceTest extends TestCase
     private function partnership(array $overrides = []): int
     {
         $authorityId = (int) DB::table('authorities')->insertGetId([
-            'name' => 'Svc Test Authority '.uniqid(),
+            'name' => 'Svc Test Authority ' . uniqid(),
             'polygon' => DB::raw("ST_GeomFromText('POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))', 3857)"),
         ]);
 
@@ -48,7 +48,7 @@ class PartnershipGroupsServiceTest extends TestCase
     private function group(): int
     {
         return (int) DB::table('groups')->insertGetId([
-            'nameshort' => 'svcgrp'.uniqid(),
+            'nameshort' => 'svcgrp' . uniqid(),
             'type' => 'Freegle',
             'publish' => 1,
             'onmap' => 1,
