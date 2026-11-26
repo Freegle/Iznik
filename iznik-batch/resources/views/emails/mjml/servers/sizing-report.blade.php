@@ -20,7 +20,7 @@
         </mj-text>
         @if ($historyDays < $minHistoryDays)
         <mj-text font-size="14px" line-height="1.5" padding="5px 25px" color="#8a5a00">
-          There are {{ $historyDays }} day{{ $historyDays === 1 ? '' : 's' }} of readings so far. A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
+          {{ $historyDays === 0 ? 'Readings only began in the last day.' : 'There '.($historyDays === 1 ? 'is 1 day' : "are {$historyDays} days").' of readings so far.' }} A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
         </mj-text>
         @endif
       </mj-column>

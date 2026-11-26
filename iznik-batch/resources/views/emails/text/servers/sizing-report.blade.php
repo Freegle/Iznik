@@ -12,7 +12,7 @@ The moves up suggested below would cost {{ $possibleCost }} a month more.
 @endif
 @if ($historyDays < $minHistoryDays)
 
-There are {{ $historyDays }} day(s) of readings so far. A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
+{{ $historyDays === 0 ? 'Readings only began in the last day.' : 'There '.($historyDays === 1 ? 'is 1 day' : "are {$historyDays} days").' of readings so far.' }} A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
 @endif
 
 @if ($review)

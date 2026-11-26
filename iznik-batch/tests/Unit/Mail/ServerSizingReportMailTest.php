@@ -271,8 +271,9 @@ class ServerSizingReportMailTest extends TestCase
 
             $this->assertStringContainsString('The AI review was not available this week', $out);
             $this->assertStringContainsString('No change that saves money is suggested this week', $out);
-            $this->assertStringContainsString('1 day', $out);
-            $this->assertStringContainsString('readings so far', $out);
+            $this->assertStringContainsString('There is 1 day of readings so far.', $out);
+            $this->assertStringContainsString('Readings only began in the last day.', view($view, ['historyDays' => 0] + $data)->render());
+            $this->assertStringContainsString('There are 5 days of readings so far.', view($view, ['historyDays' => 5] + $data)->render());
             $this->assertStringNotContainsString('discount', $out);
             $this->assertStringNotContainsString('Disks to look at', $out);
             $this->assertStringNotContainsString('would cost', $out);
