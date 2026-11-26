@@ -1,6 +1,10 @@
 Server sizing
 =============
 
+@if (!empty($note))
+Correction. {!! $note !!}
+
+@endif
 We pay about {{ $monthlyPaid }} a month for servers and disk.
 @if ($possibleSaving)
 The moves down suggested below would save {{ $possibleSaving }} a month.
@@ -63,6 +67,6 @@ Disks to look at
 @endif
 How to read this. "Busy end" is the level a server stayed under for 95% of the week. A smaller package is suggested only if the busiest week in up to eight would leave headroom on it: load at most 70% of the processors, processor time at most 60% in use, memory at most 80% used. Only packages of the same kind are compared. The next size up is suggested when load is above the number of processors while they are more than 60% in use, processor time is above 85% in use, or memory is above 92% used. A disk is flagged at 85% full, or when its growth would take it to 90% within eight weeks.
 
-Costs are Katapult's monthly prices for our account ({{ $monthlyList }} in all){{ $discountPct > 0 ? ", less our {$discountPct}% discount" : "" }}. They leave out VAT, data transfer and backups, so check a figure against an invoice before relying on it. Taking processors or memory away needs the server shut down; adding them does not. Disks can grow but never shrink.
+Costs are Katapult's monthly prices for our account ({{ $monthlyList }} in all){{ $discountPct > 0 ? ", less our {$discountPct}% discount" : "" }}. They leave out VAT, object storage, data transfer and backups. Every GB of disk is charged for, whatever the package includes, and a stopped server is still charged for its package, so a change of package changes the package price and nothing else. Taking processors or memory away needs the server shut down; adding them does not. Disks can grow but never shrink.
 
 This is an automated report from {{ $siteName }}, sent weekly by servers:rightsize-report.

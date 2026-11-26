@@ -49,18 +49,18 @@ class RightsizeReportCommandTest extends TestCase
             return $mail->hasTo('sizing@example.org')
                 && $mail->envelope()->subject === 'Server sizing: 1 size change suggested'
                 && $mail->review['changes'] === ['Move Alpha down to C-12.']
-                // 136 now, 44 + 150 GB extra disk at 0.2 = 74 on C-12, half price: saves 31.
-                && $cards['Alpha']['verdict'] === 'Move down to C-12: saves £31.00 a month'
+                // 136 now and 44 on C-12, the disk the same on both, half price: saves 46.
+                && $cards['Alpha']['verdict'] === 'Move down to C-12: saves £46.00 a month'
                 && $cards['Alpha']['tone'] === 'act'
-                && $cards['Alpha']['cost'] === '£68.00 a month'
+                && $cards['Alpha']['cost'] === '£98.00 a month'
                 && $cards['Beta']['verdict'] === 'Not measured'
                 && $cards['Gamma']['verdict'] === 'Stopped'
-                && $mail->analysis['fleet']['possible_saving_paid'] === 31.0;
+                && $mail->analysis['fleet']['possible_saving_paid'] === 46.0;
         });
         // The AI is handed the worded verdict, not raw numbers to work from.
         Process::assertRan(fn ($process) => str_contains(
             ((array) $process->command)[array_search('-p', (array) $process->command, true) + 1],
-            'Move down to C-12: saves £31.00 a month'
+            'Move down to C-12: saves £46.00 a month'
         ));
         Process::assertRanTimes(fn () => true, 1);
     }
@@ -75,7 +75,7 @@ class RightsizeReportCommandTest extends TestCase
             $alpha = collect($mail->cards())->firstWhere('name', 'Alpha');
 
             return $mail->envelope()->subject === 'Server sizing: no size changes suggested'
-                && $alpha['verdict'] === 'Too early to say. So far: could move down to C-12, saving £31.00 a month'
+                && $alpha['verdict'] === 'Too early to say. So far: could move down to C-12, saving £46.00 a month'
                 && $alpha['tone'] === 'info';
         });
     }
@@ -102,6 +102,15 @@ class RightsizeReportCommandTest extends TestCase
 
         Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->hasTo('someone@example.org') && $mail->review === null);
         Process::assertNothingRan();
+    }
+
+    public function test_a_note_marks_the_mail_as_a_correction(): void
+    {
+        $this->artisan('servers:rightsize-report', ['--note' => 'The costs in the last report were too low.', '--no-review' => true])
+            ->assertExitCode(0);
+
+        Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->note === 'The costs in the last report were too low.'
+            && $mail->envelope()->subject === 'Corrected: Server sizing: no size changes suggested');
     }
 
     public function test_without_a_katapult_token_or_a_recipient_it_does_nothing(): void

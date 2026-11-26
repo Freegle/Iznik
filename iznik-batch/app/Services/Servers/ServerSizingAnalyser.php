@@ -196,13 +196,15 @@ class ServerSizingAnalyser
 
         $diskTotal = 0;
         foreach ($disks as $disk) {
-            if ($disk['machine_id'] === $machine['id'] && $disk['state'] === 'built') {
+            // Every disk is charged for, built or not.
+            if ($disk['machine_id'] === $machine['id']) {
                 $diskTotal += $disk['size_gb'];
             }
         }
 
         $running = $machine['state'] === 'started';
-        $list = $this->monthlyCost($package, $diskTotal, $machine['ipv4'], $prices, $running);
+        $list = $this->monthlyCost($package, $diskTotal, $machine['ipv4'], $prices);
+        $diskList = $diskTotal * $prices['disk_gb'];
         $end = $now->getTimestamp();
         $latest = $samples === [] ? null : $samples[count($samples) - 1];
 
@@ -230,7 +232,7 @@ class ServerSizingAnalyser
             ],
             'package_name' => $package['name'] ?? $machine['package_name'],
             'disk_total_gb' => $diskTotal,
-            'extra_disk_gb' => $package === null ? 0 : max(0, $diskTotal - $package['disk_gb']),
+            'disk_cost' => ['list' => round($diskList, 2), 'paid' => round($diskList * (1 - $discount), 2)],
             'ipv4' => $machine['ipv4'],
             'cost' => ['list' => round($list, 2), 'paid' => round($list * (1 - $discount), 2)],
             'measured' => $week !== null,
@@ -254,7 +256,7 @@ class ServerSizingAnalyser
 
         if (! $running) {
             $server['verdict'] = 'stopped';
-            $server['reasons'][] = 'Stopped. Only its disk is charged for.';
+            $server['reasons'][] = 'Stopped, but still charged for its package and its disk.';
 
             return $server;
         }
@@ -379,7 +381,7 @@ class ServerSizingAnalyser
                 if ($option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']
                     && (! $shortOfProcessors || $option['cpus'] > $package['cpus'])
                     && (! $shortOfMemory || $option['memory_gb'] > $package['memory_gb'])) {
-                    $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices, true);
+                    $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices);
                     if (! $fits($option)) {
                         $reasons[] = 'The next size up may still be short of headroom; this report looks again next week.';
                     }
@@ -402,19 +404,19 @@ class ServerSizingAnalyser
             return ['keep', null, $reasons];
         }
 
-        // The cheapest step down the ladder that fits, once the disk it no longer includes is paid for.
+        // The cheapest step down the ladder that fits and is no bigger in either measure.
         $best = null;
         foreach ($position === false ? [] : array_slice($ladder, 0, $position) as $option) {
             if (! $fits($option) || $option['cpus'] > $package['cpus'] || $option['memory_gb'] > $package['memory_gb']) {
                 continue;
             }
-            $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices, true);
+            $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices);
             if ($best === null || $cost < $best['list']) {
                 $best = ['package' => $option, 'list' => $cost];
             }
         }
 
-        if ($best !== null && $best['list'] < $currentList - 1.0) {
+        if ($best !== null && $best['list'] < $currentList - 0.005) {
             $reasons[] = sprintf(
                 'In its busiest of %d week(s) it needed about %d processor(s) and %s GB of memory with headroom; %s has %d and %d GB.',
                 $peak['weeks'],
@@ -437,7 +439,7 @@ class ServerSizingAnalyser
                 'memory' => $nextDown['memory_gb'] < $needs['memory_gb'],
             ]));
             $reasons[] = $short === []
-                ? 'The next size down would fit but saves nothing once its disk is paid for.'
+                ? 'The next cheaper package would fit, but it is not smaller in both processors and memory.'
                 : 'No smaller package leaves headroom: it would be short of '.implode(' and ', $short).'.';
         }
 
@@ -481,7 +483,7 @@ class ServerSizingAnalyser
 
         foreach (['down' => $position - 1, 'up' => $position + 1] as $direction => $index) {
             if (isset($ladder[$index])) {
-                $list = $this->monthlyCost($ladder[$index], $diskTotal, $ipv4, $prices, true);
+                $list = $this->monthlyCost($ladder[$index], $diskTotal, $ipv4, $prices);
                 $steps[$direction] = [
                     'name' => $ladder[$index]['name'],
                     'cpus' => $ladder[$index]['cpus'],
@@ -521,20 +523,18 @@ class ServerSizingAnalyser
     }
 
     /**
-     * What a machine costs a month before discount: the package, disk beyond what the package
-     * includes, and addresses beyond the first. A stopped machine is charged for its disk only.
+     * What a machine costs a month before discount: the package, every GB of its disk, and
+     * addresses beyond the first. Checked against the invoice of 10 November 2026: disk is charged
+     * for in full whatever the package says it includes, and a stopped machine is still charged for
+     * its package. So a change of package changes the package price and nothing else.
      *
      * @param  array<string, mixed>|null  $package
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
      */
-    private function monthlyCost(?array $package, int $diskTotal, int $ipv4, array $prices, bool $running): float
+    private function monthlyCost(?array $package, int $diskTotal, int $ipv4, array $prices): float
     {
-        if (! $running || $package === null) {
-            return $diskTotal * $prices['disk_gb'];
-        }
-
-        return ($prices['packages'][$package['id']] ?? 0.0)
-            + max(0, $diskTotal - $package['disk_gb']) * $prices['disk_gb']
+        return ($package === null ? 0.0 : ($prices['packages'][$package['id']] ?? 0.0))
+            + $diskTotal * $prices['disk_gb']
             + max(0, $ipv4 - 1) * $prices['ipv4'];
     }
 

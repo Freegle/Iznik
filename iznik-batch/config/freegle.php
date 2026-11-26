@@ -1620,6 +1620,9 @@ return [
         'katapult_api' => EnvSetting::env('KATAPULT_API_URL', 'https://api.katapult.io/core/v1'),
         // Who the weekly report goes to. Empty: no report.
         'report_to' => EnvSetting::env('SERVERS_REPORT_TO', ''),
+        // More ssh targets to sample, beside FREEGLE_MONITORING_HOSTS: hosts whose size we want to
+        // know but which the patch and monit checks do not cover. Comma-separated, environment only.
+        'extra_hosts' => EnvSetting::env('SERVERS_EXTRA_HOSTS', ''),
         // The share taken off Katapult's prices for our account, 0 to 1 (0.5 is half price).
         'price_discount' => (float) EnvSetting::env('SERVERS_PRICE_DISCOUNT', 0),
         // Days of readings needed before a size change is suggested, so a normal fortnight has been seen.

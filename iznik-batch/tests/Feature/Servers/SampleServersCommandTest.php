@@ -94,6 +94,18 @@ class SampleServersCommandTest extends TestCase
         $this->assertSame(0, ServerSample::where('host', 'half-a-reading')->count());
     }
 
+    public function test_sizing_only_hosts_are_sampled_too_and_a_host_in_both_lists_is_sampled_once(): void
+    {
+        $extra = 'extra-'.uniqid();
+        config(['freegle.monitoring.hosts' => 'root@one', 'freegle.servers.extra_hosts' => 'root@extra, root@one']);
+        $this->answers = ['root@one' => $this->reading('one-'.uniqid()), 'root@extra' => $this->reading($extra)];
+
+        $this->artisan('servers:sample')->expectsOutputToContain('Sampled 2 host(s)')->assertExitCode(0);
+
+        $this->assertSame(['root@one', 'root@extra'], array_column($this->calls, 0));
+        $this->assertSame(1, ServerSample::where('host', $extra)->count());
+    }
+
     public function test_every_host_silent_is_a_failed_run(): void
     {
         config(['freegle.monitoring.hosts' => 'root@silent']);

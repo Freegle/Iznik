@@ -20,7 +20,7 @@ class ServerSizingReportMailTest extends TestCase
             'package' => ['name' => 'C-24', 'cpus' => 8, 'memory_gb' => 24, 'disk_gb' => 225],
             'package_name' => 'C-24',
             'disk_total_gb' => 300,
-            'extra_disk_gb' => 75,
+            'disk_cost' => ['list' => 60.0, 'paid' => 30.0],
             'ipv4' => 1,
             'cost' => ['list' => 101.25, 'paid' => 50.63],
             'measured' => true,
@@ -67,7 +67,7 @@ class ServerSizingReportMailTest extends TestCase
         $card = $this->mail([$this->server()])->cards()[0];
 
         $this->assertSame('Alpha', $card['name']);
-        $this->assertSame('C-24: 8 processors, 24 GB memory, 225 GB disk included', $card['package']);
+        $this->assertSame('C-24: 8 processors, 24 GB memory', $card['package']);
         $this->assertSame('£50.63 a month', $card['cost']);
         $this->assertSame('Move up to C-36: costs £16.87 more a month', $card['verdict']);
         $this->assertSame('act', $card['tone']);
@@ -76,7 +76,7 @@ class ServerSizingReportMailTest extends TestCase
             ['Processor time in use', '67% at the busy end, 41% on average'],
             ['Memory in use', '19 of 23.4 GB (81%), swap up to 4 GB'],
             ['Disk /', '210.5 of 296 GB (71%), +2.5 GB a week, 90% full in about 22.4 weeks'],
-            ['Disk rented', '300 GB, of which 75 GB is beyond the package and charged for'],
+            ['Disk rented', '300 GB, which is £30.00 of the monthly cost'],
             ['Steps available', 'Next size down: C-18 (6 processors, 18 GB) £41.25; Next size up: C-36 (12 processors, 36 GB) £67.50'],
         ], $card['lines']);
         $this->assertSame([
@@ -133,7 +133,7 @@ class ServerSizingReportMailTest extends TestCase
     public function test_an_unmeasured_server_has_no_reading_lines_and_a_filling_disk_is_named(): void
     {
         $bare = $this->mail([array_merge($this->server(), [
-            'week' => null, 'disks' => [], 'trend' => [], 'extra_disk_gb' => 0, 'package' => null,
+            'week' => null, 'disks' => [], 'trend' => [], 'disk_total_gb' => 0, 'package' => null,
             'steps' => ['down' => null, 'up' => null], 'verdict' => 'unmeasured', 'candidate' => null,
         ])])->cards()[0];
         $this->assertSame([], $bare['lines']);
@@ -224,6 +224,7 @@ class ServerSizingReportMailTest extends TestCase
             'historyDays' => 21,
             'minHistoryDays' => 14,
             'unattached' => [],
+            'note' => null,
             'siteName' => 'Freegle',
         ], $overrides);
     }
@@ -276,6 +277,9 @@ class ServerSizingReportMailTest extends TestCase
             $this->assertStringContainsString('There are 5 days of readings so far.', view($view, ['historyDays' => 5] + $data)->render());
             $this->assertStringNotContainsString('discount', $out);
             $this->assertStringNotContainsString('Disks to look at', $out);
+            $this->assertStringNotContainsString('Correction.', $out);
+            $this->assertStringContainsString('The costs were too low.', view($view, ['note' => 'The costs were too low.'] + $data)->render());
+            $this->assertStringContainsString('Correction.', view($view, ['note' => 'The costs were too low.'] + $data)->render());
             $this->assertStringNotContainsString('would cost', $out);
             $this->assertStringNotContainsString('not a server Katapult lists', $out);
         }

@@ -26,12 +26,13 @@ Two scheduled commands in the batch container:
 
 | Command | When | What it does |
 |---|---|---|
-| `servers:sample` | every 15 minutes | Asks each host in `FREEGLE_MONITORING_HOSTS` for its load, processor counters, memory and disks over ssh, and stores one row per host in `server_samples`. |
+| `servers:sample` | every 15 minutes | Asks each host in `FREEGLE_MONITORING_HOSTS` and `SERVERS_EXTRA_HOSTS` for its load, processor counters, memory and disks over ssh, and stores one row per host in `server_samples`. |
 | `servers:rightsize-report` | Monday 07:50 | Reads the last eight weeks of rows, asks the Katapult API what we rent and what it offers, works out a verdict per server, asks Claude to review it, and mails the result. |
 
 The hosts keep no history of their own load, so `server_samples` is the only record. A host
-that the monitoring key cannot reach is shown as "Not measured"; add it to
-`FREEGLE_MONITORING_HOSTS` and it is sampled from the next run. Rows are kept for 400 days.
+that is not sampled is shown as "Not measured". To sample one, put the monitoring key's
+public half in its `authorized_keys` and add it to `SERVERS_EXTRA_HOSTS`, which samples it
+without drawing it into the patch and monit checks. Rows are kept for 400 days.
 
 ## How a verdict is reached
 
@@ -41,8 +42,7 @@ The rules are fixed and are in `ServerSizingAnalyser`. The foot of every report 
 - **Move down** is suggested only if the busiest week in the window (up to eight weeks)
   would still leave headroom on the smaller package: load at most 70% of the processors,
   processor time at most 60% in use, memory at most 80% used. It picks the cheapest smaller
-  package of the same kind that does, counting the disk the smaller package no longer
-  includes. One quiet week is not enough.
+  package of the same kind that does. One quiet week is not enough.
 - **Move up** is suggested when, in the last week, load is above the number of processors
   while they are more than 60% in use, processor time is above 85% in use, or memory is above
   92% used. It is always the next size up, one step at a time; the following report shows
@@ -71,12 +71,14 @@ review.
 
 ## Before you act on it
 
-- **Costs are approximate.** They are the monthly prices the Katapult API gives for our
-  account, less `SERVERS_PRICE_DISCOUNT`. They leave out VAT, data transfer and backups.
-  Check a figure against an invoice before relying on it.
+- **What the costs are.** They are the monthly prices the Katapult API gives for our
+  account, less `SERVERS_PRICE_DISCOUNT`. The model was checked against the invoice of 10
+  November 2026: the discount comes off those prices, every GB of disk is charged for
+  whatever the package includes, and a stopped server is still charged for its package. They
+  leave out VAT, object storage, data transfer and backups.
 - **Taking processors or memory away needs the server shut down.** Adding them does not.
-- **Disks can grow but never shrink.** A smaller package includes less disk, so the disk
-  beyond it is charged for. The saving shown already allows for that.
+- **Disks can grow but never shrink.** A change of package does not change what the disk
+  costs, so the saving shown is the difference in package price.
 - **A database node** needs its cache made smaller before it can lose memory, and the other
   node must be carrying the load while it is down. Follow
   [database-node-restart-and-rejoin.md](database-node-restart-and-rejoin.md).
@@ -93,7 +95,8 @@ php artisan servers:rightsize-report --no-review
 ```
 
 `--dry-run` prints each server's verdict and sends nothing. `--no-review` leaves out the
-Claude call.
+Claude call. `--note="..."` sends the report as a correction of an earlier one, with that
+line at the top and "Corrected:" in the subject.
 
 ## Settings
 
@@ -103,6 +106,7 @@ All in `.env.background` on the batch host. The names are in
 - `KATAPULT_API_TOKEN`: a Katapult API token. Without it there is no report.
 - `SERVERS_REPORT_TO`: who gets the report. Without it there is no report.
 - `SERVERS_PRICE_DISCOUNT`: the share taken off Katapult's prices, for example `0.5`.
+- `SERVERS_EXTRA_HOSTS`: ssh targets to sample beside the monitored hosts.
 
 The Claude review uses the same setup token as Community News, so it needs no setting of
 its own.

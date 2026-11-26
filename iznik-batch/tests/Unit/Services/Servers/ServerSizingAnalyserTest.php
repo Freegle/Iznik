@@ -115,12 +115,14 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame('step_down', $server['verdict']);
         $this->assertSame('C-12', $server['candidate']['name']);
         $this->assertSame(['cpus' => 2, 'memory_gb' => 7.5], $server['needs']);
-        // Now: 136. On C-12: 44 plus 150 GB of the 300 GB disk beyond the package at 0.2 = 74. Half price.
-        $this->assertSame(136.0, $server['cost']['list']);
-        $this->assertSame(68.0, $server['cost']['paid']);
-        $this->assertSame(74.0, $server['candidate']['cost_list']);
-        $this->assertSame(31.0, $server['candidate']['saving_paid']);
-        $this->assertSame(31.0, $analysis['fleet']['possible_saving_paid']);
+        // Now: 136 plus 300 GB of disk at 0.2 = 196. On C-12: 44 plus the same disk = 104. Half price.
+        $this->assertSame(196.0, $server['cost']['list']);
+        $this->assertSame(98.0, $server['cost']['paid']);
+        $this->assertSame(['list' => 60.0, 'paid' => 30.0], $server['disk_cost']);
+        $this->assertSame(104.0, $server['candidate']['cost_list']);
+        // The disk costs the same either way, so the saving is the difference in package price.
+        $this->assertSame(46.0, $server['candidate']['saving_paid']);
+        $this->assertSame(46.0, $analysis['fleet']['possible_saving_paid']);
     }
 
     public function test_a_memory_package_is_never_offered_when_it_has_more_memory_than_now(): void
@@ -161,8 +163,8 @@ class ServerSizingAnalyserTest extends TestCase
 
         $this->assertSame('step_up', $server['verdict']);
         $this->assertSame('C-36', $server['candidate']['name']);
-        // 90 + 75 GB extra disk = 105 now; 136 on C-36. 31 more at list, 15.50 at half price.
-        $this->assertSame(-15.5, $server['candidate']['saving_paid']);
+        // 90 now, 136 on C-36, the disk the same on both: 46 more at list, 23 at half price.
+        $this->assertSame(-23.0, $server['candidate']['saving_paid']);
         $this->assertStringContainsString('above the number of processors', $server['reasons'][0]);
     }
 
@@ -270,20 +272,39 @@ class ServerSizingAnalyserTest extends TestCase
 
         $this->assertSame('C-12', $server['steps']['down']['name']);
         $this->assertSame('C-36', $server['steps']['up']['name']);
-        // C-12 with a 225 GB disk: 44 + 75 x 0.2 = 59, half price.
-        $this->assertSame(29.5, $server['steps']['down']['cost_paid']);
+        // C-12 with the same 225 GB disk: 44 + 225 x 0.2 = 89, half price.
+        $this->assertSame(44.5, $server['steps']['down']['cost_paid']);
     }
 
-    public function test_a_smaller_package_that_saves_nothing_once_its_disk_is_paid_for_is_not_suggested(): void
+    public function test_a_big_disk_does_not_stop_a_move_down(): void
     {
-        // C-3 with a 100 GB disk: 12 + 75 x 0.2 = 27. C-1 would be 8 + 90 x 0.2 = 26, under a pound less.
+        // C-3 with a 100 GB disk. The disk costs the same on C-1, so the move saves the package difference.
         $server = $this->server($this->analyse(
             [$this->machine('disky', 'p3')], [$this->disk('disky', 100)],
             ['disky' => $this->samples(21, 1, 0.1, 0.02, 3000, 500)],
         ), 'disky');
 
+        $this->assertSame('step_down', $server['verdict']);
+        $this->assertSame('C-1', $server['candidate']['name']);
+        $this->assertSame(2.0, $server['candidate']['saving_paid']);
+    }
+
+    public function test_a_cheaper_package_that_is_bigger_in_one_measure_is_not_called_a_move_down(): void
+    {
+        // The next package down in price has more processors and less memory than this one.
+        $packages = [
+            ['id' => 'a', 'name' => 'C-32', 'cpus' => 16, 'memory_gb' => 32, 'disk_gb' => 250, 'dedicated' => false],
+            ['id' => 'b', 'name' => 'C-36', 'cpus' => 12, 'memory_gb' => 36, 'disk_gb' => 300, 'dedicated' => false],
+        ];
+        $analysis = (new ServerSizingAnalyser)->analyse(
+            [$this->machine('odd', 'b')], $packages, [$this->disk('odd', 300)],
+            ['packages' => ['a' => 130.0, 'b' => 135.0], 'disk_gb' => 0.15, 'ipv4' => 2.0],
+            ['odd' => $this->samples(21, 12, 1.0, 0.05, 36000, 6144)], $this->now, 0.5, 14,
+        );
+        $server = $this->server($analysis, 'odd');
+
         $this->assertSame('keep', $server['verdict']);
-        $this->assertSame(['The next size down would fit but saves nothing once its disk is paid for.'], $server['reasons']);
+        $this->assertSame(['The next cheaper package would fit, but it is not smaller in both processors and memory.'], $server['reasons']);
     }
 
     public function test_keep_names_both_limits_when_both_are_short(): void
@@ -392,7 +413,7 @@ class ServerSizingAnalyserTest extends TestCase
             ['hot' => $this->samples(4, 8, 8.4, 0.7, 24000, 12000)],
         );
         $this->assertSame('step_up', $this->server($analysis, 'hot')['verdict']);
-        $this->assertSame(15.5, $analysis['fleet']['possible_cost_paid']);
+        $this->assertSame(23.0, $analysis['fleet']['possible_cost_paid']);
         $this->assertSame(0.0, $analysis['fleet']['possible_saving_paid']);
     }
 
@@ -494,14 +515,16 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame(['No readings in the last week; the last was on 20 Nov.'], $server['reasons']);
     }
 
-    public function test_a_stopped_server_costs_its_disk_only_and_gets_no_size_verdict(): void
+    public function test_a_stopped_server_is_still_charged_for_package_and_disk_and_gets_no_size_verdict(): void
     {
         $analysis = $this->analyse([$this->machine('off', 'p1', 'stopped')], [$this->disk('off', 150)], []);
         $server = $this->server($analysis, 'off');
 
         $this->assertSame('stopped', $server['verdict']);
-        $this->assertSame(30.0, $server['cost']['list']);
-        $this->assertSame(15.0, $analysis['fleet']['monthly_paid']);
+        // 8 for the package and 150 GB of disk at 0.2.
+        $this->assertSame(38.0, $server['cost']['list']);
+        $this->assertSame(19.0, $analysis['fleet']['monthly_paid']);
+        $this->assertSame(['Stopped, but still charged for its package and its disk.'], $server['reasons']);
     }
 
     public function test_a_running_server_with_no_readings_is_unmeasured(): void
@@ -513,7 +536,7 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame([], $server['disks']);
     }
 
-    public function test_cost_counts_disk_beyond_the_package_and_extra_addresses(): void
+    public function test_cost_counts_every_disk_in_full_and_extra_addresses(): void
     {
         $analysis = $this->analyse(
             [$this->machine('mail', 'p3', 'started', 3)],
@@ -523,10 +546,11 @@ class ServerSizingAnalyserTest extends TestCase
         );
         $server = $this->server($analysis, 'mail');
 
-        // 12 + (100 - 25) x 0.2 + 2 extra addresses x 2. The disk that is not built is not counted.
-        $this->assertSame(31.0, $server['cost']['list']);
-        $this->assertSame(31.0, $server['cost']['paid']);
-        $this->assertSame(75, $server['extra_disk_gb']);
+        // 12 + 175 GB x 0.2 + 2 extra addresses x 2. A disk that is not built is charged for too.
+        $this->assertSame(51.0, $server['cost']['list']);
+        $this->assertSame(51.0, $server['cost']['paid']);
+        $this->assertSame(175, $server['disk_total_gb']);
+        $this->assertSame(35.0, $server['disk_cost']['list']);
         $this->assertCount(1, $analysis['unattached_disks']);
     }
 

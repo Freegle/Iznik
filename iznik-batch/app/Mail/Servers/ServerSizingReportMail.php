@@ -27,11 +27,13 @@ class ServerSizingReportMail extends MjmlMailable
     /**
      * @param  array<string, mixed>  $analysis  from ServerSizingAnalyser::analyse()
      * @param  array{changes: list<string>, watch: list<string>, caveats: list<string>}|null  $review
+     * @param  string|null  $note  shown at the top, and marks the mail as a correction of an earlier one
      */
     public function __construct(
         public readonly array $analysis,
         public readonly ?array $review,
         public readonly string $recipient,
+        public readonly ?string $note = null,
     ) {
         parent::__construct();
     }
@@ -56,7 +58,7 @@ class ServerSizingReportMail extends MjmlMailable
             $parts[] = "{$flagged} disk".($flagged === 1 ? '' : 's').' filling';
         }
 
-        return 'Server sizing: '.implode(', ', $parts);
+        return ($this->note === null ? '' : 'Corrected: ').'Server sizing: '.implode(', ', $parts);
     }
 
     public function envelope(): Envelope
@@ -78,6 +80,7 @@ class ServerSizingReportMail extends MjmlMailable
 
         return $this->mjmlView('emails.mjml.servers.sizing-report', [
             'previewText' => $this->getSubject(),
+            'note' => $this->note,
             'cards' => $this->cards(),
             'review' => $this->review,
             'monthlyPaid' => self::money($fleet['monthly_paid']),
@@ -202,11 +205,11 @@ class ServerSizingReportMail extends MjmlMailable
                 )];
             }
 
-            if ($server['extra_disk_gb'] > 0) {
+            if ($server['disk_total_gb'] > 0) {
                 $lines[] = ['Disk rented', sprintf(
-                    '%d GB, of which %d GB is beyond the package and charged for',
+                    '%d GB, which is %s of the monthly cost',
                     $server['disk_total_gb'],
-                    $server['extra_disk_gb']
+                    self::money($server['disk_cost']['paid'])
                 )];
             }
 
@@ -250,7 +253,7 @@ class ServerSizingReportMail extends MjmlMailable
                 'tone' => $tone,
                 'package' => $package === null
                     ? (string) ($server['package_name'] ?? 'unknown package')
-                    : sprintf('%s: %d processor%s, %d GB memory, %d GB disk included', $package['name'], $package['cpus'], $package['cpus'] === 1 ? '' : 's', $package['memory_gb'], $package['disk_gb']),
+                    : sprintf('%s: %d processor%s, %d GB memory', $package['name'], $package['cpus'], $package['cpus'] === 1 ? '' : 's', $package['memory_gb']),
                 'cost' => self::money($server['cost']['paid']).' a month',
                 'lines' => $lines,
                 'reasons' => $server['reasons'],

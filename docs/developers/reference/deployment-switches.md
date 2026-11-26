@@ -75,6 +75,7 @@ variables like every other Freegle setting.
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `servers.katapult_token` | `KATAPULT_API_TOKEN` | empty | A Katapult API token, used read-only by `servers:rightsize-report` to list the servers we rent, the packages on offer and their prices. Empty: no report. See [server-right-sizing.md](../../ops/runbooks/server-right-sizing.md). |
 | `servers.report_to` | `SERVERS_REPORT_TO` | empty | Who gets the weekly server sizing report. Empty: no report. |
+| `servers.extra_hosts` | `SERVERS_EXTRA_HOSTS` | empty | More ssh targets for `servers:sample`, beside `FREEGLE_MONITORING_HOSTS`: hosts to size that the patch and monit checks do not cover. |
 | `servers.price_discount` | `SERVERS_PRICE_DISCOUNT` | `0` | The share taken off Katapult's prices in the sizing report, 0 to 1. Set it to the discount on the account. |
 | `servers.min_history_days` | `SERVERS_MIN_HISTORY_DAYS` | `14` | Days of readings needed before the sizing report suggests a change of package. |
 | `servers.sample_retention_days` | `SERVERS_SAMPLE_RETENTION_DAYS` | `400` | How long `servers:sample` keeps its readings. |
