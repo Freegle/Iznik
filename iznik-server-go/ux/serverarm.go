@@ -96,11 +96,12 @@ type ServerSwitchMetric struct {
 // entry, when an entry has no call, or when an entry is older than 30 days unless KeepUntil is
 // ahead (docs/developers/reference/ux-experiments.md, "Switch lists and corpse control").
 var ServerSwitches = map[string]ServerSwitch{
+	// Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the
+	// switch by KeepUntil.
 	"interested-button": {
-		Name:   "interested-button",
-		Opened: "2026-10-23",
-		// Never started, so every member still gets the old version. Kept so it can be started.
-		KeepUntil: "2026-12-06",
+		Name:      "interested-button",
+		Opened:    "2026-10-23",
+		KeepUntil: "2026-12-09",
 		Channel:   "server",
 		Type:      "interested_button",
 		Varies:    "step",
