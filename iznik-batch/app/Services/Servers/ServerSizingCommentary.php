@@ -120,7 +120,9 @@ TXT;
         foreach (preg_split('/\R/', $text) ?: [] as $line) {
             $line = trim($line);
             // "CHANGES", "Changes:", "**WATCH**" and "## Caveats" are all the same heading.
-            $heading = strtolower(trim($line, " \t:*#_-"));
+            // A bulleted line is an item even when it is a single heading word.
+            $bulleted = preg_match('/^(?:[-*•]|\d+[.)])\s+\S/u', $line) === 1;
+            $heading = $bulleted ? '' : strtolower(trim($line, " \t:*#_-"));
 
             if (array_key_exists($heading, $sections)) {
                 $current = $heading;
@@ -133,7 +135,8 @@ TXT;
                 continue;
             }
 
-            if (preg_match('/^(?:[-*•]|\d+[.)])\s*(.+)$/u', $line, $m)) {
+            // The marker must be followed by a space, or "12.5 GB" on a wrapped line would lose its "12.".
+            if (preg_match('/^(?:[-*•]|\d+[.)])\s+(.+)$/u', $line, $m)) {
                 $sections[$current][] = trim($m[1]);
             } elseif ($sections[$current] !== []) {
                 // A wrapped line belongs to the item above it.

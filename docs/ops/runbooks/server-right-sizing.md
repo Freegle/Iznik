@@ -48,10 +48,12 @@ The rules are fixed and are in `ServerSizingAnalyser`. The foot of every report 
 - Between those two marks the verdict is **keep**, so a server near a line does not flip
   from week to week.
 - A move down needs readings on **14 days**, and on at least five days of the last week. A
-  move up needs readings on three days of the last week. Until then the report says "Too
+  move up needs readings on three days of the last week. A day counts when it has at least
+  six hours of readings. Until then the report says "Too
   early to say" and what the readings point to so far.
 - Readings from **before a resize** are left out, so a resized server starts its count again.
-- A server that has used swap above a tenth of its memory is **not offered less memory**.
+- A server that used swap above a tenth of its memory in the last week is **not offered
+  less memory**.
 - A **disk** is flagged at 85% full, or when its growth over the last eight weeks would take
   it to 90% within eight weeks.
 

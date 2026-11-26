@@ -18,7 +18,7 @@ echo "CPUS:$(nproc)"
 echo "LOAD:$(cat /proc/loadavg)"
 echo "STAT:$(head -1 /proc/stat)"
 grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo | sed 's/^/MEM:/'
-timeout 15 df -B1 -x tmpfs -x devtmpfs -x overlay -x squashfs -x nfs -x nfs4 -x efivarfs --output=source,size,used,target 2>/dev/null | tail -n +2 | sed 's/^/DISK:/'
+$(command -v timeout >/dev/null 2>&1 && echo 'timeout 15') df -B1 -x tmpfs -x devtmpfs -x overlay -x squashfs -x nfs -x nfs4 -x efivarfs --output=source,size,used,target 2>/dev/null | tail -n +2 | sed 's/^/DISK:/'
 SH;
 
     /** Filesystems smaller than this are boot and firmware partitions, not somewhere data grows. */

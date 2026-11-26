@@ -18,7 +18,7 @@ use Carbon\CarbonInterface;
  *    of processors, processor time above 85% busy, or memory above 92% used). Between the two
  *    marks the answer is "keep", so a server near a line does not flip from week to week.
  *  - A move down needs enough days of readings to have seen a normal fortnight, and readings on
- *    most days of the last week. A move up needs only a few days: an overloaded server should not
+ *    most days of the last week. A day counts when it has at least six hours' worth of readings. A move up needs only a few days: an overloaded server should not
  *    wait a fortnight to be mentioned.
  *  - Only packages of the same family are compared, so "smaller" and "bigger" mean what they say.
  *  - Readings from before a resize are left out: they describe a different machine.
@@ -57,6 +57,9 @@ class ServerSizingAnalyser
     /** Days of the last week that must have readings before a move up is suggested. */
     public const WEEK_DAYS_FOR_UP = 3;
 
+    /** A day counts as having readings when it has this many: six hours' worth at four an hour. */
+    public const READINGS_FOR_A_DAY = 24;
+
     /** A gap longer than this between two readings is not used to work out processor time. */
     private const MAX_INTERVAL_SECONDS = 3600;
 
@@ -87,10 +90,21 @@ class ServerSizingAnalyser
         // A host may call itself "db-2" or "db-2.example.org", in any case; Katapult has its own
         // spelling. Match on the short lower-case name so a difference of that kind is not read
         // as "this server is not being sampled".
+        // A reading dated after now (a clock that is ahead) is left out everywhere, so the last
+        // week and the busiest week are always worked out from the same readings.
+        $end = $now->getTimestamp();
         $samplesByKey = [];
         foreach ($samplesByHost as $host => $samples) {
             $key = $this->hostKey((string) $host);
-            $samplesByKey[$key] = array_merge($samplesByKey[$key] ?? [], array_map($this->normalise(...), $samples));
+            if ($key === '') {
+                continue;
+            }
+            foreach ($samples as $sample) {
+                $reading = $this->normalise($sample);
+                if ($reading['t'] <= $end) {
+                    $samplesByKey[$key][] = $reading;
+                }
+            }
         }
         foreach ($samplesByKey as &$merged) {
             usort($merged, fn (array $a, array $b) => $a['t'] <=> $b['t']);
@@ -198,10 +212,10 @@ class ServerSizingAnalyser
                 && abs($s['mem_total_mb'] - $latest['mem_total_mb']) <= 0.05 * $latest['mem_total_mb']
         ));
 
-        $weekSamples = array_values(array_filter($sized, fn (array $s) => $s['t'] > $end - 7 * 86400));
-        $week = $this->summarise($weekSamples);
+        $weeks = $this->weeks($sized, $end);
+        $week = $weeks[$end] ?? null;
         $historyDays = $this->daysWithReadings($sized);
-        $weekDays = $this->daysWithReadings($weekSamples);
+        $weekDays = $this->daysWithReadings(array_values(array_filter($sized, fn (array $s) => $s['t'] > $end - 7 * 86400)));
 
         $server = [
             'name' => $machine['name'],
@@ -221,7 +235,7 @@ class ServerSizingAnalyser
             'measured' => $week !== null,
             'history_days' => $historyDays,
             'week_days' => $weekDays,
-            'week' => $week,
+            'week' => $week === null ? null : array_diff_key($week, ['last' => true]),
             'peak' => null,
             'trend' => $this->trend($sized, $end),
             'disks' => $this->diskFacts($samples, $latest),
@@ -255,7 +269,7 @@ class ServerSizingAnalyser
 
         // The busiest week seen at this size. A move down has to fit this, not just the last week.
         $peak = ['weeks' => 0, 'load_p95' => 0.0, 'cpu_busy_p95' => null, 'mem_used_gb_p95' => 0.0, 'swap_used_mb_max' => 0];
-        foreach ($this->weeks($sized, $end) as $summary) {
+        foreach ($weeks as $summary) {
             $peak['weeks']++;
             $peak['load_p95'] = max($peak['load_p95'], $summary['load_p95']);
             $peak['mem_used_gb_p95'] = max($peak['mem_used_gb_p95'], $summary['mem_used_gb_p95']);
@@ -294,7 +308,7 @@ class ServerSizingAnalyser
         if ($verdict === 'step_up' && $weekDays < self::WEEK_DAYS_FOR_UP) {
             $short = sprintf('Readings on only %d day(s) of the last week; %d are needed before a move up is suggested.', $weekDays, self::WEEK_DAYS_FOR_UP);
         } elseif ($verdict !== 'step_up' && $historyDays < $minHistoryDays) {
-            $short = "Readings on only {$historyDays} day(s); {$minHistoryDays} are needed before a change is suggested.";
+            $short = "Readings on only {$historyDays} day(s); {$minHistoryDays} are needed before the size is judged.";
         } elseif ($verdict === 'step_down' && $weekDays < self::WEEK_DAYS_FOR_DOWN) {
             $short = sprintf('Readings on only %d day(s) of the last week; %d are needed before a move down is suggested.', $weekDays, self::WEEK_DAYS_FOR_DOWN);
         }
@@ -363,14 +377,17 @@ class ServerSizingAnalyser
                     return ['step_up', $this->candidate(['package' => $option, 'list' => $cost], $currentList, $discount), $reasons];
                 }
             }
-            $reasons[] = 'No bigger package of this kind is big enough by these rules.';
+            $reasons[] = $position === false
+                ? 'Its package has no price, so no other size can be compared.'
+                : 'No bigger package of this kind is big enough by these rules.';
 
             return ['step_up', null, $reasons];
         }
 
-        $swapShare = $peak['swap_used_mb_max'] / max(1.0, $week['mem_total_gb'] * 1024);
+        // The last week's swap, not the window's: one blip weeks ago should not hold a server for two months.
+        $swapShare = $week['swap_used_mb_max'] / max(1.0, $week['mem_total_gb'] * 1024);
         if ($swapShare > self::SWAP_IN_USE) {
-            $reasons[] = sprintf('It has used up to %.1f GB of swap, so it is not offered less memory.', $peak['swap_used_mb_max'] / 1024);
+            $reasons[] = sprintf('It used up to %.1f GB of swap this week, so it is not offered less memory.', $week['swap_used_mb_max'] / 1024);
 
             return ['keep', null, $reasons];
         }
@@ -705,7 +722,8 @@ class ServerSizingAnalyser
     }
 
     /**
-     * How many different days have at least one reading.
+     * How many different days have enough readings to count. A day with a handful says too little
+     * about that day to be evidence of a normal one.
      *
      * @param  list<array<string, mixed>>  $samples
      */
@@ -713,10 +731,11 @@ class ServerSizingAnalyser
     {
         $days = [];
         foreach ($samples as $sample) {
-            $days[intdiv($sample['t'], 86400)] = true;
+            $day = intdiv($sample['t'], 86400);
+            $days[$day] = ($days[$day] ?? 0) + 1;
         }
 
-        return count($days);
+        return count(array_filter($days, fn (int $readings) => $readings >= self::READINGS_FOR_A_DAY));
     }
 
     /**

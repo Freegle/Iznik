@@ -109,13 +109,16 @@ class ServerSizingCommentaryTest extends TestCase
             '   saving £22.50 a month.',
             '',
             '## Watch:',
-            '2) The docker disk.',
+            '2) The docker disk has grown',
+            '12.5 GB this month.',
+            '- Watch',
             'Caveats -',
             '• Database memory is cache.',
         ]));
 
         $this->assertSame(['Move db-9 down to C-24, saving £22.50 a month.'], $review['changes']);
-        $this->assertSame(['The docker disk.'], $review['watch']);
+        // A wrapped line that starts with a number keeps it, and a bulleted "Watch" is an item, not a heading.
+        $this->assertSame(['The docker disk has grown 12.5 GB this month.', 'Watch'], $review['watch']);
         $this->assertSame(['Database memory is cache.'], $review['caveats']);
     }
 

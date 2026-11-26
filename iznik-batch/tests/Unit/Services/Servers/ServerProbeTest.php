@@ -83,6 +83,11 @@ class ServerProbeTest extends TestCase
         ];
     }
 
+    public function test_the_script_runs_df_under_a_time_limit_only_where_there_is_one(): void
+    {
+        $this->assertStringContainsString("$(command -v timeout >/dev/null 2>&1 && echo 'timeout 15') df -B1", ServerProbe::SCRIPT);
+    }
+
     public function test_empty_output_is_refused(): void
     {
         $this->assertNull((new ServerProbe)->parse(''));
