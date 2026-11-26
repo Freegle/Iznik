@@ -2,6 +2,7 @@
 
 namespace App\Services\Servers;
 
+use App\Mail\Servers\ServerSizingReportMail;
 use App\Models\ServerSample;
 use Illuminate\Support\Carbon;
 
@@ -37,7 +38,7 @@ class ServerSizingReport
 
         return [
             'analysis' => $analysis,
-            'review' => $withReview ? $this->commentary->write($analysis) : null,
+            'review' => $withReview ? $this->commentary->write(ServerSizingReportMail::factsFor($analysis)) : null,
         ];
     }
 

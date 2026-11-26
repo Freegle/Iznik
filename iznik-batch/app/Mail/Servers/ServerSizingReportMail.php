@@ -107,9 +107,44 @@ class ServerSizingReportMail extends MjmlMailable
      */
     public function cards(): array
     {
+        return self::cardsFor($this->analysis);
+    }
+
+    /**
+     * What the AI review is given: the same worded figures the reader sees, so a number in the
+     * review can always be found in the tables under it.
+     *
+     * @param  array<string, mixed>  $analysis
+     * @return array<string, mixed>
+     */
+    public static function factsFor(array $analysis): array
+    {
+        $fleet = $analysis['fleet'];
+
+        return [
+            'we_pay_a_month' => self::money($fleet['monthly_paid']),
+            'moves_down_would_save_a_month' => self::money($fleet['possible_saving_paid']),
+            'moves_up_would_cost_a_month_more' => self::money($fleet['possible_cost_paid'] ?? 0),
+            'days_of_readings' => (int) $analysis['history_days'],
+            'days_needed_before_a_move_down' => (int) $analysis['min_history_days'],
+            'servers' => array_map(
+                fn (array $card) => array_diff_key($card, ['tone' => true]),
+                self::cardsFor($analysis)
+            ),
+            'disks_attached_to_nothing_or_not_built' => array_column($analysis['unattached_disks'], 'name'),
+            'hosts_sampled_but_not_on_katapult' => $analysis['unmatched_hosts'] ?? [],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $analysis
+     * @return list<array{name: string, verdict: string, tone: string, package: string, cost: string, lines: list<array{0: string, 1: string}>, reasons: list<string>, trend: list<string>}>
+     */
+    public static function cardsFor(array $analysis): array
+    {
         $cards = [];
 
-        foreach ($this->analysis['servers'] as $server) {
+        foreach ($analysis['servers'] as $server) {
             $package = $server['package'];
             $week = $server['week'];
             $lines = [];
@@ -196,7 +231,7 @@ class ServerSizingReportMail extends MjmlMailable
                 }
             }
 
-            [$verdict, $tone] = $this->verdict($server);
+            [$verdict, $tone] = self::verdict($server);
 
             $cards[] = [
                 'name' => $server['name'],
@@ -222,7 +257,7 @@ class ServerSizingReportMail extends MjmlMailable
      * @param  array<string, mixed>  $server
      * @return array{0: string, 1: string}
      */
-    private function verdict(array $server): array
+    private static function verdict(array $server): array
     {
         $candidate = $server['candidate'];
         $saving = $candidate === null ? 0.0 : (float) $candidate['saving_paid'];

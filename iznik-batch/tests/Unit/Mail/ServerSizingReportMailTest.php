@@ -85,6 +85,29 @@ class ServerSizingReportMailTest extends TestCase
         ], $card['trend']);
     }
 
+    public function test_the_ai_review_is_given_the_same_worded_figures_the_reader_sees(): void
+    {
+        $mail = $this->mail([$this->server()], null, [
+            'fleet' => ['monthly_list' => 720.0, 'monthly_paid' => 360.0, 'possible_saving_paid' => 0.0, 'possible_cost_paid' => 16.87],
+            'unattached_disks' => [['name' => 'old-cache', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null]],
+            'unmatched_hosts' => ['stray'],
+        ]);
+        $facts = ServerSizingReportMail::factsFor($mail->analysis);
+
+        $this->assertSame('£360.00', $facts['we_pay_a_month']);
+        $this->assertSame('£0.00', $facts['moves_down_would_save_a_month']);
+        $this->assertSame('£16.87', $facts['moves_up_would_cost_a_month_more']);
+        $this->assertSame(21, $facts['days_of_readings']);
+        $this->assertSame(14, $facts['days_needed_before_a_move_down']);
+        $this->assertSame(['old-cache'], $facts['disks_attached_to_nothing_or_not_built']);
+        $this->assertSame(['stray'], $facts['hosts_sampled_but_not_on_katapult']);
+        // Each server is its card, less the colour hint that means nothing to a reader of text.
+        $card = $mail->cards()[0];
+        unset($card['tone']);
+        $this->assertSame([$card], $facts['servers']);
+        $this->assertSame('Move up to C-36: costs £16.87 more a month', $facts['servers'][0]['verdict']);
+    }
+
     public function test_each_verdict_has_its_own_words(): void
     {
         $down = ['name' => 'C-12', 'saving_paid' => 22.5];

@@ -9,8 +9,9 @@ use Illuminate\Support\Facades\Process;
  * Asks Claude to read the week's sizing figures and write the short review at the top of the
  * report: what to change, what to watch, and what the rules cannot see.
  *
- * The figures and the verdicts come from ServerSizingAnalyser. Claude is given them as data and
- * told to add no numbers of its own, so the review can be checked against the tables under it.
+ * The figures and the verdicts come from ServerSizingAnalyser. Claude is given them worded as the
+ * mail words them (ServerSizingReportMail::factsFor) and told to quote, never to work anything out,
+ * so the review can be checked against the tables under it.
  * It runs on the Claude subscription through the `claude` CLI and a setup token, as the Community
  * News research does. If the call fails the report still goes out, without the review.
  */
@@ -20,35 +21,44 @@ class ServerSizingCommentary
 You review a weekly report on whether a small charity's rented servers are the right size. The
 reader is the one part-time engineer who runs them. They know the servers; do not explain basics.
 
-You are given JSON: each server's package, cost, a week of load, processor and memory readings,
-a week-by-week trend, its disks, and a verdict worked out by fixed rules (keep, step_down, step_up,
-wait, stopped, unmeasured). "wait" means there are not yet enough days of readings to act, and
-"indication" is what the readings point to so far.
+You are given JSON holding exactly what the report shows them. Each server has its package, what
+it costs, a verdict, the reasons for the verdict, lines of readings (label and value), and a week
+by week trend. The verdicts come from fixed rules and are already decided:
+- "Move down to X" and "Move up to X" are suggestions to act on.
+- "Too early to say. So far: ..." means there are not yet enough days of readings to act; what
+  follows is only what the readings point to.
+- "Keep as it is", "Stopped" and "Not measured" mean what they say.
 
 Write plain text, no Markdown, in this exact shape:
 
 CHANGES
-- one line per change worth making now, most valuable first, with the monthly saving or cost
+- one line per change worth making now, most valuable first, with its monthly saving or cost
 WATCH
 - one line per thing to keep an eye on
 CAVEATS
 - one line per thing the rules cannot see that should make the reader doubt a verdict
 
 Rules:
-- Use only numbers that appear in the JSON. Never work out or estimate a new figure.
-- Money is the "paid" figure, in pounds a month.
+- Quote figures exactly as they are written in the JSON, with their units. Never work out,
+  convert, add up or estimate a figure.
+- For a move, quote the saving or the extra cost from the verdict. "Steps available" shows what a
+  package costs in total, which is a different figure; do not present it as the cost of moving.
+- Only a "Move down" or "Move up" verdict goes under CHANGES. A "Too early to say" never does.
 - If a section has nothing in it, write "- Nothing this week." under it.
-- Do not recommend a change the verdict does not support. You may advise against one it does, with the reason.
-- A database server's memory is filled on purpose by its cache, so high memory use there is not a reason to grow it, and it cannot shrink without the cache being made smaller first.
+- You may advise against a suggested change, with the reason. Do not suggest one the verdict does not.
+- With only a day or two of readings, say so once and keep the review short: a single reading is
+  not a pattern, so do not draw conclusions from it.
+- A database server's memory is filled on purpose by its cache, so high memory use there is not a
+  reason to grow it, and it cannot shrink without the cache being made smaller first.
 - Taking processors or memory away needs the server shut down; adding them does not. Disks only grow.
-- At most 12 lines in total. Short plain sentences. British spelling. No dashes used as punctuation.
+- At most 10 lines in total. Short plain sentences. British spelling. No dashes used as punctuation.
 TXT;
 
     /**
-     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $facts  from ServerSizingReportMail::factsFor()
      * @return array{changes: list<string>, watch: list<string>, caveats: list<string>}|null
      */
-    public function write(array $analysis): ?array
+    public function write(array $facts): ?array
     {
         $token = trim((string) config('freegle.servers.oauth_token', ''));
         if ($token === '') {
@@ -65,7 +75,7 @@ TXT;
 
         $command = [
             (string) config('freegle.servers.claude_bin', 'claude'),
-            '-p', "This week's figures:\n".json_encode($analysis, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
+            '-p', "This week's figures:\n".json_encode($facts, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
             '--append-system-prompt', self::SYSTEM_PROMPT,
             '--model', (string) config('freegle.servers.model', 'opus'),
             '--output-format', 'json',

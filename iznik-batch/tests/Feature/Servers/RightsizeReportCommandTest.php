@@ -57,6 +57,11 @@ class RightsizeReportCommandTest extends TestCase
                 && $cards['Gamma']['verdict'] === 'Stopped'
                 && $mail->analysis['fleet']['possible_saving_paid'] === 31.0;
         });
+        // The AI is handed the worded verdict, not raw numbers to work from.
+        Process::assertRan(fn ($process) => str_contains(
+            ((array) $process->command)[array_search('-p', (array) $process->command, true) + 1],
+            'Move down to C-12: saves £31.00 a month'
+        ));
         Process::assertRanTimes(fn () => true, 1);
     }
 
