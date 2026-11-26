@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-24
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
