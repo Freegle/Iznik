@@ -714,9 +714,10 @@ What changes as a result:
   shows a notice saying this is a Trash Nothing user who did not choose the community and
   cannot be contacted.
 - **The post is flagged in the mod queue.** `ModMessageTnNotice.vue` explains the same
-  thing about the post, in two variants keyed on whether the copy being administered is
-  live: awaiting a decision reads "approve or delete on what you can see", live reads what
-  a report will do. Keyed on the CONTEXT copy's collection, not the message-wide `pending`
+  thing about the post, in three variants. On the Edits page it reads "accept or reject
+  their edit", matching the two buttons there. Elsewhere it is keyed on whether the copy
+  being administered is live: awaiting a decision reads "approve or delete on what you can
+  see", live reads what a report will do. Keyed on the CONTEXT copy's collection, not the message-wide `pending`
   - a post can be live on one community while still pending on another.
 
 Members are **not** restricted: an ordinary freegler can still reply to one of these
