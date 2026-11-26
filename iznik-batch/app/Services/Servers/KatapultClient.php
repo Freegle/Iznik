@@ -78,12 +78,18 @@ class KatapultClient
     }
 
     /**
-     * Every disk, with the machine it is attached to.
+     * Every disk, with the machine it is attached to. A deleted disk stays in the list, and on the
+     * bill, until Katapult purges it from the trash; trashed_until is when that happens.
      *
-     * @return list<array{name: string, size_gb: int, state: string, machine_id: ?string}>
+     * @return list<array{name: string, size_gb: int, state: string, machine_id: ?string, trashed_until: ?int}>
      */
     public function disks(): array
     {
+        $trash = [];
+        foreach ($this->all('organizations/'.$this->organisation().'/trash_objects', 'trash_objects') as $row) {
+            $trash[(string) ($row['object_id'] ?? '')] = (int) ($row['purge_after'] ?? $row['keep_until'] ?? 0);
+        }
+
         $disks = [];
 
         // This one list is keyed in the singular by the API.
@@ -93,6 +99,7 @@ class KatapultClient
                 'size_gb' => (int) ($row['size_in_gb'] ?? 0),
                 'state' => (string) ($row['state'] ?? 'unknown'),
                 'machine_id' => $row['virtual_machine_disk']['virtual_machine']['id'] ?? null,
+                'trashed_until' => $trash[(string) ($row['id'] ?? '')] ?? null,
             ];
         }
 

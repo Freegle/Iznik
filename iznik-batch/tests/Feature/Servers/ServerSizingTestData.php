@@ -49,6 +49,10 @@ trait ServerSizingTestData
                     ['id' => 'p36d', 'name' => 'C-36 (Dedicated)', 'cpu_cores' => 12, 'memory_in_gb' => 36, 'storage_in_gb' => 300, 'use_dedicated_cpus' => true],
                 ],
             ]),
+            'katapult.test/core/v1/organizations/org_1/trash_objects*' => Http::response([
+                'pagination' => ['total_pages' => 1],
+                'trash_objects' => [['id' => 'trsh_1', 'object_id' => 'disk_gone', 'object_type' => 'Disk', 'purge_after' => 1796083200, 'keep_until' => 1796083200]],
+            ]),
             'katapult.test/core/v1/organizations/org_1/disks*' => Http::response([
                 'pagination' => ['total_pages' => 1],
                 'disk' => [
@@ -56,6 +60,7 @@ trait ServerSizingTestData
                     ['name' => 'System Disk', 'size_in_gb' => 50, 'state' => 'built', 'virtual_machine_disk' => ['virtual_machine' => ['id' => 'vm_b']]],
                     ['name' => 'System Disk', 'size_in_gb' => 150, 'state' => 'built', 'virtual_machine_disk' => ['virtual_machine' => ['id' => 'vm_c']]],
                     ['name' => 'old-cache', 'size_in_gb' => 200, 'state' => 'built'],
+                    ['id' => 'disk_gone', 'name' => 'deleted-disk', 'size_in_gb' => 75, 'state' => 'not_built', 'virtual_machine_disk' => ['virtual_machine' => ['id' => 'vm_b']]],
                 ],
             ]),
             'katapult.test/core/v1/organizations/org_1/prices' => Http::response(['prices' => [

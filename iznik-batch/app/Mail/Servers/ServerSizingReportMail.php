@@ -129,7 +129,8 @@ class ServerSizingReportMail extends MjmlMailable
     }
 
     /**
-     * Disks that are attached to no server, or attached but not in use, each as one line.
+     * Disks that are attached to no server, attached but not in use, or deleted and waiting in the
+     * trash, each as one line.
      *
      * @param  array<string, mixed>  $analysis
      * @return list<string>
@@ -141,7 +142,11 @@ class ServerSizingReportMail extends MjmlMailable
                 '%s, %d GB, %s',
                 $disk['name'],
                 $disk['size_gb'],
-                $disk['machine_id'] === null ? 'not attached to any server' : 'attached but '.str_replace('_', ' ', $disk['state'])
+                match (true) {
+                    ($disk['trashed_until'] ?? null) !== null => 'deleted, and charged for until it leaves the trash on '.date('j M', $disk['trashed_until']),
+                    $disk['machine_id'] === null => 'not attached to any server',
+                    default => 'attached but '.str_replace('_', ' ', $disk['state']),
+                }
             ),
             $analysis['unattached_disks']
         );

@@ -187,6 +187,7 @@ class ServerSizingReportMailTest extends TestCase
             'unattached_disks' => [
                 ['name' => 'old-cache', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null],
                 ['name' => 'spare', 'size_gb' => 75, 'state' => 'not_built', 'machine_id' => 'vm_a'],
+                ['name' => 'gone', 'size_gb' => 75, 'state' => 'not_built', 'machine_id' => 'vm_a', 'trashed_until' => 1796083200],
             ],
         ]);
 
@@ -203,6 +204,7 @@ class ServerSizingReportMailTest extends TestCase
         $this->assertStringContainsString('Database memory is cache.', $html);
         $this->assertStringContainsString('old-cache, 200 GB, not attached to any server', $html);
         $this->assertStringContainsString('spare, 75 GB, attached but not built', $html);
+        $this->assertStringContainsString('gone, 75 GB, deleted, and charged for until it leaves the trash on '.date('j M', 1796083200), $html);
         $this->assertStringContainsString('less our 50% discount', $html);
     }
 

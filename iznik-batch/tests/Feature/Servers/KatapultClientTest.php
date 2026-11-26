@@ -49,8 +49,10 @@ class KatapultClientTest extends TestCase
         $this->assertTrue($packages[4]['dedicated']);
 
         $disks = $client->disks();
-        $this->assertSame(['name' => 'System Disk', 'size_gb' => 300, 'state' => 'built', 'machine_id' => 'vm_a'], $disks[0]);
+        $this->assertSame(['name' => 'System Disk', 'size_gb' => 300, 'state' => 'built', 'machine_id' => 'vm_a', 'trashed_until' => null], $disks[0]);
         $this->assertNull($disks[3]['machine_id']);
+        // A deleted disk is still listed, with when it leaves the trash.
+        $this->assertSame(['name' => 'deleted-disk', 'size_gb' => 75, 'state' => 'not_built', 'machine_id' => 'vm_b', 'trashed_until' => 1796083200], $disks[4]);
 
         $prices = $client->prices();
         $this->assertSame(['p1' => 8.0, 'p3' => 12.0, 'p12' => 44.0, 'p36' => 136.0], $prices['packages']);
@@ -66,7 +68,8 @@ class KatapultClientTest extends TestCase
         $client->disks();
         $client->prices();
 
-        Http::assertSentCount(3);
+        // The organisation, the trash, the disks, the prices.
+        Http::assertSentCount(4);
     }
 
     public function test_a_list_is_followed_through_its_pages(): void

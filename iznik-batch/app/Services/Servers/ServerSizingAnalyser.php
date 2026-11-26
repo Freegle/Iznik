@@ -143,9 +143,10 @@ class ServerSizingAnalyser
 
         $unattached = [];
         foreach ($disks as $disk) {
-            if ($disk['machine_id'] === null || $disk['state'] !== 'built') {
+            $trashed = ($disk['trashed_until'] ?? null) !== null;
+            if ($trashed || $disk['machine_id'] === null || $disk['state'] !== 'built') {
                 $unattached[] = $disk;
-                if ($disk['machine_id'] === null) {
+                if ($trashed || $disk['machine_id'] === null) {
                     $fleetList += $disk['size_gb'] * $prices['disk_gb'];
                 }
             }
@@ -196,8 +197,9 @@ class ServerSizingAnalyser
 
         $diskTotal = 0;
         foreach ($disks as $disk) {
-            // Every disk is charged for, built or not.
-            if ($disk['machine_id'] === $machine['id']) {
+            // Every disk is charged for, built or not. One in the trash is counted with the fleet, not
+            // with the machine it used to belong to.
+            if ($disk['machine_id'] === $machine['id'] && ($disk['trashed_until'] ?? null) === null) {
                 $diskTotal += $disk['size_gb'];
             }
         }

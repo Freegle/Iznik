@@ -554,6 +554,20 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertCount(1, $analysis['unattached_disks']);
     }
 
+    public function test_a_deleted_disk_in_the_trash_is_costed_with_the_fleet_and_not_with_its_old_server(): void
+    {
+        $trashed = ['name' => 'gone', 'size_gb' => 75, 'state' => 'not_built', 'machine_id' => 'vm_reg', 'trashed_until' => 1796083200];
+        $analysis = $this->analyse(
+            [$this->machine('reg', 'p3')], [$this->disk('reg', 50), $trashed], [], 0.0,
+        );
+
+        // The server: 12 for the package and 50 GB of its own disk. The fleet also pays for the 75 GB until it is purged.
+        $this->assertSame(22.0, $this->server($analysis, 'reg')['cost']['list']);
+        $this->assertSame(50, $this->server($analysis, 'reg')['disk_total_gb']);
+        $this->assertSame(37.0, $analysis['fleet']['monthly_list']);
+        $this->assertSame([$trashed], $analysis['unattached_disks']);
+    }
+
     public function test_a_disk_attached_to_nothing_is_listed_and_costed(): void
     {
         $analysis = $this->analyse([], [['name' => 'orphan', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null]], [], 0.5);
