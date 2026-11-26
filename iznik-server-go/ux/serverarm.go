@@ -96,16 +96,6 @@ type ServerSwitchMetric struct {
 // entry, when an entry has no call, or when an entry is older than 30 days unless KeepUntil is
 // ahead (docs/developers/reference/ux-experiments.md, "Switch lists and corpse control").
 var ServerSwitches = map[string]ServerSwitch{
-	"confirm-reply-post": {
-		Name:    "confirm-reply-post",
-		Opened:  "2026-11-09",
-		PR:      "https://github.com/Freegle/Iznik/pull/2015",
-		Channel: "server",
-		Type:    "confirm_reply_post",
-		Varies:  "step",
-		Arms:    []string{"control", "ask"},
-		Metric:  ServerSwitchMetric{Source: "confirm_reply_post", WindowHours: 168},
-	},
 	// Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the
 	// switch by KeepUntil.
 	"interested-button": {
@@ -119,13 +109,15 @@ var ServerSwitches = map[string]ServerSwitch{
 		Metric:    ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
 	},
 	"krystal-hosting-ad": {
-		Name:    "krystal-hosting-ad",
-		Opened:  "2026-10-30",
-		Channel: "server",
-		Type:    "hosting_ad",
-		Varies:  "step",
-		Arms:    []string{"control", "ad"},
-		Metric:  ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
+		Name:   "krystal-hosting-ad",
+		Opened: "2026-10-30",
+		// Never started, so every member still gets the old version. Kept so it can be started.
+		KeepUntil: "2026-12-06",
+		Channel:   "server",
+		Type:      "hosting_ad",
+		Varies:    "step",
+		Arms:      []string{"control", "ad"},
+		Metric:    ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
 	},
 }
 

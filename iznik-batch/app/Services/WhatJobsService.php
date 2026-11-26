@@ -41,7 +41,15 @@ class WhatJobsService
     // SWAP_RATIO_MIN_EXISTING rows. Guards against a partial feed failure
     // (e.g. an HTTP 429 on the WhatJobs feed while the dead clickcast feed
     // returns 0) silently wiping the live table.
-    const MIN_SWAP_RATIO = 0.5;
+    //
+    // The comparison is with the table, and the table holds whatever feed was last
+    // swapped in, which may be the largest of the day. WhatJobs publishes complete feeds
+    // of very different sizes: on 24-25 November 2026 the kept count was 470-485k for two
+    // runs and 95-126k for the rest, and at one half every smaller feed was refused, so the
+    // table went 27 hours unchanged and served postings that had left the feed. The
+    // smallest complete feed so far kept 15% of the table, so a tenth still refuses a
+    // failed download (0 jobs) or a feed that parses to almost nothing.
+    const MIN_SWAP_RATIO = 0.1;
     const SWAP_RATIO_MIN_EXISTING = 1000;
 
     // Where the feed-change gate keeps what it knows about each feed (validators
