@@ -263,6 +263,50 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertContains('Job ad clicks in our own log: 90, usually 250 (down 64%).', $text['lines']);
     }
 
+    public function test_each_reading_of_where_a_change_came_from(): void
+    {
+        $read = fn (array $codes, string $dir, ?float $ours, ?float $active) => ClickMonitorService::reading($codes, $dir, $ours, $active);
+
+        $this->assertStringContainsString('quieter than usual', $read(['day-drop'], 'drop', 0.6, 0.6));
+        $this->assertStringContainsString('busier than usual', $read(['day-rise'], 'rise', 1.0, 1.5));
+        $this->assertStringContainsString('Something sent more people to job ads', $read(['day-rise'], 'rise', 1.6, 1.0));
+        $this->assertStringContainsString('no figures for these days', $read(['day-drop'], 'drop', null, null));
+        $this->assertStringContainsString('the change is in what WhatJobs counted', $read(['day-drop'], 'drop', 1.0, 1.0));
+    }
+
+    public function test_several_changes_go_in_one_mail(): void
+    {
+        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->dashboard['2026-11-23'][0] = 40;
+        $this->dashboard['2026-11-24'][0] = 40;
+
+        $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
+
+        $mails = $this->mails();
+        $this->assertCount(1, $mails);
+        $this->assertStringContainsString('2 sudden changes, latest Tuesday 24 November', $mails[0]->getOriginalMessage()->getSubject());
+        $text = $mails[0]->getOriginalMessage()->getTextBody();
+        $this->assertStringContainsString('Monday 23 November: 40 billable clicks', $text);
+        $this->assertStringContainsString('Tuesday 24 November: 40 billable clicks', $text);
+    }
+
+    public function test_a_week_long_change_is_described_from_our_own_figures(): void
+    {
+        $f = [
+            'date' => '2026-11-22', 'codes' => ['week-drop'], 'billable' => 100, 'usual' => 160.0,
+            'our' => null, 'ourUsual' => null, 'active' => null, 'activeUsual' => null, 'share' => null, 'shareUsual' => null,
+            'discarded' => ['invalid' => 0, 'duplicate' => 0, 'foreign' => 0, 'latent' => 0],
+            'week' => ['ratio' => 0.7, 'sum' => 784, 'usual' => 1120.0, 'our' => 0.68, 'active' => 1.01, 'out' => true],
+        ];
+
+        $text = app(ClickMonitorService::class)->describe($f);
+
+        $this->assertSame('The seven days to Sunday 22 November: 784 billable clicks, against 1,120 in a usual week lately (down 30%).', $text['headline']);
+        $this->assertContains('Job ad clicks in our own log over the same days: down 32%.', $text['lines']);
+        $this->assertContains('Active members over the same days: about the same.', $text['lines']);
+        $this->assertStringContainsString('points at our side', $text['reading']);
+    }
+
     public function test_a_sustained_drop_is_mailed_on_the_day_it_crosses_and_not_again(): void
     {
         // 160 a day, then 100 a day from the 18th: never half, so no single day is flagged,

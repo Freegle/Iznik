@@ -89,6 +89,15 @@ class WhatJobsPartnerDashboardClientTest extends TestCase
         $this->client()->month('2026-11');
     }
 
+    public function test_a_server_error_on_the_month_page_fails(): void
+    {
+        $this->fakeLogin(month: fn () => Http::response('oops', 500));
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('answered 500');
+        $this->client()->month('2026-11');
+    }
+
     public function test_a_page_without_the_table_fails_rather_than_reading_as_no_clicks(): void
     {
         $this->expectException(RuntimeException::class);
