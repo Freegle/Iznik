@@ -378,9 +378,9 @@ class EmailSpoolerService
      * Derive a recipient list from a self-addressing mailable.
      *
      * Looks first at the mailable's public ->to array (set via Mail::to() or
-     * MyMailable::to()), then falls back to running the mailable through a
-     * lightweight capturing transport to pick up envelope()-declared
-     * recipients. Used when spool() is called without an explicit $to so
+     * MyMailable::to()), then at envelope()-declared recipients, without
+     * building the mailable. Only if neither names anyone does it run the
+     * mailable through the capturing transport. Used when spool() is called without an explicit $to so
      * direct-send call sites (Mail::send($mailable) pattern) can be converted
      * mechanically.
      *
@@ -395,12 +395,30 @@ class EmailSpoolerService
             )));
         }
 
-        // Fall back to envelope() recipients. We run the mailable through the
-        // capturing transport (same one spool() uses to materialise the
-        // Symfony Email) and read getTo() off the captured message. We DON'T
-        // cache the captured email here — spool() captures it again right
-        // after — because doing so would require restructuring the method to
-        // pass the cached value through, for one rarely-hit code path.
+        // Read envelope() recipients directly. This must not build the
+        // mailable: spool() builds it straight after, and a mailable that
+        // creates its email_tracking row in build() (CommunityNewsMail,
+        // MatchedPosts) would otherwise get two rows per mail, one of them an
+        // orphan the sent mail never points at, halving its open and click
+        // rates. It also renders the MJML once instead of twice.
+        if (method_exists($mailable, 'envelope')) {
+            $addrs = array_values(array_filter(array_map(
+                fn ($a) => match (true) {
+                    $a instanceof \Illuminate\Mail\Mailables\Address => $a->address,
+                    $a instanceof Address => $a->getAddress(),
+                    is_string($a) => $a,
+                    default => null,
+                },
+                $mailable->envelope()->to ?? [],
+            )));
+
+            if ($addrs !== []) {
+                return $addrs;
+            }
+        }
+
+        // Last resort for a mailable that sets its recipient only inside
+        // build(): run it through the capturing transport and read getTo().
         try {
             $email = $this->captureBuiltMessage($mailable);
             $addrs = $email->getTo() ?? [];
