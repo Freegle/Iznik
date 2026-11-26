@@ -47,7 +47,7 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
-When you reply to an offer of a child car seat, Freegle asks you in the chat whether you still want it before passing your reply on, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts. The question is addressed to you by name, as "@your name".
+When you reply to an offer of a child car seat, Freegle asks you in the chat whether you still want it before passing your reply on, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts. The question is addressed to you by name, as "@your name". You are asked the same way when the photo of an offer looks damaged, or too big to carry home when no delivery is offered.
 
 Tap **Yes, send my reply** and it goes. The person offering sees the question and your answer
 with it. Tap **No, don't send it** and they see none of it. Only the two buttons answer. Anything

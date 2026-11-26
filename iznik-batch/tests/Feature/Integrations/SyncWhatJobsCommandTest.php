@@ -68,6 +68,21 @@ class SyncWhatJobsCommandTest extends TestCase
         return $tmp;
     }
 
+    /**
+     * Seed $count rows into the live jobs table, 500 to a statement.
+     */
+    private function seedLiveJobs(string $prefix, int $count, string $geom, int $srid): void
+    {
+        foreach (array_chunk(range(0, $count - 1), 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '(?,?,ST_GeomFromText(?,?),1,0)'));
+            $bindings = [];
+            foreach ($chunk as $i) {
+                array_push($bindings, "$prefix-$i", 'Test', $geom, $srid);
+            }
+            DB::statement("INSERT INTO jobs (job_reference,title,geometry,visible,clickability) VALUES $placeholders", $bindings);
+        }
+    }
+
     private function makeFeedXml(array $jobs): string
     {
         $nodes = '';
@@ -338,29 +353,9 @@ class SyncWhatJobsCommandTest extends TestCase
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
         $existing = WhatJobsService::SWAP_RATIO_MIN_EXISTING + 100;
         $before = DB::table('jobs')->count();
-        $rows = [];
-        for ($i = 0; $i < $existing; $i++) {
-            $rows[] = ["guard-drop-$i", 'Test', $geom, $srid];
-            if (count($rows) === 500) {
-                $placeholders = implode(',', array_fill(0, count($rows), '(?,?,ST_GeomFromText(?,?),1,0)'));
-                $bindings = [];
-                foreach ($rows as $r) {
-                    array_push($bindings, $r[0], $r[1], $r[2], $r[3]);
-                }
-                DB::statement("INSERT INTO jobs (job_reference,title,geometry,visible,clickability) VALUES $placeholders", $bindings);
-                $rows = [];
-            }
-        }
-        if ($rows) {
-            $placeholders = implode(',', array_fill(0, count($rows), '(?,?,ST_GeomFromText(?,?),1,0)'));
-            $bindings = [];
-            foreach ($rows as $r) {
-                array_push($bindings, $r[0], $r[1], $r[2], $r[3]);
-            }
-            DB::statement("INSERT INTO jobs (job_reference,title,geometry,visible,clickability) VALUES $placeholders", $bindings);
-        }
+        $this->seedLiveJobs('guard-drop', $existing, $geom, $srid);
 
-        // Build a feed that yields only a handful of jobs (well under 50% of existing).
+        // Build a feed that yields only a handful of jobs, far under MIN_SWAP_RATIO of existing.
         $xml = $this->makeFeedXml([
             ['job_reference' => 'guard-new-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
             ['job_reference' => 'guard-new-2', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
@@ -395,6 +390,63 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertSame($before + $existing, DB::table('jobs')->count(), 'jobs table must not be wiped');
 
         DB::table('jobs')->where('job_reference', 'like', 'guard-drop-%')->delete();
+    }
+
+    #[Test]
+    public function test_sync_swaps_a_complete_feed_smaller_than_the_live_table(): void
+    {
+        // WhatJobs publishes feeds of very different sizes through the day: 2026-11-24 to 25 the
+        // kept count swung between about 95k and 470k. A complete smaller feed is the current one
+        // and must replace the table; only a near-empty parse is refused.
+        Http::fake(['*/v1/jobs/rebuild' => Http::response(['status' => 'rebuilding'], 200)]);
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
+
+        $srid = config('freegle.srid', 3857);
+        $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
+        $existing = WhatJobsService::SWAP_RATIO_MIN_EXISTING + 100;
+        $this->seedLiveJobs('guard-small', $existing, $geom, $srid);
+        $liveRows = DB::table('jobs')->count();
+
+        // A fifth of the live table: under the old one-half guard, over MIN_SWAP_RATIO.
+        $feedSize = intdiv($liveRows, 5);
+        $this->assertGreaterThan($liveRows * WhatJobsService::MIN_SWAP_RATIO, $feedSize);
+        $jobs = [];
+        for ($i = 0; $i < $feedSize; $i++) {
+            $jobs[] = ['job_reference' => "guard-small-new-$i", 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'];
+        }
+        $xml = $this->makeFeedXml($jobs);
+
+        $svc = new class($xml, $geom) extends WhatJobsService {
+            public bool $swapped = false;
+            public function __construct(private string $xml, private string $geom) {}
+            protected function downloadFeed(string $url): ?string
+            {
+                $tmp = tempnam(sys_get_temp_dir(), 'whatjobs_small_');
+                file_put_contents($tmp, $this->xml);
+                return $tmp;
+            }
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache, string $zip = ''): ?array
+            {
+                return [53.8, -1.55, 53.9, -1.45, $this->geom];
+            }
+            public function swapTables(): void
+            {
+                $this->swapped = true;
+            }
+            public function analyseClickability(): void {}
+            public function updateClickability(): void {}
+        };
+
+        config(['freegle.whatjobs.feed1' => null, 'freegle.whatjobs.feed2' => 'http://fake-feed2']);
+
+        $result = $svc->sync(false);
+
+        $this->assertTrue($svc->swapped, 'a complete feed a fifth the size of the live table is swapped in');
+        $this->assertArrayNotHasKey('skipped_swap', $result);
+        $this->assertSame($feedSize, $result['inserted']);
+
+        DB::table('jobs')->where('job_reference', 'like', 'guard-small-%')->delete();
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
     }
 
     #[Test]

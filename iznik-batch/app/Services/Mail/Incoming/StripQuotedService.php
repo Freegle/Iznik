@@ -151,6 +151,7 @@ class StripQuotedService
             '/^Get Outlook for IOS.*/ims',
             '/^Sent from my Xperia.*/ims',
             '/^Sent from the all-new AOL app.*/ims',
+            '/^AOL (on|for) (Android|iOS|iPhone|iPad)\b.*/ims',
             '/^Sent from my BlueMail/ims',
             '/^Sent using the mail\.com mail app.*/ims',
             '/^Sent from my phone.*/ims',

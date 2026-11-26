@@ -305,6 +305,7 @@
             <ModMessageTnNotice
               :mod-messaging-allowed="modMessagingAllowed"
               :live="contextCopyIsLive"
+              :editreview="editreview"
               :group-name="currentGroupName"
             />
             <ModMessageDuplicate

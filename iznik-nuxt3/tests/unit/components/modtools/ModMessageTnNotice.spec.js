@@ -87,6 +87,48 @@ describe('ModMessageTnNotice', () => {
     })
   })
 
+  // On the Edits page the buttons are Accept Edit and Reject Edit. The live wording spoke of
+  // deleting and of reports, which are not the choice in front of the moderator there.
+  describe('on an edit waiting for review', () => {
+    it('says the choice is to accept or reject the edit', () => {
+      const notice = mountNotice({ live: true, editreview: true }).find(
+        '[data-test="tn-unaddressed-edit"]'
+      )
+
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Trash Nothing')
+      expect(notice.text()).toContain("didn't choose")
+      expect(notice.text()).toContain('accept or reject')
+      expect(notice.text()).toContain(
+        "can't change it yourself or message them"
+      )
+    })
+
+    it('shows only the edit wording, whether or not the copy is live', () => {
+      for (const live of [true, false]) {
+        const wrapper = mountNotice({ live, editreview: true })
+
+        expect(
+          wrapper.find('[data-test="tn-unaddressed-pending"]').exists()
+        ).toBe(false)
+        expect(
+          wrapper.find('[data-test="tn-unaddressed-approved"]').exists()
+        ).toBe(false)
+        expect(wrapper.text()).not.toContain('approve or delete')
+        expect(wrapper.text()).not.toContain('comes off Freegle automatically')
+      }
+    })
+
+    it('says nothing about an ordinary post', () => {
+      const wrapper = mountNotice({
+        modMessagingAllowed: true,
+        editreview: true,
+      })
+
+      expect(wrapper.text()).toBe('')
+    })
+  })
+
   it('names the community the post was matched to', () => {
     expect(mountNotice({ live: false }).text()).toContain('Edinburgh Freegle')
     expect(mountNotice({ live: true }).text()).toContain('Edinburgh Freegle')
