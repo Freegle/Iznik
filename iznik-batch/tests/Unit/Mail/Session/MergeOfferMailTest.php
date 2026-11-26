@@ -72,10 +72,10 @@ class MergeOfferMailTest extends TestCase
     public function test_preheader_contains_both_email_addresses(): void
     {
         $html = view('emails.mjml.session.merge-offer', [
-            'name1'    => 'Account One',
-            'email1'   => 'one@example.com',
-            'name2'    => 'Account Two',
-            'email2'   => 'two@example.com',
+            'name1' => 'Account One',
+            'email1' => 'one@example.com',
+            'name2' => 'Account Two',
+            'email2' => 'two@example.com',
             'mergeUrl' => 'https://www.ilovefreegle.org/merge/abc123',
         ])->render();
 

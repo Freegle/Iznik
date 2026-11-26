@@ -32,8 +32,8 @@ class ModToolsLinkPrefixTest extends TestCase
                     // the end of the URL. Deliberately does not match
                     // modtools_logo.png, channel ids, or dotted Blade includes.
                     if (preg_match('#/modtools(/|["\'])#', $line)) {
-                        $rel = str_replace(base_path() . '/', '', $path);
-                        $offenders[] = $rel . ':' . ($i + 1) . '  ' . trim($line);
+                        $rel = str_replace(base_path().'/', '', $path);
+                        $offenders[] = $rel.':'.($i + 1).'  '.trim($line);
                     }
                 }
             }
@@ -42,9 +42,9 @@ class ModToolsLinkPrefixTest extends TestCase
         $this->assertSame(
             [],
             $offenders,
-            "Link(s) built with a /modtools prefix. ModTools is served at the "
-            . "root of freegle.sites.mod, so drop the prefix and link straight "
-            . "to the page:\n" . implode("\n", $offenders)
+            'Link(s) built with a /modtools prefix. ModTools is served at the '
+            .'root of freegle.sites.mod, so drop the prefix and link straight '
+            ."to the page:\n".implode("\n", $offenders)
         );
     }
 

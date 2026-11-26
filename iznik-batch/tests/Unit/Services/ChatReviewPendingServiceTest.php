@@ -32,7 +32,7 @@ class ChatReviewPendingServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatReviewPendingService();
+        $this->service = new ChatReviewPendingService;
     }
 
     private function pendingMessage(int $hoursOld = 72): array
@@ -266,8 +266,8 @@ class ChatReviewPendingServiceTest extends TestCase
 
         Mail::assertSent(ChatReviewSummaryMail::class, function (ChatReviewSummaryMail $mail) use ($groupA, $groupB) {
             return $mail->total === 3
-                && str_contains($mail->summary, $groupA->nameshort . ' — 1 message' . "\r\n")
-                && str_contains($mail->summary, $groupB->nameshort . ' — 2 messages' . "\r\n");
+                && str_contains($mail->summary, $groupA->nameshort.' — 1 message'."\r\n")
+                && str_contains($mail->summary, $groupB->nameshort.' — 2 messages'."\r\n");
         });
     }
 
@@ -367,7 +367,7 @@ class ChatReviewPendingServiceTest extends TestCase
             'processingsuccessful' => 0,
         ]);
 
-        (new ChatProcessService())->processIncoming();
+        (new ChatProcessService)->processIncoming();
 
         $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $stale->id)->value('reviewrejected'));
         $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $next->id)->value('reviewrequired'),

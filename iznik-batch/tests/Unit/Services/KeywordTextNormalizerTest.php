@@ -17,12 +17,13 @@ use Tests\TestCase;
 class KeywordTextNormalizerTest extends TestCase
 {
     private ContentCheckService $service;
+
     private string $domain = 'ilovefreegle.shop';
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ContentCheckService();
+        $this->service = new ContentCheckService;
 
         DB::table('concern_keywords')->insertOrIgnore([
             'keyword' => $this->domain, 'category' => 'scam', 'action' => 'block',
@@ -58,9 +59,9 @@ class KeywordTextNormalizerTest extends TestCase
     public function test_normalize_folds_dot_lookalikes(): void
     {
         foreach (["ilovefreegle\u{3002}shop", "ilovefreegle\u{00B7}shop", "ilovefreegle\u{2022}shop",
-                  "ilovefreegle\u{2219}shop", "ilovefreegle\u{30FB}shop", "ilovefreegle\u{FF0E}shop",
-                  "ilovefreegle\u{2024}shop", 'ilovefreegle[.]shop', 'ilovefreegle(.)shop',
-                  'ilovefreegle [.] shop', 'ilovefreegle dot shop', 'ILOVEFREEGLE DOT SHOP'] as $spelling) {
+            "ilovefreegle\u{2219}shop", "ilovefreegle\u{30FB}shop", "ilovefreegle\u{FF0E}shop",
+            "ilovefreegle\u{2024}shop", 'ilovefreegle[.]shop', 'ilovefreegle(.)shop',
+            'ilovefreegle [.] shop', 'ilovefreegle dot shop', 'ILOVEFREEGLE DOT SHOP'] as $spelling) {
             $this->assertSame('ilovefreegle.shop', KeywordTextNormalizer::normalize($spelling), json_encode($spelling));
         }
     }
@@ -85,23 +86,23 @@ class KeywordTextNormalizerTest extends TestCase
     public static function obfuscatedSpellings(): array
     {
         return [
-            'mathematical bold'        => ['claim at 𝐢𝐥𝐨𝐯𝐞𝐟𝐫𝐞𝐞𝐠𝐥𝐞.𝐬𝐡𝐨𝐩 now'],
+            'mathematical bold' => ['claim at 𝐢𝐥𝐨𝐯𝐞𝐟𝐫𝐞𝐞𝐠𝐥𝐞.𝐬𝐡𝐨𝐩 now'],
             'mathematical sans italic' => ['claim at 𝘪𝘭𝘰𝘷𝘦𝘧𝘳𝘦𝘦𝘨𝘭𝘦.𝘴𝘩𝘰𝘱 now'],
-            'fullwidth'                => ['claim at ｉｌｏｖｅｆｒｅｅｇｌｅ．ｓｈｏｐ now'],
-            'zero-width characters'    => ["claim at i\u{200B}love\u{200C}freegle\u{200D}.\u{2060}shop now"],
-            'soft hyphen and bom'      => ["claim at ilove\u{00AD}freegle.\u{FEFF}shop now"],
-            'combining strikethrough'  => ["claim at i\u{0336}l\u{0336}o\u{0336}v\u{0336}e\u{0336}freegle.shop now"],
-            'bidi override'            => ["claim at \u{202E}ilovefreegle.shop\u{202C} now"],
-            'ideographic full stop'    => ["claim at ilovefreegle\u{3002}shop now"],
-            'middle dot'               => ["claim at ilovefreegle\u{00B7}shop now"],
-            'bracketed dot'            => ['claim at ilovefreegle[.]shop now'],
-            'parenthesised dot'        => ['claim at ilovefreegle(.)shop now'],
-            'dot spelled out'          => ['claim at ilovefreegle dot shop now'],
-            'cyrillic look-alikes'     => ["claim at \u{0456}l\u{043E}v\u{0435}fr\u{0435}\u{0435}gl\u{0435}.sh\u{043E}\u{0440} now"],
-            'greek look-alikes'        => ["claim at \u{03B9}l\u{03BF}vefreegle.sh\u{03BF}p now"],
-            'small capitals'           => ['claim at ɪʟᴏᴠᴇꜰʀᴇᴇɢʟᴇ.ꜱʜᴏᴘ now'],
-            'upper case'               => ['claim at ILOVEFREEGLE.SHOP now'],
-            'letters spaced apart'     => ['claim at i l o v e f r e e g l e . s h o p now'],
+            'fullwidth' => ['claim at ｉｌｏｖｅｆｒｅｅｇｌｅ．ｓｈｏｐ now'],
+            'zero-width characters' => ["claim at i\u{200B}love\u{200C}freegle\u{200D}.\u{2060}shop now"],
+            'soft hyphen and bom' => ["claim at ilove\u{00AD}freegle.\u{FEFF}shop now"],
+            'combining strikethrough' => ["claim at i\u{0336}l\u{0336}o\u{0336}v\u{0336}e\u{0336}freegle.shop now"],
+            'bidi override' => ["claim at \u{202E}ilovefreegle.shop\u{202C} now"],
+            'ideographic full stop' => ["claim at ilovefreegle\u{3002}shop now"],
+            'middle dot' => ["claim at ilovefreegle\u{00B7}shop now"],
+            'bracketed dot' => ['claim at ilovefreegle[.]shop now'],
+            'parenthesised dot' => ['claim at ilovefreegle(.)shop now'],
+            'dot spelled out' => ['claim at ilovefreegle dot shop now'],
+            'cyrillic look-alikes' => ["claim at \u{0456}l\u{043E}v\u{0435}fr\u{0435}\u{0435}gl\u{0435}.sh\u{043E}\u{0440} now"],
+            'greek look-alikes' => ["claim at \u{03B9}l\u{03BF}vefreegle.sh\u{03BF}p now"],
+            'small capitals' => ['claim at ɪʟᴏᴠᴇꜰʀᴇᴇɢʟᴇ.ꜱʜᴏᴘ now'],
+            'upper case' => ['claim at ILOVEFREEGLE.SHOP now'],
+            'letters spaced apart' => ['claim at i l o v e f r e e g l e . s h o p now'],
             'letters punctuated apart' => ['claim at i-l-o-v-e-f-r-e-e-g-l-e[.]s-h-o-p now'],
         ];
     }
@@ -110,7 +111,7 @@ class KeywordTextNormalizerTest extends TestCase
     public function test_every_obfuscated_spelling_is_blocked_by_the_plain_keyword(string $text): void
     {
         $hit = $this->service->checkBlockKeywords('', $text);
-        $this->assertNotNull($hit, 'must be blocked: ' . json_encode($text));
+        $this->assertNotNull($hit, 'must be blocked: '.json_encode($text));
         $this->assertSame('block', $hit['action']);
         $this->assertSame($this->domain, $hit['keyword']);
 
@@ -119,16 +120,16 @@ class KeywordTextNormalizerTest extends TestCase
 
     public function test_the_skeleton_pass_is_only_for_long_block_keywords(): void
     {
-        $short = 'pornhubx' . substr(uniqid(), -1);
+        $short = 'pornhubx'.substr(uniqid(), -1);
         DB::table('concern_keywords')->insertOrIgnore([
             ['keyword' => $short, 'category' => 'scam', 'action' => 'block',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
             ['keyword' => 'ilovefreegle.flag', 'category' => 'scam', 'action' => 'flag',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
         ]);
 
         $this->assertNull(
-            $this->service->checkBlockKeywords('', 'see ' . implode(' ', str_split($short)) . ' here'),
+            $this->service->checkBlockKeywords('', 'see '.implode(' ', str_split($short)).' here'),
             'a short block keyword gets no skeleton pass'
         );
         $this->assertNull(
@@ -164,7 +165,7 @@ class KeywordTextNormalizerTest extends TestCase
 
     public function test_emoji_sequences_and_phone_signatures_match_nothing(): void
     {
-        $word = 'testflagword' . uniqid();
+        $word = 'testflagword'.uniqid();
         DB::table('concern_keywords')->insert([
             'keyword' => $word, 'category' => 'review', 'action' => 'flag',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,

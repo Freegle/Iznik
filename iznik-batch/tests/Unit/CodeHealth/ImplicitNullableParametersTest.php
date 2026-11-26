@@ -89,6 +89,7 @@ class ImplicitNullableParametersTest extends TestCase
                 if ($depth === 0 && $token->is(',')) {
                     $parameters[] = [$line, $parameter];
                     $parameter = '';
+
                     continue;
                 }
 

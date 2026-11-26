@@ -18,7 +18,7 @@ class ReachServiceTest extends TestCase
         config(['freegle.ripple.mode' => 'drive']);
         config(['freegle.ripple.max_minutes' => 30]);
 
-        return new ReachService();
+        return new ReachService;
     }
 
     public function test_tick_for_elapsed_hours_maps_to_hazard_schedule(): void
@@ -86,7 +86,7 @@ class ReachServiceTest extends TestCase
         $this->assertStringEndsWith('-0.1 51.5))', $result['ticks'][0]['wkt']);
     }
 
-    public function test_parseScheduleResponse_includes_reachable_group_ids(): void
+    public function test_parse_schedule_response_includes_reachable_group_ids(): void
     {
         $s = $this->service();
         $polygon = [
@@ -112,7 +112,7 @@ class ReachServiceTest extends TestCase
         $this->assertSame([21439, 21656], $result['reachable_group_ids']);
     }
 
-    public function test_parseScheduleResponse_defaults_reachable_group_ids_to_empty(): void
+    public function test_parse_schedule_response_defaults_reachable_group_ids_to_empty(): void
     {
         // An older routing server omits the field entirely - the batch must see []
         // (not null), which the gate treats as "not available" and leaves targeting
@@ -147,7 +147,7 @@ class ReachServiceTest extends TestCase
 
         $this->service()->computeSchedule(51.5, -0.1);
 
-        Http::assertSent(fn ($request) => !str_contains($request->url(), 'target_users'));
+        Http::assertSent(fn ($request) => ! str_contains($request->url(), 'target_users'));
     }
 
     public function test_schedule_sends_target_users_when_extent_enabled(): void
@@ -170,7 +170,7 @@ class ReachServiceTest extends TestCase
 
         $this->service()->computeSchedule(51.5, -0.1);
 
-        Http::assertSent(fn ($request) => !str_contains($request->url(), 'target_users'));
+        Http::assertSent(fn ($request) => ! str_contains($request->url(), 'target_users'));
     }
 
     public function test_compute_schedule_returns_null_on_empty_schedule(): void
@@ -342,7 +342,7 @@ class ReachServiceTest extends TestCase
         ], 200)]);
 
         $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
-        Http::assertSent(fn ($request) => !array_key_exists('coarse', $request->data()));
+        Http::assertSent(fn ($request) => ! array_key_exists('coarse', $request->data()));
     }
 
     public function test_catchment_geometry_tolerates_absent_bounds(): void
@@ -423,8 +423,8 @@ class ReachServiceTest extends TestCase
 
         $this->service()->computeSchedule(51.5, -0.1);
 
-        Http::assertSent(fn ($request) => !str_contains($request->url(), 'rural_access')
-            && !str_contains($request->url(), 'fairness_weight'));
+        Http::assertSent(fn ($request) => ! str_contains($request->url(), 'rural_access')
+            && ! str_contains($request->url(), 'fairness_weight'));
     }
 
     public function test_schedule_asks_for_rural_rings_when_enabled(): void
@@ -436,7 +436,7 @@ class ReachServiceTest extends TestCase
         $this->service()->computeSchedule(51.5, -0.1);
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'rural_access=1')
-            && !str_contains($request->url(), 'fairness_weight'));
+            && ! str_contains($request->url(), 'fairness_weight'));
     }
 
     public function test_schedule_sends_fairness_weight_and_quintile_when_enabled(): void
@@ -465,7 +465,7 @@ class ReachServiceTest extends TestCase
 
         $this->service()->computeSchedule(51.5, -0.1);
 
-        Http::assertSent(fn ($request) => !str_contains($request->url(), 'fairness_weight'));
+        Http::assertSent(fn ($request) => ! str_contains($request->url(), 'fairness_weight'));
     }
 
     /**
@@ -500,7 +500,7 @@ class ReachServiceTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), 'fairness_max_quintile=1'));
     }
 
-    public function test_parseScheduleResponse_carries_the_rural_rings(): void
+    public function test_parse_schedule_response_carries_the_rural_rings(): void
     {
         $parsed = $this->service()->parseScheduleResponse([
             'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
@@ -517,7 +517,7 @@ class ReachServiceTest extends TestCase
         $this->assertArrayNotHasKey('fairness', $parsed['overflow_bounds']);
     }
 
-    public function test_parseScheduleResponse_carries_the_fairness_rings_and_the_budget_applied(): void
+    public function test_parse_schedule_response_carries_the_fairness_rings_and_the_budget_applied(): void
     {
         $parsed = $this->service()->parseScheduleResponse([
             'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
@@ -537,7 +537,7 @@ class ReachServiceTest extends TestCase
      * NULL must mean "no lane applied", never "a lane that produced nothing". A row read back
      * as an empty array would look like an admissible-to-nobody lane rather than no lane.
      */
-    public function test_parseScheduleResponse_gives_null_overflow_when_no_lane_applied(): void
+    public function test_parse_schedule_response_gives_null_overflow_when_no_lane_applied(): void
     {
         $parsed = $this->service()->parseScheduleResponse([
             'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
@@ -555,7 +555,7 @@ class ReachServiceTest extends TestCase
     // --- Cluster-anchor overflow (contract: cluster_anchor / cluster_floor / cluster_k /
     // cluster_max_wedges / cluster_max_minutes; overflow_cluster keyed w1..w3) -------------
 
-    public function test_parseScheduleResponse_carries_the_cluster_wedges(): void
+    public function test_parse_schedule_response_carries_the_cluster_wedges(): void
     {
         $parsed = $this->service()->parseScheduleResponse([
             'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
@@ -578,7 +578,7 @@ class ReachServiceTest extends TestCase
      * conditions, so the two are independent rather than mutually exclusive. Both keys must
      * survive parsing at once, not just whichever the loop happens to see first.
      */
-    public function test_parseScheduleResponse_rural_and_cluster_coexist(): void
+    public function test_parse_schedule_response_rural_and_cluster_coexist(): void
     {
         $parsed = $this->service()->parseScheduleResponse([
             'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
@@ -649,11 +649,11 @@ class ReachServiceTest extends TestCase
 
         $this->service()->computeSchedule(51.5, -0.1);
 
-        Http::assertSent(fn ($request) => !str_contains($request->url(), 'cluster_anchor')
-            && !str_contains($request->url(), 'cluster_floor')
-            && !str_contains($request->url(), 'cluster_k')
-            && !str_contains($request->url(), 'cluster_max_wedges')
-            && !str_contains($request->url(), 'cluster_max_minutes'));
+        Http::assertSent(fn ($request) => ! str_contains($request->url(), 'cluster_anchor')
+            && ! str_contains($request->url(), 'cluster_floor')
+            && ! str_contains($request->url(), 'cluster_k')
+            && ! str_contains($request->url(), 'cluster_max_wedges')
+            && ! str_contains($request->url(), 'cluster_max_minutes'));
     }
 
     public function test_schedule_sends_cluster_params_when_enabled(): void
@@ -687,7 +687,6 @@ class ReachServiceTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request->url(), 'cluster_max_wedges=3'));
     }
 
-
     public function test_label_verdicts_with_discover_returns_both_lists(): void
     {
         Http::fake(['*reach-eval*' => Http::response([
@@ -716,8 +715,6 @@ class ReachServiceTest extends TestCase
 
         $this->assertSame([7], $eval['discovered']);
     }
-
-
 
     /**
      * An outage has to be visible from outside the site.

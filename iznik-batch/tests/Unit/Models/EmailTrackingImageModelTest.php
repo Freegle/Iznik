@@ -10,19 +10,19 @@ class EmailTrackingImageModelTest extends TestCase
 {
     public function test_email_tracking_image_has_correct_table(): void
     {
-        $image = new EmailTrackingImage();
+        $image = new EmailTrackingImage;
         $this->assertEquals('email_tracking_images', $image->getTable());
     }
 
     public function test_email_tracking_image_has_no_timestamps(): void
     {
-        $image = new EmailTrackingImage();
+        $image = new EmailTrackingImage;
         $this->assertFalse($image->timestamps);
     }
 
     public function test_email_tracking_image_casts(): void
     {
-        $image = new EmailTrackingImage();
+        $image = new EmailTrackingImage;
         $casts = $image->getCasts();
 
         $this->assertArrayHasKey('loaded_at', $casts);
@@ -31,7 +31,7 @@ class EmailTrackingImageModelTest extends TestCase
 
     public function test_email_tracking_image_fillable(): void
     {
-        $image = new EmailTrackingImage();
+        $image = new EmailTrackingImage;
         $fillable = $image->getFillable();
 
         $this->assertContains('email_tracking_id', $fillable);
@@ -43,7 +43,7 @@ class EmailTrackingImageModelTest extends TestCase
     public function test_email_tracking_image_belongs_to_tracking(): void
     {
         $user = $this->createTestUser();
-        
+
         $tracking = EmailTracking::create([
             'user_id' => $user->id,
             'email_type' => 'chat_notification',

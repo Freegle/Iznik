@@ -42,7 +42,7 @@ class GroupClosedReminderServiceTest extends TestCase
 
         Mail::fake();
 
-        $this->service = new GroupClosedReminderService();
+        $this->service = new GroupClosedReminderService;
     }
 
     // ------------------------------------------------------------------
@@ -53,9 +53,9 @@ class GroupClosedReminderServiceTest extends TestCase
     private function createClosedGroup(): Group
     {
         return $this->createTestGroup([
-            'type'    => Group::TYPE_FREEGLE,
+            'type' => Group::TYPE_FREEGLE,
             'publish' => 1,
-            'onhere'  => 1,
+            'onhere' => 1,
             'settings' => ['closed' => 1],
         ]);
     }
@@ -65,6 +65,7 @@ class GroupClosedReminderServiceTest extends TestCase
     {
         $user = $this->createTestUser();
         $this->createMembership($user, $group, ['role' => $role]);
+
         return DB::table('users_emails')->where('userid', $user->id)->where('preferred', 1)->value('email');
     }
 
@@ -151,9 +152,9 @@ class GroupClosedReminderServiceTest extends TestCase
     public function test_open_group_without_settings_is_not_included(): void
     {
         $group = $this->createTestGroup([
-            'type'    => Group::TYPE_FREEGLE,
+            'type' => Group::TYPE_FREEGLE,
             'publish' => 1,
-            'onhere'  => 1,
+            'onhere' => 1,
         ]);
         // settings is null by default — not matched
         $this->addMod($group);
@@ -167,9 +168,9 @@ class GroupClosedReminderServiceTest extends TestCase
     public function test_open_group_with_closed_zero_is_not_included(): void
     {
         $group = $this->createTestGroup([
-            'type'     => Group::TYPE_FREEGLE,
-            'publish'  => 1,
-            'onhere'   => 1,
+            'type' => Group::TYPE_FREEGLE,
+            'publish' => 1,
+            'onhere' => 1,
             'settings' => ['closed' => 0],
         ]);
         $this->addMod($group);
@@ -183,9 +184,9 @@ class GroupClosedReminderServiceTest extends TestCase
     public function test_open_group_with_closed_false_is_not_included(): void
     {
         $group = $this->createTestGroup([
-            'type'     => Group::TYPE_FREEGLE,
-            'publish'  => 1,
-            'onhere'   => 1,
+            'type' => Group::TYPE_FREEGLE,
+            'publish' => 1,
+            'onhere' => 1,
             'settings' => ['closed' => false],
         ]);
         $this->addMod($group);
@@ -219,7 +220,7 @@ class GroupClosedReminderServiceTest extends TestCase
 
         $user = $this->createTestUser();
         $this->createMembership($user, $group, [
-            'role'       => Membership::ROLE_MODERATOR,
+            'role' => Membership::ROLE_MODERATOR,
             'collection' => Membership::COLLECTION_PENDING,
         ]);
 
@@ -241,10 +242,10 @@ class GroupClosedReminderServiceTest extends TestCase
 
         DB::table('users_emails')->where('userid', $user->id)->update(['preferred' => 0]);
         DB::table('users_emails')->insert([
-            'userid'    => $user->id,
-            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
+            'userid' => $user->id,
+            'email' => "user{$user->id}-alias@users.ilovefreegle.org",
             'preferred' => 1,
-            'added'     => now(),
+            'added' => now(),
         ]);
 
         $result = $this->service->sendReminders();
@@ -262,10 +263,10 @@ class GroupClosedReminderServiceTest extends TestCase
 
         DB::table('users_emails')->where('userid', $user->id)->delete();
         DB::table('users_emails')->insert([
-            'userid'    => $user->id,
-            'email'     => "user{$user->id}-alias@users.ilovefreegle.org",
+            'userid' => $user->id,
+            'email' => "user{$user->id}-alias@users.ilovefreegle.org",
             'preferred' => 1,
-            'added'     => now(),
+            'added' => now(),
         ]);
 
         $result = $this->service->sendReminders();

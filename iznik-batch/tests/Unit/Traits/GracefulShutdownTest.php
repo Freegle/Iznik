@@ -13,7 +13,8 @@ class GracefulShutdownTest extends TestCase
     {
         parent::setUp();
 
-        $this->instance = new class {
+        $this->instance = new class
+        {
             use GracefulShutdown;
 
             public bool $infoLogged = false;
@@ -23,42 +24,42 @@ class GracefulShutdownTest extends TestCase
                 $this->infoLogged = true;
             }
 
-            public function testSetupSignalHandlers(): void
+            public function test_setup_signal_handlers(): void
             {
                 $this->setupSignalHandlers();
             }
 
-            public function testRegisterShutdownHandlers(): void
+            public function test_register_shutdown_handlers(): void
             {
                 $this->registerShutdownHandlers();
             }
 
-            public function testShouldStop(): bool
+            public function test_should_stop(): bool
             {
                 return $this->shouldStop();
             }
 
-            public function testShouldAbort(): bool
+            public function test_should_abort(): bool
             {
                 return $this->shouldAbort();
             }
 
-            public function testSetAbortFile(string $scriptName): self
+            public function test_set_abort_file(string $scriptName): self
             {
                 return $this->setAbortFile($scriptName);
             }
 
-            public function testCreateAbortFile(): void
+            public function test_create_abort_file(): void
             {
                 $this->createAbortFile();
             }
 
-            public function testRemoveAbortFile(): void
+            public function test_remove_abort_file(): void
             {
                 $this->removeAbortFile();
             }
 
-            public function testLogShutdownIfStopping(): bool
+            public function test_log_shutdown_if_stopping(): bool
             {
                 return $this->logShutdownIfStopping();
             }

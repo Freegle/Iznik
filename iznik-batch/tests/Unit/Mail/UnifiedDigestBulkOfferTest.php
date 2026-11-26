@@ -32,7 +32,8 @@ class UnifiedDigestBulkOfferTest extends TestCase
     private function spoolAndLoad(UnifiedDigest $mail, string $recipient): array
     {
         $id = $this->spooler->spool($mail, $recipient);
-        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+
+        return json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
     }
 
     public function test_bulk_offer_catalogue_rendered_in_html_and_text(): void

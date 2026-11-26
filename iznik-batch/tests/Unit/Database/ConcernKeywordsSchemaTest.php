@@ -27,14 +27,14 @@ class ConcernKeywordsSchemaTest extends TestCase
     {
         $this->assertTrue(Schema::hasColumn('concern_keywords', 'group_id'));
 
-        $keyword = 'test-schema-global-' . uniqid();
+        $keyword = 'test-schema-global-'.uniqid();
         DB::table('concern_keywords')->insertOrIgnore([
-            'keyword'    => $keyword,
-            'category'   => 'review',
+            'keyword' => $keyword,
+            'category' => 'review',
             'match_mode' => 'literal',
-            'action'     => 'flag',
-            'scope'      => 'global',
-            'group_id'   => 0,
+            'action' => 'flag',
+            'scope' => 'global',
+            'group_id' => 0,
         ]);
 
         $this->assertDatabaseHas('concern_keywords', ['keyword' => $keyword, 'scope' => 'global', 'group_id' => 0]);

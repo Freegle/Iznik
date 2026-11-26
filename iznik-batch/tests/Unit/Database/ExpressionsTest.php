@@ -3,7 +3,6 @@
 namespace Tests\Unit\Database;
 
 use App\Database\Expressions\CaseWhen;
-use App\Models\User;
 use App\Database\Expressions\CastAs;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Comparison;
@@ -32,6 +31,7 @@ use App\Database\Expressions\StWithin;
 use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
+use App\Models\User;
 use Illuminate\Database\Grammar;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -565,7 +565,7 @@ class ExpressionsTest extends TestCase
 
     public function test_casewhen_renders_multiple_whens_and_else(): void
     {
-        $case = (new CaseWhen())
+        $case = (new CaseWhen)
             ->when(new Comparison('status', '=', Value::of('open')))->then(Value::of('Open'))
             ->when(new Comparison('status', '=', Value::of('closed')))->then(Value::of('Closed'))
             ->otherwise(Value::of('Unknown'));
@@ -578,7 +578,7 @@ class ExpressionsTest extends TestCase
 
     public function test_casewhen_without_else(): void
     {
-        $case = (new CaseWhen())->when(new Comparison('a', '=', Value::of(1)))->then(Value::of('one'));
+        $case = (new CaseWhen)->when(new Comparison('a', '=', Value::of(1)))->then(Value::of('one'));
 
         $this->assertSame(
             "CASE WHEN `a` = 1 THEN 'one' END",
@@ -589,39 +589,39 @@ class ExpressionsTest extends TestCase
     public function test_casewhen_requires_at_least_one_when_then(): void
     {
         $this->expectException(LogicException::class);
-        (new CaseWhen())->getValue($this->grammar);
+        (new CaseWhen)->getValue($this->grammar);
     }
 
     public function test_casewhen_then_without_when_throws(): void
     {
         $this->expectException(LogicException::class);
-        (new CaseWhen())->then(Value::of('x'));
+        (new CaseWhen)->then(Value::of('x'));
     }
 
     public function test_casewhen_when_without_then_throws_on_render(): void
     {
         $this->expectException(LogicException::class);
-        (new CaseWhen())->when(new Comparison('a', '=', Value::of(1)))->getValue($this->grammar);
+        (new CaseWhen)->when(new Comparison('a', '=', Value::of(1)))->getValue($this->grammar);
     }
 
     public function test_casewhen_consecutive_when_without_then_throws(): void
     {
         $this->expectException(LogicException::class);
-        (new CaseWhen())
+        (new CaseWhen)
             ->when(new Comparison('a', '=', Value::of(1)))
             ->when(new Comparison('b', '=', Value::of(2)));
     }
 
     public function test_casewhen_via_real_query_builder(): void
     {
-        $case = (new CaseWhen())
+        $case = (new CaseWhen)
             ->when(new Comparison('systemrole', '=', Value::of(User::SYSTEMROLE_ADMIN)))->then(Value::of('admin'))
             ->otherwise(Value::of('member'));
 
         $query = DB::table('users')->select($case)->where(new Comparison('id', '>', Value::of(1)));
 
         $this->assertSame(
-            "select CASE WHEN `systemrole` = '" . User::SYSTEMROLE_ADMIN . "' THEN 'admin' ELSE 'member' END from `users` where `id` > 1",
+            "select CASE WHEN `systemrole` = '".User::SYSTEMROLE_ADMIN."' THEN 'admin' ELSE 'member' END from `users` where `id` > 1",
             $query->toSql()
         );
         $this->assertSame([], $query->getBindings());
@@ -629,7 +629,7 @@ class ExpressionsTest extends TestCase
 
     public function test_casewhen_semantics_picks_matching_branch(): void
     {
-        $case = (new CaseWhen())
+        $case = (new CaseWhen)
             ->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'))
             ->when(new Comparison(Value::of(5), '=', Value::of(5)))->then(Value::of('five'))
             ->otherwise(Value::of('other'));
@@ -639,7 +639,7 @@ class ExpressionsTest extends TestCase
 
     public function test_casewhen_semantics_falls_through_to_else(): void
     {
-        $case = (new CaseWhen())
+        $case = (new CaseWhen)
             ->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'))
             ->otherwise(Value::of('other'));
 
@@ -648,7 +648,7 @@ class ExpressionsTest extends TestCase
 
     public function test_casewhen_semantics_no_matching_branch_no_else_is_null(): void
     {
-        $case = (new CaseWhen())->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'));
+        $case = (new CaseWhen)->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'));
 
         $this->assertNull($this->evaluate($case->getValue($this->grammar)));
     }
@@ -1196,7 +1196,7 @@ class ExpressionsTest extends TestCase
         $originalPoints = $this->evaluate("ST_NumPoints({$line->getValue($this->grammar)})");
         $this->assertSame(4, $originalPoints);
 
-        $sql = "ST_NumPoints(".(new StSimplify($line, 1))->getValue($this->grammar).')';
+        $sql = 'ST_NumPoints('.(new StSimplify($line, 1))->getValue($this->grammar).')';
         $this->assertSame(3, $this->evaluate($sql));
     }
 
@@ -1404,7 +1404,7 @@ class ExpressionsTest extends TestCase
     public function test_unsupported_operand_type_is_rejected(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        (new Coalesce('a', new stdClass()))->getValue($this->grammar);
+        (new Coalesce('a', new stdClass))->getValue($this->grammar);
     }
 
     public function test_bare_string_operand_is_always_a_column_not_a_literal(): void

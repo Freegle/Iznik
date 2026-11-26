@@ -17,9 +17,8 @@ class ChatProcessServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatProcessService();
+        $this->service = new ChatProcessService;
     }
-
 
     // --- Ban handling (Discourse: replies silently destroyed) ---
 
@@ -756,7 +755,7 @@ class ChatProcessServiceTest extends TestCase
             ->first();
 
         $this->assertNotNull($task, 'Expected a push_notify_chat_message task to be queued for a successfully processed message');
-        $data = json_decode($task->data, TRUE);
+        $data = json_decode($task->data, true);
         $this->assertEquals($msg->id, $data['message_id']);
     }
 
@@ -835,7 +834,7 @@ class ChatProcessServiceTest extends TestCase
 
     public function test_moderated_user_message_with_block_keyword_is_dropped_not_held(): void
     {
-        $word = 'testblockword' . uniqid();
+        $word = 'testblockword'.uniqid();
         $this->seedBlockKeyword($word);
 
         $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
@@ -886,7 +885,7 @@ class ChatProcessServiceTest extends TestCase
 
     public function test_flag_keyword_still_holds_for_review_rather_than_dropping(): void
     {
-        $word = 'testflagword' . uniqid();
+        $word = 'testflagword'.uniqid();
         DB::table('concern_keywords')->insert([
             'keyword' => $word, 'category' => 'review', 'action' => 'flag',
             'match_mode' => 'literal', 'scope' => 'global',
@@ -916,7 +915,7 @@ class ChatProcessServiceTest extends TestCase
     {
         // 'Fully' normally holds everything for review. V1 let a spam keyword beat
         // that, so the message is dropped rather than queued for a volunteer.
-        $word = 'testblockword' . uniqid();
+        $word = 'testblockword'.uniqid();
         $this->seedBlockKeyword($word);
 
         $sender = $this->createTestUser(['chatmodstatus' => 'Fully']);
@@ -942,7 +941,7 @@ class ChatProcessServiceTest extends TestCase
     {
         // The hold chain follows reviewrequired. A dropped message has
         // reviewrequired = 0, so, as in V1, it is not a held predecessor.
-        $word = 'testblockword' . uniqid();
+        $word = 'testblockword'.uniqid();
         $this->seedBlockKeyword($word);
 
         $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
@@ -1137,7 +1136,7 @@ class ChatProcessServiceTest extends TestCase
 
     public function test_a_confirmed_reply_dropped_by_a_block_keyword_keeps_its_question_hidden(): void
     {
-        $word = 'testblockword' . uniqid();
+        $word = 'testblockword'.uniqid();
         $this->seedBlockKeyword($word);
         $reply = $this->replyAwaitingConfirmation(
             ['answer' => 'yes', 'answered_at' => now()],

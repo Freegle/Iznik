@@ -135,7 +135,7 @@ class ServerSizingAnalyserTest extends TestCase
 
         $this->assertSame('keep', $server['verdict']);
         $this->assertNull($server['candidate']);
-        $this->assertStringContainsString('memory is what it needs most', implode(' ', $server['reasons']));
+        $this->assertStringContainsString('it would be short of memory.', implode(' ', $server['reasons']));
     }
 
     public function test_a_server_between_the_two_marks_is_kept(): void
@@ -148,7 +148,7 @@ class ServerSizingAnalyserTest extends TestCase
         ), 'mid');
 
         $this->assertSame('keep', $server['verdict']);
-        $this->assertStringContainsString('processors is what it needs most', implode(' ', $server['reasons']));
+        $this->assertStringContainsString('it would be short of processors.', implode(' ', $server['reasons']));
     }
 
     public function test_a_server_with_load_above_its_processors_is_moved_up(): void
@@ -293,7 +293,7 @@ class ServerSizingAnalyserTest extends TestCase
             ['both' => $this->samples(21, 8, 7.0, 0.5, 24000, 12000)],
         ), 'both');
 
-        $this->assertSame(['No smaller package leaves headroom; processors and memory are what it needs most.'], $server['reasons']);
+        $this->assertSame(['No smaller package leaves headroom: it would be short of processors and memory.'], $server['reasons']);
     }
 
     public function test_a_package_with_no_price_has_no_steps_either_side(): void

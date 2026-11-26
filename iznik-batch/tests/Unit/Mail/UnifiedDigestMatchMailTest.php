@@ -62,7 +62,7 @@ class UnifiedDigestMatchMailTest extends TestCase
     {
         $id = $this->spooler->spool($mailable, $recipient);
 
-        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true) ?? [];
+        return json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true) ?? [];
     }
 
     public function test_the_subject_is_the_post_itself_not_the_usual_group_prefix(): void
@@ -114,7 +114,7 @@ class UnifiedDigestMatchMailTest extends TestCase
         [$mail, $recipient] = $this->digestFor('wanted');
 
         $spooled = $this->spoolAndLoad($mail, $recipient);
-        $body = ($spooled['html'] ?? '') . ($spooled['text'] ?? '');
+        $body = ($spooled['html'] ?? '').($spooled['text'] ?? '');
 
         $this->assertStringContainsString('open post', $body, 'the reason is rendered, not just computed');
     }

@@ -12,7 +12,7 @@ class SpatialAdminServiceTest extends TestCase
     {
         Http::fake(['*/v1/jobs/rebuild' => Http::response(['status' => 'rebuilding'], 200)]);
 
-        (new SpatialAdminService())->rebuildDataset('jobs');
+        (new SpatialAdminService)->rebuildDataset('jobs');
 
         Http::assertSent(fn ($request) => str_ends_with($request->url(), '/v1/jobs/rebuild')
             && $request->method() === 'POST');
@@ -24,7 +24,7 @@ class SpatialAdminServiceTest extends TestCase
 
         // A failed rebuild must not throw — the delta and nightly rebuild are
         // backstops, and the sync must still complete.
-        (new SpatialAdminService())->rebuildDataset('jobs');
+        (new SpatialAdminService)->rebuildDataset('jobs');
 
         Http::assertSent(fn ($request) => str_ends_with($request->url(), '/v1/jobs/rebuild'));
     }
@@ -36,7 +36,7 @@ class SpatialAdminServiceTest extends TestCase
         });
 
         // Must not propagate the exception.
-        (new SpatialAdminService())->rebuildDataset('jobs');
+        (new SpatialAdminService)->rebuildDataset('jobs');
 
         $this->assertTrue(true);
     }
@@ -45,9 +45,9 @@ class SpatialAdminServiceTest extends TestCase
     {
         Http::fake(['*/v1/locations/upsert' => Http::response(['upserted' => 1], 200)]);
 
-        (new SpatialAdminService())->upsertItems('locations', [[
-            'id'    => 4242,
-            'wkt'   => 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))',
+        (new SpatialAdminService)->upsertItems('locations', [[
+            'id' => 4242,
+            'wkt' => 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))',
             'extra' => ['name' => 'Testville', 'type' => 'Polygon'],
         ]]);
 
@@ -61,7 +61,7 @@ class SpatialAdminServiceTest extends TestCase
     {
         Http::fake();
 
-        (new SpatialAdminService())->upsertItems('locations', []);
+        (new SpatialAdminService)->upsertItems('locations', []);
 
         Http::assertNothingSent();
     }
@@ -72,7 +72,7 @@ class SpatialAdminServiceTest extends TestCase
 
         // A failed seed must not throw — the periodic delta and nightly rebuild
         // remain as backstops.
-        (new SpatialAdminService())->upsertItems('locations', [[
+        (new SpatialAdminService)->upsertItems('locations', [[
             'id' => 1, 'wkt' => 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'extra' => [],
         ]]);
 

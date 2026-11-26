@@ -9,20 +9,20 @@ class CharitySignupMailTest extends TestCase
     /**
      * Build minimal data to render the charity-signup MJML view directly.
      *
-     * @param string $orgName The organisation name to embed in the preheader.
+     * @param  string  $orgName  The organisation name to embed in the preheader.
      */
     private function viewData(string $orgName = 'Helping Hands Bristol'): array
     {
         return [
-            'charityId'    => 1,
-            'orgName'      => $orgName,
-            'orgType'      => 'registered',
+            'charityId' => 1,
+            'orgName' => $orgName,
+            'orgType' => 'registered',
             'charityNumber' => '1234567',
             'contactEmail' => 'contact@helpinghands.example.com',
-            'contactName'  => 'Jane Doe',
-            'website'      => 'https://helpinghands.example.com',
-            'description'  => 'We help people in need.',
-            'siteName'     => 'Freegle',
+            'contactName' => 'Jane Doe',
+            'website' => 'https://helpinghands.example.com',
+            'description' => 'We help people in need.',
+            'siteName' => 'Freegle',
         ];
     }
 
@@ -33,7 +33,7 @@ class CharitySignupMailTest extends TestCase
         $html = view('emails.mjml.charity.charity-signup', $this->viewData($orgName))->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>New Charity Partner signup: ' . $orgName . '</mj-preview>',
+            '<mj-preview>New Charity Partner signup: '.$orgName.'</mj-preview>',
             $html
         );
     }

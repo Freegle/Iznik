@@ -29,7 +29,8 @@ class CookieYesMcpClientTest extends TestCase
     private function client(): CookieYesMcpClient
     {
         $test = $this;
-        $oauth = new class (new CookieYesTokenStore(), $test) extends CookieYesOAuth {
+        $oauth = new class(new CookieYesTokenStore, $test) extends CookieYesOAuth
+        {
             public function __construct(CookieYesTokenStore $store, private readonly CookieYesMcpClientTest $test)
             {
                 parent::__construct($store);
@@ -76,7 +77,7 @@ class CookieYesMcpClientTest extends TestCase
                     'id' => $rpc['id'],
                     'result' => [
                         'protocolVersion' => '2025-06-18',
-                        'capabilities' => ['tools' => new \stdClass()],
+                        'capabilities' => ['tools' => new \stdClass],
                         'serverInfo' => ['name' => 'cookieyes', 'version' => '1'],
                     ],
                 ], 200, ['Mcp-Session-Id' => 'session-abc']);

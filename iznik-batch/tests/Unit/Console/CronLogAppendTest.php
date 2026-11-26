@@ -14,7 +14,7 @@ class CronLogAppendTest extends TestCase
 {
     public function test_every_scheduled_command_with_a_log_file_appends_to_it(): void
     {
-        $schedule = new Schedule();
+        $schedule = new Schedule;
         $this->app->instance(Schedule::class, $schedule);
         Facade::clearResolvedInstances();
 
@@ -29,7 +29,7 @@ class CronLogAppendTest extends TestCase
             }
 
             $logged++;
-            if (!$event->shouldAppendOutput) {
+            if (! $event->shouldAppendOutput) {
                 $overwriting[] = $event->command;
             }
         }

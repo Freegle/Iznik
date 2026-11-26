@@ -27,7 +27,7 @@ class AutoRepostDueWindowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new AutoRepostService();
+        $this->service = new AutoRepostService;
     }
 
     /** Run the real candidate query for a group with these settings. */
@@ -65,7 +65,7 @@ class AutoRepostDueWindowTest extends TestCase
         $msgid = DB::table('messages')->insertGetId([
             'type' => $type,
             'fromuser' => $userid,
-            'subject' => ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ": window {$hoursAgo}h",
+            'subject' => ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED').": window {$hoursAgo}h",
             'textbody' => 'body',
             'source' => Message::SOURCE_PLATFORM,
             'fromaddr' => 'someone@ilovefreegle.org',

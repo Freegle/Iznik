@@ -31,10 +31,10 @@ class SpamWarningMailTest extends TestCase
     public function test_html_body_and_preview_quote_the_name(): void
     {
         $html = view('emails.mjml.chat.spam-warning', [
-            'recipient'      => $this->createTestUser(),
-            'spammerName'    => 'A Freegler',
+            'recipient' => $this->createTestUser(),
+            'spammerName' => 'A Freegler',
             'messageSubject' => 'OFFER: Sofa (Leeds LS1)',
-            'siteName'       => 'Freegle',
+            'siteName' => 'Freegle',
         ])->render();
 
         $this->assertStringContainsString('<mj-preview>Be careful - you have been talking to &quot;A Freegler&quot;', $html);
@@ -44,7 +44,7 @@ class SpamWarningMailTest extends TestCase
     public function test_text_body_quotes_the_name(): void
     {
         $text = view('emails.text.chat.spam-warning', [
-            'spammerName'    => 'A Freegler',
+            'spammerName' => 'A Freegler',
             'messageSubject' => 'OFFER: Sofa (Leeds LS1)',
         ])->render();
 

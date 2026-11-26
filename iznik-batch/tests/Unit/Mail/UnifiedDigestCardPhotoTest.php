@@ -25,36 +25,35 @@ class UnifiedDigestCardPhotoTest extends TestCase
     /**
      * Build the minimal top-level data array that both templates need.
      *
-     * @param  \Illuminate\Support\Collection $posts  The fabricated post array.
-     * @param  string                         $mode   MODE_DAILY or MODE_IMMEDIATE.
-     * @return array
+     * @param  \Illuminate\Support\Collection  $posts  The fabricated post array.
+     * @param  string  $mode  MODE_DAILY or MODE_IMMEDIATE.
      */
     private function templateData(\Illuminate\Support\Collection $posts, string $mode): array
     {
         $firstPost = $posts->first();
-        $isOffer   = ($firstPost['type'] ?? 'Offer') === 'Offer';
+        $isOffer = ($firstPost['type'] ?? 'Offer') === 'Offer';
 
         return [
-            'user'           => (object) [
+            'user' => (object) [
                 'email_preferred' => 'r@example.com',
-                'displayname'     => 'Sam',
-                'id'              => 1,
+                'displayname' => 'Sam',
+                'id' => 1,
             ],
-            'posts'          => $posts,
-            'post'           => $firstPost, // immediate mode uses $post (singular)
-            'postCount'      => $posts->count(),
-            'mode'           => $mode,
-            'isOffer'        => $isOffer,
-            'accentColor'    => $isOffer ? '#338808' : '#00A1CB',
-            'sponsors'       => collect(),
-            'jobAds'         => collect(),
-            'jobsUrl'        => 'https://example.com/jobs',
-            'donateUrl'      => 'https://example.com/donate',
-            'browseUrl'      => 'https://example.com/browse',
-            'settingsUrl'    => 'https://example.com/settings',
+            'posts' => $posts,
+            'post' => $firstPost, // immediate mode uses $post (singular)
+            'postCount' => $posts->count(),
+            'mode' => $mode,
+            'isOffer' => $isOffer,
+            'accentColor' => $isOffer ? '#338808' : '#00A1CB',
+            'sponsors' => collect(),
+            'jobAds' => collect(),
+            'jobsUrl' => 'https://example.com/jobs',
+            'donateUrl' => 'https://example.com/donate',
+            'browseUrl' => 'https://example.com/browse',
+            'settingsUrl' => 'https://example.com/settings',
             'unsubscribeUrl' => 'https://example.com/unsubscribe',
-            'userSite'       => 'https://example.com',
-            'siteName'       => 'Freegle',
+            'userSite' => 'https://example.com',
+            'siteName' => 'Freegle',
         ];
     }
 
@@ -65,61 +64,60 @@ class UnifiedDigestCardPhotoTest extends TestCase
      * assertions exercise preg_quote, and each link kind uses a distinct token
      * so a test can prove the photo points at viewUrl and NOT the reply URL.
      *
-     * @param  int    $id   Unique message id.
-     * @param  string $type 'Offer' or 'Wanted'.
-     * @return array
+     * @param  int  $id  Unique message id.
+     * @param  string  $type  'Offer' or 'Wanted'.
      */
     private function makePost(int $id, string $type = 'Offer'): array
     {
         // Deliberately put regex-special characters in the URL to test preg_quote
-        $trackedBase  = 'https://www.ilovefreegle.org/message/' . $id;
+        $trackedBase = 'https://www.ilovefreegle.org/message/'.$id;
         // The reply CTA URL: in production this is the 'm' compact type, which
         // the Go handler reconstructs WITH ?reply=1 (auto-opens the reply pane).
-        $messageUrl   = 'https://api.ilovefreegle.org/e/d/r/TOKEN' . $id . '?url=' . base64_encode($trackedBase);
+        $messageUrl = 'https://api.ilovefreegle.org/e/d/r/TOKEN'.$id.'?url='.base64_encode($trackedBase);
 
         // fallbackReplyUrl mirrors messageUrl in UnifiedDigest — it is the reply
         // CTA URL (the non-AMP fallback for the AMP in-email reply form).
-        $fallbackUrl  = $messageUrl;
-        $thumbUrl     = 'https://images.ilovefreegle.org/timg_' . $id . '.jpg';
-        $heroUrl      = 'https://images.ilovefreegle.org/img_' . $id . '.jpg';
-        $displayUrl   = 'https://delivery.ilovefreegle.org/img_' . $id . '.jpg';
-        $avatarUrl    = 'https://images.ilovefreegle.org/avatar_' . $id . '.jpg';
-        $ampReplyUrl  = 'https://api.ilovefreegle.org/amp/reply/' . $id;
+        $fallbackUrl = $messageUrl;
+        $thumbUrl = 'https://images.ilovefreegle.org/timg_'.$id.'.jpg';
+        $heroUrl = 'https://images.ilovefreegle.org/img_'.$id.'.jpg';
+        $displayUrl = 'https://delivery.ilovefreegle.org/img_'.$id.'.jpg';
+        $avatarUrl = 'https://images.ilovefreegle.org/avatar_'.$id.'.jpg';
+        $ampReplyUrl = 'https://api.ilovefreegle.org/amp/reply/'.$id;
 
         // Summary index ("In this digest") link: its own tracked URL to the
         // message page, distinct from messageUrl (which carries ?reply=1).
-        $summaryUrl = 'https://api.ilovefreegle.org/e/d/r/STOKEN' . $id . '?url=' . base64_encode($trackedBase);
+        $summaryUrl = 'https://api.ilovefreegle.org/e/d/r/STOKEN'.$id.'?url='.base64_encode($trackedBase);
 
         // View-only card link used by the photo + title: tracked URL to the
         // message page WITHOUT ?reply=1. Distinct token (VTOKEN) so assertions
         // prove the photo lands on the view URL, not the reply CTA. In
         // production this is the 's' compact type (no ?reply=1 on reconstruct).
-        $viewUrl = 'https://api.ilovefreegle.org/e/d/r/VTOKEN' . $id . '?url=' . base64_encode($trackedBase);
+        $viewUrl = 'https://api.ilovefreegle.org/e/d/r/VTOKEN'.$id.'?url='.base64_encode($trackedBase);
 
         return [
-            'message'          => (object) ['id' => $id],
-            'type'             => $type,
-            'itemName'         => 'Test Item ' . $id,
-            'subject'          => strtoupper($type) . ': Test Item ' . $id . ' (Edinburgh)',
-            'thumbImageUrl'    => $thumbUrl,
-            'heroImageUrl'     => $heroUrl,
-            'displayImageUrl'  => $displayUrl,
-            'messageUrl'       => $messageUrl,
-            'summaryUrl'       => $summaryUrl,
-            'viewUrl'          => $viewUrl,
+            'message' => (object) ['id' => $id],
+            'type' => $type,
+            'itemName' => 'Test Item '.$id,
+            'subject' => strtoupper($type).': Test Item '.$id.' (Edinburgh)',
+            'thumbImageUrl' => $thumbUrl,
+            'heroImageUrl' => $heroUrl,
+            'displayImageUrl' => $displayUrl,
+            'messageUrl' => $messageUrl,
+            'summaryUrl' => $summaryUrl,
+            'viewUrl' => $viewUrl,
             'fallbackReplyUrl' => $fallbackUrl,
-            'locationName'     => 'Edinburgh',
-            'distanceText'     => '1.2 miles',
+            'locationName' => 'Edinburgh',
+            'distanceText' => '1.2 miles',
             'arrivalFormatted' => '2 hours ago',
-            'posterName'       => 'Alice',
-            'posterAvatarUrl'  => $avatarUrl,
-            'groupName'        => 'FreegleTown',
-            'groupUrl'         => 'https://www.ilovefreegle.org/explore/fregletown',
-            'messageText'      => 'A lovely test item',
-            'postedToText'     => '',
+            'posterName' => 'Alice',
+            'posterAvatarUrl' => $avatarUrl,
+            'groupName' => 'FreegleTown',
+            'groupUrl' => 'https://www.ilovefreegle.org/explore/fregletown',
+            'messageText' => 'A lovely test item',
+            'postedToText' => '',
             'firstPostedFormatted' => null,
-            'isPlaceholder'    => false,
-            'ampReplyUrl'      => $ampReplyUrl,
+            'isPlaceholder' => false,
+            'ampReplyUrl' => $ampReplyUrl,
         ];
     }
 
@@ -151,14 +149,14 @@ class UnifiedDigestCardPhotoTest extends TestCase
             $quotedView = preg_quote($post['viewUrl'], '/');
 
             $this->assertMatchesRegularExpression(
-                '/class="post-img-wrap">\s*<a\s+href="' . $quotedView . '"[^>]*>\s*<amp-img/s',
+                '/class="post-img-wrap">\s*<a\s+href="'.$quotedView.'"[^>]*>\s*<amp-img/s',
                 $html,
                 "Card photo for post {$post['message']->id} must link to the view URL (no ?reply=1)."
             );
 
             // It must NOT land on the reply CTA URL.
             $this->assertStringNotContainsString(
-                'class="post-img-wrap">' . "\n" . '    <a href="' . $post['messageUrl'] . '"',
+                'class="post-img-wrap">'."\n".'    <a href="'.$post['messageUrl'].'"',
                 $html,
                 "Card photo for post {$post['message']->id} must not link to the reply URL."
             );
@@ -170,7 +168,7 @@ class UnifiedDigestCardPhotoTest extends TestCase
      */
     public function test_amp_immediate_hero_photo_links_to_view_url(): void
     {
-        $post  = $this->makePost(333, 'Offer');
+        $post = $this->makePost(333, 'Offer');
         $posts = collect([$post]);
 
         $html = view(
@@ -182,7 +180,7 @@ class UnifiedDigestCardPhotoTest extends TestCase
         $quotedHero = preg_quote($post['heroImageUrl'], '/');
 
         $this->assertMatchesRegularExpression(
-            '/<a\s+href="' . $quotedView . '"[^>]*>\s*<amp-img[^>]*src="' . $quotedHero . '"/s',
+            '/<a\s+href="'.$quotedView.'"[^>]*>\s*<amp-img[^>]*src="'.$quotedHero.'"/s',
             $html,
             'Immediate AMP hero photo should link to the view URL (no ?reply=1).'
         );
@@ -206,11 +204,11 @@ class UnifiedDigestCardPhotoTest extends TestCase
 
         foreach ([$post1, $post2] as $post) {
             $quotedThumb = preg_quote($post['thumbImageUrl'], '/');
-            $quotedView  = preg_quote($post['viewUrl'], '/');
+            $quotedView = preg_quote($post['viewUrl'], '/');
 
             // MJML daily card: <mj-image src="THUMB" href="VIEWURL" .../>
             $this->assertMatchesRegularExpression(
-                '/<mj-image\s+src="' . $quotedThumb . '"\s+href="' . $quotedView . '"/s',
+                '/<mj-image\s+src="'.$quotedThumb.'"\s+href="'.$quotedView.'"/s',
                 $mjml,
                 "MJML daily card photo for post {$post['message']->id} should link to the view URL."
             );
@@ -222,7 +220,7 @@ class UnifiedDigestCardPhotoTest extends TestCase
      */
     public function test_mjml_immediate_hero_photo_links_to_view_url(): void
     {
-        $post  = $this->makePost(666, 'Offer');
+        $post = $this->makePost(666, 'Offer');
         $posts = collect([$post]);
 
         $mjml = view(
@@ -230,12 +228,12 @@ class UnifiedDigestCardPhotoTest extends TestCase
             $this->templateData($posts, UnifiedDigestService::MODE_IMMEDIATE)
         )->render();
 
-        $quotedView    = preg_quote($post['viewUrl'], '/');
+        $quotedView = preg_quote($post['viewUrl'], '/');
         $quotedDisplay = preg_quote($post['displayImageUrl'], '/');
 
         // MJML immediate hero: <mj-image href="VIEWURL" src="DISPLAY" .../>
         $this->assertMatchesRegularExpression(
-            '/<mj-image\s+href="' . $quotedView . '"\s+src="' . $quotedDisplay . '"/s',
+            '/<mj-image\s+href="'.$quotedView.'"\s+src="'.$quotedDisplay.'"/s',
             $mjml,
             'MJML immediate hero photo should link to the view URL.'
         );
@@ -257,11 +255,11 @@ class UnifiedDigestCardPhotoTest extends TestCase
 
         $quotedReply = preg_quote($dailyPost['messageUrl'], '/');
         $this->assertMatchesRegularExpression(
-            '/<a href="' . $quotedReply . '"[^>]*>Reply<\/a>/s',
+            '/<a href="'.$quotedReply.'"[^>]*>Reply<\/a>/s',
             $dailyMjml,
             'MJML daily card Reply button must keep the reply CTA URL.'
         );
-        $this->assertStringContainsString('href="' . $dailyPost['viewUrl'] . '"', $dailyMjml);
+        $this->assertStringContainsString('href="'.$dailyPost['viewUrl'].'"', $dailyMjml);
         $this->assertNotSame($dailyPost['viewUrl'], $dailyPost['messageUrl']);
 
         // Immediate: the Reply mj-button uses messageUrl; the hero uses viewUrl.
@@ -273,10 +271,10 @@ class UnifiedDigestCardPhotoTest extends TestCase
 
         $quotedImmReply = preg_quote($immPost['messageUrl'], '/');
         $this->assertMatchesRegularExpression(
-            '/<mj-button\s+href="' . $quotedImmReply . '"/s',
+            '/<mj-button\s+href="'.$quotedImmReply.'"/s',
             $immMjml,
             'Immediate MJML Reply button must keep the reply CTA URL.'
         );
-        $this->assertStringContainsString('href="' . $immPost['viewUrl'] . '"', $immMjml);
+        $this->assertStringContainsString('href="'.$immPost['viewUrl'].'"', $immMjml);
     }
 }

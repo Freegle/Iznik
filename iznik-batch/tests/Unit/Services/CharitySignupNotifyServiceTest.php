@@ -15,7 +15,7 @@ class CharitySignupNotifyServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new CharitySignupNotifyService();
+        $this->service = new CharitySignupNotifyService;
     }
 
     private function makeCharity(array $attrs = []): int

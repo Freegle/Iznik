@@ -16,6 +16,7 @@ class JobModelTest extends TestCase
     // copy of live data has real jobs: at a real place they sit nearer than the seeded ones, fill
     // the candidate pool, and are not in the test database, so nearLocation() finds nothing.
     private const LAT = 57.6;
+
     private const LNG = -13.7;
 
     /** @var int[] job ids seeded into the spatial index, removed in tearDown. */
@@ -113,19 +114,19 @@ class JobModelTest extends TestCase
 
     public function test_job_model_has_correct_table(): void
     {
-        $job = new Job();
+        $job = new Job;
         $this->assertEquals('jobs', $job->getTable());
     }
 
     public function test_job_model_has_no_timestamps(): void
     {
-        $job = new Job();
+        $job = new Job;
         $this->assertFalse($job->timestamps);
     }
 
     public function test_job_model_casts(): void
     {
-        $job = new Job();
+        $job = new Job;
         $casts = $job->getCasts();
 
         $this->assertArrayHasKey('posted_at', $casts);
@@ -145,7 +146,7 @@ class JobModelTest extends TestCase
 
     public function test_job_model_is_not_guarded_except_id(): void
     {
-        $job = new Job();
+        $job = new Job;
         $this->assertEquals(['id'], $job->getGuarded());
     }
 
@@ -174,7 +175,7 @@ class JobModelTest extends TestCase
 
         // Five eligible jobs at the search point.
         for ($i = 0; $i < 5; $i++) {
-            $this->seedJob(['title' => 'Test Job ' . $i]);
+            $this->seedJob(['title' => 'Test Job '.$i]);
         }
 
         $result = Job::nearLocation(self::LAT, self::LNG, 3);
@@ -221,7 +222,7 @@ class JobModelTest extends TestCase
         $limit = 4;
         $total = $limit * Job::VARIETY_POOL_MULTIPLIER + 3; // 15
         for ($i = 0; $i < $total; $i++) {
-            $this->seedJob(['title' => 'Job rank ' . $i, 'cpc' => round(1.00 - ($i * 0.01), 4)]);
+            $this->seedJob(['title' => 'Job rank '.$i, 'cpc' => round(1.00 - ($i * 0.01), 4)]);
         }
 
         $allSeen = [];
@@ -256,7 +257,7 @@ class JobModelTest extends TestCase
         $top = $this->seedJob(['title' => 'Top CPC', 'cpc' => 1.00]);
         $floorIds = [];
         for ($i = 0; $i < 11; $i++) {
-            $floorIds[] = $this->seedJob(['title' => 'Floor ' . $i, 'cpc' => 0.11]);
+            $floorIds[] = $this->seedJob(['title' => 'Floor '.$i, 'cpc' => 0.11]);
         }
         $sampleFloor = $floorIds[0];
 
@@ -350,7 +351,7 @@ class JobModelTest extends TestCase
         $limit = 4;
         $wellPaid = $this->seedJob(['title' => 'Well paid', 'cpc' => 0.36, 'clickability' => 1]);
         for ($i = 0; $i < 11; $i++) {
-            $this->seedJob(['title' => 'Cheap ' . $i, 'cpc' => 0.084, 'clickability' => 50]);
+            $this->seedJob(['title' => 'Cheap '.$i, 'cpc' => 0.084, 'clickability' => 50]);
         }
 
         $runs = 200;

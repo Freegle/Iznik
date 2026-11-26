@@ -52,7 +52,7 @@ MJML;
     {
         config(['services.mjml.engine' => 'mrml']);
 
-        return new MjmlCompilerService();
+        return new MjmlCompilerService;
     }
 
     public function test_mrml_extension_is_loaded(): void
@@ -134,9 +134,9 @@ MJML;
      */
     public function test_invalid_xml_control_chars_are_stripped_not_fatal(): void
     {
-        $mjml = "<mjml><mj-body><mj-section><mj-column>"
-            . "<mj-text>It was a bird table\x0B could be so again. Nice\x1C and sturdy.</mj-text>"
-            . "</mj-column></mj-section></mj-body></mjml>";
+        $mjml = '<mjml><mj-body><mj-section><mj-column>'
+            ."<mj-text>It was a bird table\x0B could be so again. Nice\x1C and sturdy.</mj-text>"
+            .'</mj-column></mj-section></mj-body></mjml>';
 
         // Must NOT throw (previously: RuntimeException "unable to parse next
         // template in root template").
@@ -157,9 +157,9 @@ MJML;
      */
     public function test_legal_whitespace_controls_are_preserved(): void
     {
-        $mjml = "<mjml><mj-body><mj-section><mj-column>"
-            . "<mj-text>alpha\tbeta\ngamma</mj-text>"
-            . "</mj-column></mj-section></mj-body></mjml>";
+        $mjml = '<mjml><mj-body><mj-section><mj-column>'
+            ."<mj-text>alpha\tbeta\ngamma</mj-text>"
+            .'</mj-column></mj-section></mj-body></mjml>';
 
         $html = $this->mrml()->compile($mjml);
 

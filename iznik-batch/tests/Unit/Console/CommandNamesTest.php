@@ -64,6 +64,7 @@ class CommandNamesTest extends TestCase
 
             if ($attributes === []) {
                 $missing[] = $class;
+
                 continue;
             }
 
@@ -72,6 +73,7 @@ class CommandNamesTest extends TestCase
 
             if ($declared !== $actual) {
                 $mismatched[] = "{$class}: attribute says '{$declared}', signature says '{$actual}'";
+
                 continue;
             }
 

@@ -88,15 +88,7 @@ class ServerSizingReportMail extends MjmlMailable
             'discountPct' => (int) round($discount * 100),
             'historyDays' => (int) $this->analysis['history_days'],
             'minHistoryDays' => (int) $this->analysis['min_history_days'],
-            'unattached' => array_map(
-                fn (array $disk) => sprintf(
-                    '%s, %d GB, %s',
-                    $disk['name'],
-                    $disk['size_gb'],
-                    $disk['machine_id'] === null ? 'not attached to any server' : 'attached but '.str_replace('_', ' ', $disk['state'])
-                ),
-                $this->analysis['unattached_disks']
-            ),
+            'unattached' => self::disksToLookAt($this->analysis),
         ], 'emails.text.servers.sizing-report');
     }
 
@@ -131,9 +123,28 @@ class ServerSizingReportMail extends MjmlMailable
                 fn (array $card) => array_diff_key($card, ['tone' => true]),
                 self::cardsFor($analysis)
             ),
-            'disks_attached_to_nothing_or_not_built' => array_column($analysis['unattached_disks'], 'name'),
+            'disks_to_look_at' => self::disksToLookAt($analysis),
             'hosts_sampled_but_not_on_katapult' => $analysis['unmatched_hosts'] ?? [],
         ];
+    }
+
+    /**
+     * Disks that are attached to no server, or attached but not in use, each as one line.
+     *
+     * @param  array<string, mixed>  $analysis
+     * @return list<string>
+     */
+    public static function disksToLookAt(array $analysis): array
+    {
+        return array_map(
+            fn (array $disk) => sprintf(
+                '%s, %d GB, %s',
+                $disk['name'],
+                $disk['size_gb'],
+                $disk['machine_id'] === null ? 'not attached to any server' : 'attached but '.str_replace('_', ' ', $disk['state'])
+            ),
+            $analysis['unattached_disks']
+        );
     }
 
     /**

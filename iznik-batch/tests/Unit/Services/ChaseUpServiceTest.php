@@ -8,7 +8,6 @@ use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\ChaseUpService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class ChaseUpServiceTest extends TestCase
@@ -19,8 +18,8 @@ class ChaseUpServiceTest extends TestCase
     {
         parent::setUp();
         // Ensure feature flag is enabled for tests.
-        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types') . ',ChaseUp']);
-        $this->service = new ChaseUpService();
+        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types').',ChaseUp']);
+        $this->service = new ChaseUpService;
     }
 
     /**
@@ -43,7 +42,7 @@ class ChaseUpServiceTest extends TestCase
         ]);
 
         $message = $this->createTestMessage($user, $group, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -162,7 +161,7 @@ class ChaseUpServiceTest extends TestCase
         ]);
 
         $message = $this->createTestMessage($user, $group, [
-            'fromaddr' => 'test@' . $domain,
+            'fromaddr' => 'test@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -412,7 +411,7 @@ class ChaseUpServiceTest extends TestCase
         $this->createMembership($user, $groupB, ['added' => now()->subDays(60)]);
 
         $message = $this->createTestMessage($user, $groupA, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -468,7 +467,7 @@ class ChaseUpServiceTest extends TestCase
         $this->createMembership($user, $rippled, ['added' => now()->subDays(60)]);
 
         $message = $this->createTestMessage($user, $home, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -516,7 +515,7 @@ class ChaseUpServiceTest extends TestCase
         $this->createMembership($user, $rippled, ['added' => now()->subDays(60)]);
 
         $message = $this->createTestMessage($user, $rippled, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
         DB::table('messages_groups')
@@ -552,7 +551,7 @@ class ChaseUpServiceTest extends TestCase
         $holder = $this->createTestUser();
 
         $message = $this->createTestMessage($user, $groupA, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 
@@ -606,7 +605,7 @@ class ChaseUpServiceTest extends TestCase
         $this->createMembership($user, $group, ['added' => now()->subDays(60)]);
 
         $message = $this->createTestMessage($user, $group, [
-            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'fromaddr' => 'test-'.$user->id.'@'.$domain,
             'source' => Message::SOURCE_PLATFORM,
         ]);
 

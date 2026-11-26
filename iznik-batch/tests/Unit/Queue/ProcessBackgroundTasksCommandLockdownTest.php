@@ -41,7 +41,7 @@ class ProcessBackgroundTasksCommandLockdownTest extends TestCase
         // The cache is a static, process-wide property (section 11.6), so a row cached
         // by an earlier test class in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->lockdown = new LockdownService();
+        $this->lockdown = new LockdownService;
     }
 
     protected function tearDown(): void

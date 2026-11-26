@@ -182,7 +182,7 @@ class StripQuotedServiceTest extends TestCase
         config(['freegle.user_site' => 'www.ilovefreegle.org']);
         $service = new StripQuotedService;
 
-        $input = "Check https://www.ilovefreegle.org?u=1234&k=secret5678 this link";
+        $input = 'Check https://www.ilovefreegle.org?u=1234&k=secret5678 this link';
 
         $result = $service->strip($input);
         $this->assertStringNotContainsString('k=secret5678', $result);
@@ -219,7 +219,7 @@ class StripQuotedServiceTest extends TestCase
         $input = "Thanks very much\r\n\r\nAOL on Android (https://aolapp.onelink.me/eG2g?pid=NativePlacement&c=US_Acquisition)";
 
         $result = $this->service->strip($input);
-        $this->assertEquals("Thanks very much", $result);
+        $this->assertEquals('Thanks very much', $result);
     }
 
     public function test_strips_sent_from_yahoo_mail(): void
@@ -318,13 +318,13 @@ class StripQuotedServiceTest extends TestCase
     public function test_cuts_at_our_own_quoted_email_stylesheet(): void
     {
         $input = "Collection after 5pm is fine, thanks\r\n \r\n \r\n\r\n"
-            . "#outlook a { padding: 0; }\r\n"
-            . "body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; }\r\n"
-            . "@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700);"
-            . "@media only screen and (min-width:480px) { .mj-column-per-100 { width:100% !important; } }\r\n\r\n"
-            . "someone: Post code please\r\n\r\n"
-            . "Jobs near you\r\n\r\n"
-            . "This email was sent to member@example.com\r\n";
+            ."#outlook a { padding: 0; }\r\n"
+            ."body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; }\r\n"
+            .'@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700);'
+            ."@media only screen and (min-width:480px) { .mj-column-per-100 { width:100% !important; } }\r\n\r\n"
+            ."someone: Post code please\r\n\r\n"
+            ."Jobs near you\r\n\r\n"
+            ."This email was sent to member@example.com\r\n";
 
         $result = $this->service->strip($input);
 
@@ -334,7 +334,7 @@ class StripQuotedServiceTest extends TestCase
     public function test_a_hash_rule_typed_by_a_member_is_kept(): void
     {
         // Only our stylesheet's signature cuts; ordinary text with a # is left alone.
-        $input = "Lot #outlook-12 is still here, come any time";
+        $input = 'Lot #outlook-12 is still here, come any time';
 
         $this->assertSame($input, trim($this->service->strip($input)));
     }

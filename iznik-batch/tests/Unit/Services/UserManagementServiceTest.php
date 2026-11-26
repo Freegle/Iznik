@@ -117,7 +117,7 @@ class UserManagementServiceTest extends TestCase
             'added' => now()->subYears(2),
         ]);
 
-        $stats = $this->service->cleanupUsers(TRUE);
+        $stats = $this->service->cleanupUsers(true);
 
         // Should count the Yahoo user but not delete it.
         $this->assertGreaterThanOrEqual(1, $stats['yahoo_users_deleted']);
@@ -133,7 +133,6 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['processed']);
         $this->assertEquals(0, $stats['marked_invalid']);
     }
-
 
     public function test_delete_yahoo_groups_users(): void
     {
@@ -185,8 +184,8 @@ class UserManagementServiceTest extends TestCase
     {
         // Create user who meets all inactive criteria but is already forgotten.
         $user = User::create([
-            'firstname' => NULL,
-            'lastname' => NULL,
+            'firstname' => null,
+            'lastname' => null,
             'fullname' => 'Deleted User #12345',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
@@ -345,7 +344,7 @@ class UserManagementServiceTest extends TestCase
         // Non-internal emails should be deleted.
         $this->assertDatabaseMissing('users_emails', [
             'userid' => $user->id,
-            'email' => 'test' . $user->id . '@test.com',
+            'email' => 'test'.$user->id.'@test.com',
         ]);
 
         // Message content should be wiped.
@@ -375,7 +374,7 @@ class UserManagementServiceTest extends TestCase
      * the two to the replier.
      *
      * @param  array<string, mixed>  $prompt  columns of chat_prompts
-     * @return array{0: ChatMessage, 1: ChatMessage}  the reply and the question
+     * @return array{0: ChatMessage, 1: ChatMessage} the reply and the question
      */
     private function replyWithQuestion(ChatRoom $room, User $replier, User $freegle, int $postId, string $name, array $prompt = [], array $reply = []): array
     {
@@ -485,8 +484,8 @@ class UserManagementServiceTest extends TestCase
     {
         // Create a forgotten user with no messages.
         $user = User::create([
-            'firstname' => NULL,
-            'lastname' => NULL,
+            'firstname' => null,
+            'lastname' => null,
             'fullname' => 'Deleted User #999',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subYears(1),
@@ -503,8 +502,8 @@ class UserManagementServiceTest extends TestCase
     {
         // Create a forgotten user who still has messages.
         $user = User::create([
-            'firstname' => NULL,
-            'lastname' => NULL,
+            'firstname' => null,
+            'lastname' => null,
             'fullname' => 'Deleted User #998',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subYears(1),
@@ -525,8 +524,8 @@ class UserManagementServiceTest extends TestCase
         // The users row goes for good here, so the tombstone is the only trace
         // left for a partner to act on.
         $user = User::create([
-            'firstname' => NULL,
-            'lastname' => NULL,
+            'firstname' => null,
+            'lastname' => null,
             'fullname' => 'Deleted User #997',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subYears(1),
@@ -545,15 +544,15 @@ class UserManagementServiceTest extends TestCase
     public function test_delete_fully_forgotten_users_dry_run_records_nothing(): void
     {
         $user = User::create([
-            'firstname' => NULL,
-            'lastname' => NULL,
+            'firstname' => null,
+            'lastname' => null,
             'fullname' => 'Deleted User #996',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subYears(1),
             'forgotten' => now()->subDays(30),
         ]);
 
-        $this->service->deleteFullyForgottenUsers(TRUE);
+        $this->service->deleteFullyForgottenUsers(true);
 
         $this->assertDatabaseHas('users', ['id' => $user->id]);
         $this->assertDatabaseMissing('users_deletions', ['userid' => $user->id]);
@@ -613,7 +612,7 @@ class UserManagementServiceTest extends TestCase
             'type' => UserDeletion::TYPE_FORGOTTEN,
         ]);
 
-        $this->service->pruneDeletions(TRUE);
+        $this->service->pruneDeletions(true);
 
         $this->assertDatabaseHas('users_deletions', ['id' => $stale->id]);
     }
@@ -812,7 +811,7 @@ class UserManagementServiceTest extends TestCase
 
         // Create a team with supporttools=1.
         $teamId = DB::table('teams')->insertGetId([
-            'name' => 'Support Team ' . uniqid(),
+            'name' => 'Support Team '.uniqid(),
             'supporttools' => 1,
         ]);
 
@@ -873,7 +872,7 @@ class UserManagementServiceTest extends TestCase
 
         // Create a team WITHOUT supporttools.
         $teamId = DB::table('teams')->insertGetId([
-            'name' => 'Regular Team ' . uniqid(),
+            'name' => 'Regular Team '.uniqid(),
             'supporttools' => 0,
         ]);
 

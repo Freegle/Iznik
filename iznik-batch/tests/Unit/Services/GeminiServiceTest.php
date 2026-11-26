@@ -12,7 +12,9 @@ use Tests\TestCase;
 class GeminiServiceTest extends TestCase
 {
     private const API_KEY = 'test-api-key-12345';
+
     private const MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/models*';
+
     private const GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/:generateContent*';
 
     protected function setUp(): void
@@ -26,13 +28,13 @@ class GeminiServiceTest extends TestCase
     public function test_is_configured_returns_false_when_no_key(): void
     {
         config(['freegle.git_summary.gemini_api_key' => '']);
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertFalse($service->isConfigured());
     }
 
     public function test_is_configured_returns_true_when_key_set(): void
     {
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertTrue($service->isConfigured());
     }
 
@@ -50,7 +52,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-2.0-flash', $service->getModel());
     }
 
@@ -62,7 +64,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $model = $service->getModel();
 
         $this->assertStringStartsNotWith('models/', $model);
@@ -82,7 +84,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-1.5-flash', $service->getModel());
     }
 
@@ -99,7 +101,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-1.5-flash', $service->getModel());
     }
 
@@ -116,7 +118,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-1.5-flash', $service->getModel());
     }
 
@@ -133,7 +135,7 @@ class GeminiServiceTest extends TestCase
         Log::shouldReceive('warning')->once()->withArgs(fn ($m) => str_contains($m, 'No flash models'));
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-pro', $service->getModel());
     }
 
@@ -145,7 +147,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('warning')->once()->withArgs(fn ($m) => str_contains($m, 'Failed to list models'));
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('gemini-pro', $service->getModel());
     }
 
@@ -157,7 +159,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('info')->zeroOrMoreTimes();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $first = $service->getModel();
         $second = $service->getModel();
 
@@ -173,7 +175,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('error')->once()->withArgs(fn ($m) => str_contains($m, 'API key not configured'));
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertNull($service->generateContent('Test prompt'));
     }
 
@@ -181,7 +183,7 @@ class GeminiServiceTest extends TestCase
     {
         $this->fakeModelsAndContent('gemini-1.5-flash', 'Generated response text');
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertSame('Generated response text', $service->generateContent('What is Freegle?'));
     }
 
@@ -199,7 +201,7 @@ class GeminiServiceTest extends TestCase
         Log::shouldReceive('info')->zeroOrMoreTimes();
         Log::shouldReceive('error')->once()->withArgs(fn ($m) => str_contains($m, 'API request failed'));
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertNull($service->generateContent('Test prompt'));
     }
 
@@ -218,7 +220,7 @@ class GeminiServiceTest extends TestCase
         Log::shouldReceive('info')->zeroOrMoreTimes();
         Log::shouldReceive('warning')->once()->withArgs(fn ($m) => str_contains($m, 'Empty response'));
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertNull($service->generateContent('Test prompt'));
     }
 
@@ -229,7 +231,7 @@ class GeminiServiceTest extends TestCase
         config(['freegle.git_summary.gemini_api_key' => '']);
         Log::shouldReceive('error')->once();
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertNull($service->generateJson('Return JSON please'));
     }
 
@@ -237,7 +239,7 @@ class GeminiServiceTest extends TestCase
     {
         $this->fakeModelsAndContent('gemini-1.5-flash', '{"status": "ok", "count": 42}');
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $result = $service->generateJson('Return JSON');
 
         $this->assertIsArray($result);
@@ -249,7 +251,7 @@ class GeminiServiceTest extends TestCase
     {
         $this->fakeModelsAndContent('gemini-1.5-flash', "```json\n{\"key\": \"value\", \"items\": [1, 2, 3]}\n```");
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $result = $service->generateJson('Return JSON');
 
         $this->assertIsArray($result);
@@ -261,7 +263,7 @@ class GeminiServiceTest extends TestCase
     {
         $this->fakeModelsAndContent('gemini-1.5-flash', "```\n{\"type\": \"offer\", \"valid\": true}\n```");
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $result = $service->generateJson('Return JSON');
 
         $this->assertIsArray($result);
@@ -275,7 +277,7 @@ class GeminiServiceTest extends TestCase
 
         Log::shouldReceive('warning')->once()->withArgs(fn ($m) => str_contains($m, 'Failed to parse JSON'));
 
-        $service = new GeminiService();
+        $service = new GeminiService;
         $this->assertNull($service->generateJson('Return JSON'));
     }
 

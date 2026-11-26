@@ -2,9 +2,9 @@
 
 namespace Tests\Unit\Commands\AI;
 
-use App\Models\User;
 use App\Console\Commands\Mail\SendAIImageReviewDigestCommand;
 use App\Mail\AI\AIImageReviewDigestMail;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -130,13 +130,13 @@ class SendAIImageReviewDigestCommandTest extends TestCase
         // The inbox preview should immediately surface the two headline stats —
         // how many verdicts were cast today and how many images still need work.
         $html = view('emails.mjml.admin.ai-image-review-digest', [
-            'todayVerdicts'   => 42,
-            'totalReviewed'   => 80,
-            'totalImages'     => 200,
+            'todayVerdicts' => 42,
+            'totalReviewed' => 80,
+            'totalImages' => 200,
             'percentReviewed' => 40,
-            'needsImproving'  => 7,
-            'topProblems'     => [],
-            'siteName'        => config('freegle.branding.name', 'Freegle'),
+            'needsImproving' => 7,
+            'topProblems' => [],
+            'siteName' => config('freegle.branding.name', 'Freegle'),
         ])->render();
 
         $this->assertStringContainsString(
@@ -165,7 +165,7 @@ class SendAIImageReviewDigestCommandTest extends TestCase
     {
         DB::table('ai_images')->insert([
             'name' => $name,
-            'externaluid' => 'freegletusd-test-' . $name,
+            'externaluid' => 'freegletusd-test-'.$name,
             'usage_count' => $usageCount,
         ]);
 

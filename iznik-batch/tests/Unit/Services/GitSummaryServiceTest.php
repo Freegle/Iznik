@@ -75,7 +75,7 @@ class GitSummaryServiceTest extends TestCase
         // file:// protocol — no network needed, and token must NOT be injected
         // because this isn't a github.com URL.
         $result = $service->getRepositoryChanges(
-            'file:///tmp/nonexistent-repo-' . uniqid(),
+            'file:///tmp/nonexistent-repo-'.uniqid(),
             'master',
             time() - 3600
         );
@@ -113,6 +113,7 @@ class GitSummaryServiceTest extends TestCase
                 if (str_contains($message, 'No changes found')) {
                     $noChangesLogged = true;
                 }
+
                 return true;
             });
         Log::shouldReceive('warning')
@@ -121,6 +122,7 @@ class GitSummaryServiceTest extends TestCase
                 if (str_contains($message, 'Failed to fetch')) {
                     $warningLogged = true;
                 }
+
                 return true;
             });
 
@@ -145,18 +147,18 @@ class GitSummaryServiceTest extends TestCase
                 'commits' => [['date' => '2026-08-21', 'message' => 'feat: add bulk member purge']],
                 'stat' => ' modtools/pages/members/purge.vue | 20 ++++',
                 'diff' => "diff --git a/modtools/pages/members/purge.vue b/modtools/pages/members/purge.vue\n"
-                    . "--- a/modtools/pages/members/purge.vue\n"
-                    . "+++ b/modtools/pages/members/purge.vue\n"
-                    . "@@ -1,3 +1,6 @@ setup\n"
-                    . "+const { supportOrAdmin } = useMe()\n"
-                    . "+if (!supportOrAdmin.value) return\n",
+                    ."--- a/modtools/pages/members/purge.vue\n"
+                    ."+++ b/modtools/pages/members/purge.vue\n"
+                    ."@@ -1,3 +1,6 @@ setup\n"
+                    ."+const { supportOrAdmin } = useMe()\n"
+                    ."+if (!supportOrAdmin.value) return\n",
             ],
         ]);
 
         // Assert on the whole note, not its parts: "supportOrAdmin" also appears in the
         // guidelines further down, so a looser assertion would pass without the signal.
         $this->assertStringContainsString(
-            "- modtools/pages/members/purge.vue: Support and Admin staff only (supportOrAdmin)",
+            '- modtools/pages/members/purge.vue: Support and Admin staff only (supportOrAdmin)',
             $prompt
         );
     }
@@ -194,9 +196,9 @@ class GitSummaryServiceTest extends TestCase
                 'commits' => [],
                 'stat' => '',
                 'diff' => "--- a/modtools/pages/sysadmin/spammers.vue\n"
-                    . "+++ b/modtools/pages/sysadmin/spammers.vue\n"
-                    . "@@ -1,1 +1,2 @@\n"
-                    . "+const x = 1\n",
+                    ."+++ b/modtools/pages/sysadmin/spammers.vue\n"
+                    ."@@ -1,1 +1,2 @@\n"
+                    ."+const x = 1\n",
             ],
         ]);
 

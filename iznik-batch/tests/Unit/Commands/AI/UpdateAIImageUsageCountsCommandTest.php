@@ -9,6 +9,7 @@ use Tests\TestCase;
 class UpdateAIImageUsageCountsCommandTest extends TestCase
 {
     private array $testImageIds = [];
+
     private array $testAttachmentIds = [];
 
     protected function setUp(): void
@@ -75,8 +76,8 @@ class UpdateAIImageUsageCountsCommandTest extends TestCase
     public function test_updates_usage_counts_in_batches(): void
     {
         // Create test AI images.
-        $uid1 = 'test-usage-uid-1-' . uniqid();
-        $uid2 = 'test-usage-uid-2-' . uniqid();
+        $uid1 = 'test-usage-uid-1-'.uniqid();
+        $uid2 = 'test-usage-uid-2-'.uniqid();
 
         DB::table('ai_images')->insert([
             ['name' => 'test-usage-img1', 'externaluid' => $uid1, 'usage_count' => 0],
@@ -123,7 +124,7 @@ class UpdateAIImageUsageCountsCommandTest extends TestCase
     public function test_skips_rows_where_count_unchanged(): void
     {
         // Create an image whose usage_count already matches reality.
-        $uid = 'test-usage-uid-unchanged-' . uniqid();
+        $uid = 'test-usage-uid-unchanged-'.uniqid();
 
         DB::table('ai_images')->insert([
             'name' => 'test-usage-unchanged',

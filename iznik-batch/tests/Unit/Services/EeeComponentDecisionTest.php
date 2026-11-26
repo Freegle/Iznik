@@ -30,13 +30,14 @@ class EeeComponentDecisionTest extends TestCase
 
         $sqlite = $this->createMock(EeeSqliteService::class);
 
-        $this->service = new class($sqlite) extends EeeComponentService {
+        $this->service = new class($sqlite) extends EeeComponentService
+        {
             protected function lookupWithStatus(string $raw): array
             {
                 $category = $this->autoCategory($raw);
 
                 return [
-                    'match'  => $category === 'unknown'
+                    'match' => $category === 'unknown'
                         ? null
                         : ['canonical_name' => $raw, 'category' => $category],
                     'failed' => false,
@@ -77,7 +78,7 @@ class EeeComponentDecisionTest extends TestCase
 
     public static function provideNamedEeeItems(): array
     {
-        return array_map(fn($n) => [$n], [
+        return array_map(fn ($n) => [$n], [
             'fish tank', 'aquarium', 'spa bath', 'hydrotherapy bath', 'hot tub',
             'loft ladder', 'roller blind', 'gym equipment', 'exercise bike',
             'treadmill', 'cross trainer', 'rowing machine', 'games console',
@@ -135,7 +136,7 @@ class EeeComponentDecisionTest extends TestCase
 
     public static function provideNamedNotEeeItems(): array
     {
-        return array_map(fn($n) => [$n], [
+        return array_map(fn ($n) => [$n], [
             'gas cooker', 'gas hob', 'gas oven', 'gas stove', 'gas range',
             'petrol mower', 'petrol lawn mower', 'petrol lawnmower',
             'petrol strimmer', 'petrol chainsaw', 'petrol hedge cutter',
@@ -228,8 +229,9 @@ class EeeComponentDecisionTest extends TestCase
      */
     public function test_failed_lookups_yield_unknown_not_false(): void
     {
-        $sqlite  = $this->createMock(EeeSqliteService::class);
-        $failing = new class($sqlite) extends EeeComponentService {
+        $sqlite = $this->createMock(EeeSqliteService::class);
+        $failing = new class($sqlite) extends EeeComponentService
+        {
             protected function lookupWithStatus(string $raw): array
             {
                 return ['match' => null, 'failed' => true];
@@ -261,12 +263,13 @@ class EeeComponentDecisionTest extends TestCase
     public function test_positive_match_beats_a_failed_lookup(): void
     {
         $sqlite = $this->createMock(EeeSqliteService::class);
-        $mixed  = new class($sqlite) extends EeeComponentService {
+        $mixed = new class($sqlite) extends EeeComponentService
+        {
             protected function lookupWithStatus(string $raw): array
             {
                 if ($raw === 'power cable') {
                     return [
-                        'match'  => ['canonical_name' => $raw, 'category' => 'primary_eee'],
+                        'match' => ['canonical_name' => $raw, 'category' => 'primary_eee'],
                         'failed' => false,
                     ];
                 }

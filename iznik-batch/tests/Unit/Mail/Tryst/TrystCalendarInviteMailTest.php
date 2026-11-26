@@ -29,11 +29,11 @@ class TrystCalendarInviteMailTest extends TestCase
         $title = 'Handover: Corner Sofa (London)';
 
         $html = view('emails.mjml.tryst.calendar-invite', [
-            'title'          => $title,
-            'calendarLink'   => 'https://www.ilovefreegle.org/calendar?data=abc123',
-            'email'          => $user->email_preferred,
-            'settingsUrl'    => config('freegle.sites.user') . '/settings',
-            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe/' . $user->id,
+            'title' => $title,
+            'calendarLink' => 'https://www.ilovefreegle.org/calendar?data=abc123',
+            'email' => $user->email_preferred,
+            'settingsUrl' => config('freegle.sites.user').'/settings',
+            'unsubscribeUrl' => config('freegle.sites.user').'/unsubscribe/'.$user->id,
         ])->render();
 
         $this->assertStringContainsString(
@@ -47,15 +47,15 @@ class TrystCalendarInviteMailTest extends TestCase
     {
         // Ensure the dynamic part of the preview exactly matches what was passed
         // so there is no accidental truncation or escaping at the Blade layer.
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $title = 'Tea Set (Bristol)';
 
         $html = view('emails.mjml.tryst.calendar-invite', [
-            'title'          => $title,
-            'calendarLink'   => 'https://www.ilovefreegle.org/calendar?data=abc123',
-            'email'          => $user->email_preferred,
-            'settingsUrl'    => config('freegle.sites.user') . '/settings',
-            'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe/' . $user->id,
+            'title' => $title,
+            'calendarLink' => 'https://www.ilovefreegle.org/calendar?data=abc123',
+            'email' => $user->email_preferred,
+            'settingsUrl' => config('freegle.sites.user').'/settings',
+            'unsubscribeUrl' => config('freegle.sites.user').'/unsubscribe/'.$user->id,
         ])->render();
 
         $this->assertStringContainsString('Handover arranged: Tea Set (Bristol)', $html);

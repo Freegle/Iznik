@@ -14,7 +14,7 @@ class ReengageMailRenderTest extends TestCase
 {
     private function data(int $day): array
     {
-        return (new ReengageContentService())->previewContent($day, 'alex@example.com');
+        return (new ReengageContentService)->previewContent($day, 'alex@example.com');
     }
 
     // ── Blade/MJML source rendering (cheap; no MJML compile) ─────────────────

@@ -73,7 +73,8 @@ class CookieYesWatchdogServiceTest extends TestCase
 
     private function watchdog(): CookieYesWatchdogService
     {
-        $mcp = new class (new CookieYesOAuth(new CookieYesTokenStore()), $this) extends CookieYesMcpClient {
+        $mcp = new class(new CookieYesOAuth(new CookieYesTokenStore), $this) extends CookieYesMcpClient
+        {
             public function __construct(CookieYesOAuth $oauth, private readonly CookieYesWatchdogServiceTest $test)
             {
                 parent::__construct($oauth);
@@ -85,7 +86,7 @@ class CookieYesWatchdogServiceTest extends TestCase
             }
         };
 
-        return new CookieYesWatchdogService($mcp, new CookieYesPublishedBanner());
+        return new CookieYesWatchdogService($mcp, new CookieYesPublishedBanner);
     }
 
     private function publishes(string $script, int $status = 200): void
@@ -96,11 +97,11 @@ class CookieYesWatchdogServiceTest extends TestCase
 
     private function withUncategorised(string ...$cookies): string
     {
-        $literal = implode(',', array_map(fn ($c) => '{cookieID:"' . $c . '",domain:".ilovefreegle.org"}', $cookies));
+        $literal = implode(',', array_map(fn ($c) => '{cookieID:"'.$c.'",domain:".ilovefreegle.org"}', $cookies));
 
         return str_replace(
             '{slug:"other",isNecessary:!1,defaultConsent:{gdpr:!1,ccpa:!1},cookies:[]}',
-            '{slug:"other",isNecessary:!1,defaultConsent:{gdpr:!1,ccpa:!1},cookies:[' . $literal . ']}',
+            '{slug:"other",isNecessary:!1,defaultConsent:{gdpr:!1,ccpa:!1},cookies:['.$literal.']}',
             $this->script
         );
     }

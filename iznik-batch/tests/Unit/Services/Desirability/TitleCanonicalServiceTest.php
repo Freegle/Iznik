@@ -98,6 +98,7 @@ class TitleCanonicalServiceTest extends TestCase
         $got = $this->svc->canonicalise("OFFER: Wooden high chair \xE2\x82 (AB1)");
         $this->assertSame('wooden high chair', $got['canonical']);
     }
+
     /**
      * A leading number is a count when what follows is a plural noun, and part of
      * the item when it is a dimension. Getting that wrong put "2 uplighters" on the

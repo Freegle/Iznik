@@ -11,7 +11,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
 {
     private function service(): RippleMembershipBackfillService
     {
-        return new RippleMembershipBackfillService();
+        return new RippleMembershipBackfillService;
     }
 
     /** Set up a member auto-joined BEFORE the mitigations: Rippled provenance log, rippled=0, immediate. */

@@ -6,7 +6,6 @@ use App\Mail\Donation\AskForDonation;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\UserEmail;
 use App\Services\EmailSpoolerService;
-use App\Services\Mail\Incoming\BounceService;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Facades\DB;
@@ -38,9 +37,9 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $email, 'welcome');
 
         $this->assertNotEmpty($id);
-        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertEquals($id, $data['id']);
         // 'to' is now an array of address objects.
         $this->assertEquals($email, $data['to'][0]['address']);
@@ -65,7 +64,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $this->uniqueEmail('recipient'), 'ask_for_donation');
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertSame([
             'chatmessages' => [],
             'messages' => [$message->id],
@@ -81,7 +80,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $email, 'welcome');
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertArrayHasKey('about', $data);
         $this->assertNull($data['about']);
     }
@@ -93,7 +92,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $email);
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
 
         $this->assertArrayHasKey('html', $data);
         $this->assertStringContainsString('Welcome', $data['html']);
@@ -118,7 +117,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $email, 'alert');
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertCount(1, $data['attachments']);
         $this->assertSame('screen.png', $data['attachments'][0]['name']);
         $this->assertSame('image/png', $data['attachments'][0]['mime']);
@@ -133,7 +132,7 @@ class EmailSpoolerServiceTest extends TestCase
         $email = $this->uniqueEmail('recipient');
         $id = $this->spooler->spool(new WelcomeMail($email), $email, 'welcome');
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertSame([], $data['attachments']);
     }
 
@@ -182,7 +181,7 @@ class EmailSpoolerServiceTest extends TestCase
         $prop = $ref->getProperty('pendingDir');
         $prop->setAccessible(true);
         $original = $prop->getValue($this->spooler);
-        $prop->setValue($this->spooler, $this->testSpoolDir . '/no/such/parent/pending');
+        $prop->setValue($this->spooler, $this->testSpoolDir.'/no/such/parent/pending');
 
         try {
             $threw = false;
@@ -193,8 +192,8 @@ class EmailSpoolerServiceTest extends TestCase
             }
             $this->assertTrue($threw, 'a write that cannot land must throw, not silently spool nothing');
 
-            $this->assertCount(0, glob($original . '/*.json') ?: [], 'must leave no empty spool file behind');
-            $this->assertCount(0, glob($original . '/*.tmp') ?: [], 'must not leave a temp file behind either');
+            $this->assertCount(0, glob($original.'/*.json') ?: [], 'must leave no empty spool file behind');
+            $this->assertCount(0, glob($original.'/*.tmp') ?: [], 'must not leave a temp file behind either');
         } finally {
             $prop->setValue($this->spooler, $original);
         }
@@ -210,17 +209,17 @@ class EmailSpoolerServiceTest extends TestCase
 
         // The claim must land in the worker's own area, not the shared dir -
         // that separation is what stops a restarting peer reclaiming live mail.
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertDirectoryExists($this->testSpoolDir . '/sending/w07');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertDirectoryExists($this->testSpoolDir.'/sending/w07');
     }
 
     public function test_reclaim_does_not_steal_a_live_peers_in_flight_file(): void
     {
         // THE duplicate-send hazard: worker A restarts while worker B is mid-send.
         // A must not move B's in-flight file back to pending, or it gets sent twice.
-        $peer = $this->testSpoolDir . '/sending/w99';
+        $peer = $this->testSpoolDir.'/sending/w99';
         mkdir($peer, 0755, true);
-        $inFlight = $peer . '/mail_p1_peer_inflight.json';
+        $inFlight = $peer.'/mail_p1_peer_inflight.json';
         file_put_contents($inFlight, json_encode(['id' => 'peer', 'to' => []]));
         touch($inFlight); // freshly claimed, as processSpool() stamps it
 
@@ -235,25 +234,25 @@ class EmailSpoolerServiceTest extends TestCase
     {
         // Our own predecessor died: no live owner is possible, so recover at once
         // rather than waiting out the sibling age gate.
-        $mine = $this->testSpoolDir . '/sending/w00';
+        $mine = $this->testSpoolDir.'/sending/w00';
         mkdir($mine, 0755, true);
-        $orphan = $mine . '/mail_p1_mine_orphan.json';
+        $orphan = $mine.'/mail_p1_mine_orphan.json';
         file_put_contents($orphan, json_encode(['id' => 'mine', 'to' => []]));
 
         $this->spooler->setWorkerId('00');
         $reclaimed = $this->spooler->reclaimOrphanedSending();
 
         $this->assertEquals(1, $reclaimed);
-        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_mine_orphan.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/mail_p1_mine_orphan.json');
     }
 
     public function test_reclaim_rescues_a_stale_file_from_a_dead_peer(): void
     {
         // The other half: a worker that died and never came back, or a strand
         // left when numprocs is reduced, must not hold mail forever.
-        $dead = $this->testSpoolDir . '/sending/w99';
+        $dead = $this->testSpoolDir.'/sending/w99';
         mkdir($dead, 0755, true);
-        $stranded = $dead . '/mail_p1_dead_peer.json';
+        $stranded = $dead.'/mail_p1_dead_peer.json';
         file_put_contents($stranded, json_encode(['id' => 'dead', 'to' => []]));
         touch($stranded, time() - 3600); // idle an hour, past the 30-minute gate
 
@@ -261,18 +260,18 @@ class EmailSpoolerServiceTest extends TestCase
         $reclaimed = $this->spooler->reclaimOrphanedSending();
 
         $this->assertEquals(1, $reclaimed);
-        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_dead_peer.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/mail_p1_dead_peer.json');
     }
 
     public function test_backlog_stats_counts_in_flight_across_all_worker_areas(): void
     {
         // getBacklogStats is the only in-flight signal there is; reporting 0
         // during an SMTP stall is how a stall gets misdiagnosed.
-        mkdir($this->testSpoolDir . '/sending/w00', 0755, true);
-        mkdir($this->testSpoolDir . '/sending/w01', 0755, true);
-        file_put_contents($this->testSpoolDir . '/sending/w00/a.json', '{}');
-        file_put_contents($this->testSpoolDir . '/sending/w01/b.json', '{}');
-        file_put_contents($this->testSpoolDir . '/sending/c.json', '{}');
+        mkdir($this->testSpoolDir.'/sending/w00', 0755, true);
+        mkdir($this->testSpoolDir.'/sending/w01', 0755, true);
+        file_put_contents($this->testSpoolDir.'/sending/w00/a.json', '{}');
+        file_put_contents($this->testSpoolDir.'/sending/w01/b.json', '{}');
+        file_put_contents($this->testSpoolDir.'/sending/c.json', '{}');
 
         $stats = $this->spooler->getBacklogStats();
 
@@ -310,10 +309,10 @@ class EmailSpoolerServiceTest extends TestCase
         $highId = $this->spooler->spool(new WelcomeMail($email), $email);
 
         // Re-band by filename: the processor buckets on the prefix alone.
-        $low = $this->testSpoolDir . '/pending/mail_p9_zzz_low.json';
-        $high = $this->testSpoolDir . '/pending/mail_p1_aaa_high.json';
-        rename($this->testSpoolDir . '/pending/' . $lowId . '.json', $low);
-        rename($this->testSpoolDir . '/pending/' . $highId . '.json', $high);
+        $low = $this->testSpoolDir.'/pending/mail_p9_zzz_low.json';
+        $high = $this->testSpoolDir.'/pending/mail_p1_aaa_high.json';
+        rename($this->testSpoolDir.'/pending/'.$lowId.'.json', $low);
+        rename($this->testSpoolDir.'/pending/'.$highId.'.json', $high);
 
         // Only one slot: strict priority must spend it on the urgent band, even
         // though the low-band file was spooled first and sorts later by name.
@@ -337,7 +336,7 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool(new WelcomeMail($email), $email);
 
         // Strip the recipient the way the bad MatchedPosts records had it.
-        $pending = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $pending = $this->testSpoolDir.'/pending/'.$id.'.json';
         $data = json_decode(file_get_contents($pending), true);
         $data['to'] = [];
         $data['cc'] = [];
@@ -351,7 +350,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(0, $stats['sent']);
 
         $this->assertFileDoesNotExist($pending, 'must not return to pending - that is the infinite loop');
-        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir.'/failed/'.$id.'.json');
 
         // A second pass must not pick it up again.
         $again = $this->spooler->processSpool();
@@ -377,10 +376,10 @@ class EmailSpoolerServiceTest extends TestCase
         // File should be moved out of pending and stored gzipped in sent/
         // (sent records are write-only + pruned after 7 days, so they are
         // compressed to keep the archive small).
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/sent/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/sent/'.$id.'.json');
 
-        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
+        $sentFile = $this->testSpoolDir.'/sent/'.$id.'.json.gz';
         $this->assertFileExists($sentFile);
 
         // The gzipped record must decode back to the original spooled JSON.
@@ -408,7 +407,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(2, $stats['sent']);
 
         // 3 should still be pending.
-        $remaining = glob($this->testSpoolDir . '/pending/*.json');
+        $remaining = glob($this->testSpoolDir.'/pending/*.json');
         $this->assertCount(3, $remaining);
     }
 
@@ -424,7 +423,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->spooler->processSpool();
 
         // Backdate the sent file (stored gzipped).
-        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
+        $sentFile = $this->testSpoolDir.'/sent/'.$id.'.json.gz';
         touch($sentFile, strtotime('-10 days'));
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
@@ -439,11 +438,11 @@ class EmailSpoolerServiceTest extends TestCase
         // gzipped record is pruned, a recent one is kept. Without .gz in the
         // accepted-extension filter these would never be deleted and the sent
         // archive would grow unbounded.
-        $oldFile = $this->testSpoolDir . '/sent/old_mail.json.gz';
+        $oldFile = $this->testSpoolDir.'/sent/old_mail.json.gz';
         file_put_contents($oldFile, gzencode(json_encode(['id' => 'old'])));
         touch($oldFile, strtotime('-10 days'));
 
-        $newFile = $this->testSpoolDir . '/sent/new_mail.json.gz';
+        $newFile = $this->testSpoolDir.'/sent/new_mail.json.gz';
         file_put_contents($newFile, gzencode(json_encode(['id' => 'new'])));
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
@@ -456,15 +455,15 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_cleanup_sent_skips_non_json_files(): void
     {
         // Create a non-json file in the sent directory.
-        file_put_contents($this->testSpoolDir . '/sent/readme.txt', 'do not delete');
+        file_put_contents($this->testSpoolDir.'/sent/readme.txt', 'do not delete');
 
         // Create an old json file that should be deleted.
-        $oldFile = $this->testSpoolDir . '/sent/old_mail.json';
+        $oldFile = $this->testSpoolDir.'/sent/old_mail.json';
         file_put_contents($oldFile, json_encode(['id' => 'old']));
         touch($oldFile, strtotime('-10 days'));
 
         // Create a recent json file that should be kept.
-        $newFile = $this->testSpoolDir . '/sent/new_mail.json';
+        $newFile = $this->testSpoolDir.'/sent/new_mail.json';
         file_put_contents($newFile, json_encode(['id' => 'new']));
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
@@ -472,22 +471,22 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $deleted);
         $this->assertFileDoesNotExist($oldFile);
         $this->assertFileExists($newFile);
-        $this->assertFileExists($this->testSpoolDir . '/sent/readme.txt');
+        $this->assertFileExists($this->testSpoolDir.'/sent/readme.txt');
     }
 
     public function test_cleanup_sent_handles_many_files(): void
     {
         // Create 500 old files to verify DirectoryIterator handles batches.
         for ($i = 0; $i < 500; $i++) {
-            $file = $this->testSpoolDir . '/sent/mail_' . $i . '.json';
-            file_put_contents($file, json_encode(['id' => 'mail_' . $i]));
+            $file = $this->testSpoolDir.'/sent/mail_'.$i.'.json';
+            file_put_contents($file, json_encode(['id' => 'mail_'.$i]));
             touch($file, strtotime('-10 days'));
         }
 
         // Create 5 recent files that should be kept.
         for ($i = 0; $i < 5; $i++) {
-            $file = $this->testSpoolDir . '/sent/recent_' . $i . '.json';
-            file_put_contents($file, json_encode(['id' => 'recent_' . $i]));
+            $file = $this->testSpoolDir.'/sent/recent_'.$i.'.json';
+            file_put_contents($file, json_encode(['id' => 'recent_'.$i]));
         }
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
@@ -495,14 +494,14 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(500, $deleted);
 
         // Verify the recent files are still there.
-        $remaining = glob($this->testSpoolDir . '/sent/*.json');
+        $remaining = glob($this->testSpoolDir.'/sent/*.json');
         $this->assertCount(5, $remaining);
     }
 
     public function test_retry_failed_moves_to_pending(): void
     {
         // Create a fake failed email file.
-        $id = 'test_failed_' . uniqid();
+        $id = 'test_failed_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
@@ -514,18 +513,18 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/failed/' . $id . '.json',
+            $this->testSpoolDir.'/failed/'.$id.'.json',
             json_encode($data)
         );
 
         $result = $this->spooler->retryFailed($id);
 
         $this->assertTrue($result);
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/failed/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/failed/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
 
         // Check attempts was reset.
-        $retried = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $retried = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
         $this->assertEquals(0, $retried['attempts']);
         $this->assertNull($retried['last_error']);
     }
@@ -534,19 +533,19 @@ class EmailSpoolerServiceTest extends TestCase
     {
         // Create multiple fake failed emails.
         for ($i = 0; $i < 3; $i++) {
-            $id = 'test_failed_' . $i . '_' . uniqid();
+            $id = 'test_failed_'.$i.'_'.uniqid();
             $data = [
                 'id' => $id,
                 'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
                 'from' => [['address' => $this->uniqueEmail('noreply'), 'name' => 'Test']],
-                'subject' => 'Test ' . $i,
+                'subject' => 'Test '.$i,
                 'html' => '<p>Test</p>',
                 'attempts' => 3,
-                'last_error' => 'Error ' . $i,
+                'last_error' => 'Error '.$i,
             ];
 
             file_put_contents(
-                $this->testSpoolDir . '/failed/' . $id . '.json',
+                $this->testSpoolDir.'/failed/'.$id.'.json',
                 json_encode($data)
             );
         }
@@ -555,8 +554,8 @@ class EmailSpoolerServiceTest extends TestCase
 
         $this->assertEquals(3, $count);
 
-        $failed = glob($this->testSpoolDir . '/failed/*.json');
-        $pending = glob($this->testSpoolDir . '/pending/*.json');
+        $failed = glob($this->testSpoolDir.'/failed/*.json');
+        $pending = glob($this->testSpoolDir.'/pending/*.json');
 
         $this->assertCount(0, $failed);
         $this->assertCount(3, $pending);
@@ -566,7 +565,7 @@ class EmailSpoolerServiceTest extends TestCase
     {
         // Create many pending files to trigger warning status.
         for ($i = 0; $i < 150; $i++) {
-            $id = 'test_' . $i . '_' . uniqid();
+            $id = 'test_'.$i.'_'.uniqid();
             $data = [
                 'id' => $id,
                 'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
@@ -574,7 +573,7 @@ class EmailSpoolerServiceTest extends TestCase
             ];
 
             file_put_contents(
-                $this->testSpoolDir . '/pending/' . $id . '.json',
+                $this->testSpoolDir.'/pending/'.$id.'.json',
                 json_encode($data)
             );
         }
@@ -596,10 +595,9 @@ class EmailSpoolerServiceTest extends TestCase
         $fromEmail = $this->uniqueEmail('noreply');
 
         // Create a test mailable that adds custom headers.
-        $mailable = new class($recipientEmail, $fromEmail) extends Mailable {
-            public function __construct(private string $recipient, private string $fromAddress)
-            {
-            }
+        $mailable = new class($recipientEmail, $fromEmail) extends Mailable
+        {
+            public function __construct(private string $recipient, private string $fromAddress) {}
 
             public function envelope(): Envelope
             {
@@ -625,7 +623,7 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $recipientEmail);
 
         // Read the spool file and verify headers are captured.
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
 
         $this->assertArrayHasKey('headers', $data);
         $this->assertArrayHasKey('X-Custom-Test', $data['headers']);
@@ -642,7 +640,7 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_headers_applied_when_sending_from_spool(): void
     {
         // Create a spool file with custom headers.
-        $id = 'test_headers_' . uniqid();
+        $id = 'test_headers_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => 'Test User']],
@@ -662,7 +660,7 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             json_encode($data)
         );
 
@@ -674,7 +672,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm it was processed.
-        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir.'/sent/'.$id.'.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
 
         // The headers should still be in the data.
@@ -691,10 +689,9 @@ class EmailSpoolerServiceTest extends TestCase
         $fromEmail = $this->uniqueEmail('noreply');
 
         // Create a test mailable that includes AMP content.
-        $mailable = new class($recipientEmail, $fromEmail) extends Mailable {
-            public function __construct(private string $recipient, private string $fromAddress)
-            {
-            }
+        $mailable = new class($recipientEmail, $fromEmail) extends Mailable
+        {
+            public function __construct(private string $recipient, private string $fromAddress) {}
 
             public function envelope(): Envelope
             {
@@ -723,7 +720,7 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $recipientEmail);
 
         // Read the spool file and verify AMP content is captured.
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
 
         $this->assertArrayHasKey('amp_html', $data);
         $this->assertNotNull($data['amp_html']);
@@ -740,10 +737,9 @@ class EmailSpoolerServiceTest extends TestCase
         $fromEmail = $this->uniqueEmail('noreply');
         $replyToEmail = $this->uniqueEmail('reply');
 
-        $mailable = new class($recipientEmail, $fromEmail, $replyToEmail) extends Mailable {
-            public function __construct(private string $recipient, private string $fromAddress, private string $replyToAddress)
-            {
-            }
+        $mailable = new class($recipientEmail, $fromEmail, $replyToEmail) extends Mailable
+        {
+            public function __construct(private string $recipient, private string $fromAddress, private string $replyToAddress) {}
 
             public function envelope(): Envelope
             {
@@ -762,7 +758,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $recipientEmail);
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
 
         $this->assertArrayHasKey('reply_to', $data);
         $this->assertNotEmpty($data['reply_to']);
@@ -780,14 +776,14 @@ class EmailSpoolerServiceTest extends TestCase
         $bcc1Email = $this->uniqueEmail('bcc1');
         $bcc2Email = $this->uniqueEmail('bcc2');
 
-        $mailable = new class($recipientEmail, $fromEmail, $bcc1Email, $bcc2Email) extends Mailable {
+        $mailable = new class($recipientEmail, $fromEmail, $bcc1Email, $bcc2Email) extends Mailable
+        {
             public function __construct(
                 private string $recipient,
                 private string $fromAddress,
                 private string $bcc1Address,
                 private string $bcc2Address
-            ) {
-            }
+            ) {}
 
             public function envelope(): Envelope
             {
@@ -809,7 +805,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $id = $this->spooler->spool($mailable, $recipientEmail);
 
-        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $data = json_decode(file_get_contents($this->testSpoolDir.'/pending/'.$id.'.json'), true);
 
         $this->assertArrayHasKey('bcc', $data);
         $this->assertNotEmpty($data['bcc']);
@@ -826,7 +822,7 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_bcc_applied_when_sending_from_spool(): void
     {
         // Create a spool file with BCC addresses.
-        $id = 'test_bcc_send_' . uniqid();
+        $id = 'test_bcc_send_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => 'Test User']],
@@ -846,7 +842,7 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             json_encode($data)
         );
 
@@ -858,7 +854,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm BCC data is preserved.
-        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir.'/sent/'.$id.'.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
         $this->assertCount(2, $sentData['bcc']);
     }
@@ -872,7 +868,7 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_plain_text_body_included_in_non_amp_emails(): void
     {
         // Create a spool file with both HTML and text content (no AMP).
-        $id = 'test_text_body_' . uniqid();
+        $id = 'test_text_body_'.uniqid();
         $plainText = "New message from Test User\n\nHello, this is a test message.\n\nReply: https://example.com/chat/123";
         $htmlContent = '<p>New message from Test User</p><p>Hello, this is a test message.</p><a href="https://example.com/chat/123">Reply</a>';
 
@@ -893,7 +889,7 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             json_encode($data)
         );
 
@@ -902,7 +898,8 @@ class EmailSpoolerServiceTest extends TestCase
 
         // Use a custom mailer transport to capture the message.
         \Illuminate\Support\Facades\Mail::extend('capture', function () use (&$capturedMessage) {
-            return new class($capturedMessage) extends \Symfony\Component\Mailer\Transport\AbstractTransport {
+            return new class($capturedMessage) extends \Symfony\Component\Mailer\Transport\AbstractTransport
+            {
                 private mixed $capturedRef;
 
                 public function __construct(&$captured)
@@ -1010,7 +1007,7 @@ class EmailSpoolerServiceTest extends TestCase
         $userEmail = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
 
         // Create a spool file addressed to that user's email.
-        $id = 'test_bounce_' . uniqid();
+        $id = 'test_bounce_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $userEmail->email, 'name' => '']],
@@ -1029,7 +1026,7 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             json_encode($data)
         );
 
@@ -1041,8 +1038,8 @@ class EmailSpoolerServiceTest extends TestCase
         $stats = $this->spooler->processSpool();
 
         // Email should be in failed/, not pending/.
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir.'/failed/'.$id.'.json');
         $this->assertEquals(1, $stats['bounced'] ?? 0);
 
         // Bounce should be recorded in bounces_emails.
@@ -1062,7 +1059,7 @@ class EmailSpoolerServiceTest extends TestCase
      */
     public function test_transient_smtp_failure_retries(): void
     {
-        $id = 'test_transient_' . uniqid();
+        $id = 'test_transient_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
@@ -1081,7 +1078,7 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             json_encode($data)
         );
 
@@ -1093,8 +1090,8 @@ class EmailSpoolerServiceTest extends TestCase
         $stats = $this->spooler->processSpool();
 
         // Email should be back in pending/ for retry.
-        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/failed/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/failed/'.$id.'.json');
         $this->assertEquals(1, $stats['retried']);
         $this->assertEquals(0, $stats['bounced'] ?? 0);
     }
@@ -1109,7 +1106,7 @@ class EmailSpoolerServiceTest extends TestCase
     {
         // No "@" → Symfony throws RfcComplianceException ("... does not comply
         // with addr-spec of RFC 2822"), which the classifier treats as permanent.
-        $malformed = 'kojopoku6_' . uniqid() . '.com';
+        $malformed = 'kojopoku6_'.uniqid().'.com';
         $user = $this->createTestUser(['email_preferred' => $malformed]);
         $userEmail = UserEmail::where('email', $malformed)->first();
 
@@ -1119,7 +1116,7 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $malformed, 'welcome');
 
         $this->assertSame('', $id);
-        $this->assertCount(0, glob($this->testSpoolDir . '/pending/*.json'));
+        $this->assertCount(0, glob($this->testSpoolDir.'/pending/*.json'));
 
         // Permanent bounce recorded against the offending address.
         $bounceCount = DB::table('bounces_emails')
@@ -1144,7 +1141,8 @@ class EmailSpoolerServiceTest extends TestCase
         // A mailable whose build throws a transient/unknown error — not an
         // address problem — must bubble up so it gets noticed, exactly as
         // before this change.
-        $mailable = new class($email) extends Mailable {
+        $mailable = new class($email) extends Mailable
+        {
             public function __construct(private string $recipient) {}
 
             public function build(): static
@@ -1168,7 +1166,7 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_reclaim_orphaned_sending_moves_file_back_to_pending(): void
     {
         // Simulate a process that died after moving the file to sending/.
-        $id = 'test_orphan_' . uniqid();
+        $id = 'test_orphan_'.uniqid();
         $data = [
             'id' => $id,
             'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
@@ -1180,15 +1178,15 @@ class EmailSpoolerServiceTest extends TestCase
         ];
 
         file_put_contents(
-            $this->testSpoolDir . '/sending/' . $id . '.json',
+            $this->testSpoolDir.'/sending/'.$id.'.json',
             json_encode($data)
         );
 
         $reclaimed = $this->spooler->reclaimOrphanedSending();
 
         $this->assertEquals(1, $reclaimed);
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/sending/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/sending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
     }
 
     /**
@@ -1207,9 +1205,9 @@ class EmailSpoolerServiceTest extends TestCase
     public function test_reclaim_orphaned_sending_handles_multiple_files(): void
     {
         for ($i = 0; $i < 3; $i++) {
-            $id = 'test_orphan_' . $i . '_' . uniqid();
+            $id = 'test_orphan_'.$i.'_'.uniqid();
             file_put_contents(
-                $this->testSpoolDir . '/sending/' . $id . '.json',
+                $this->testSpoolDir.'/sending/'.$id.'.json',
                 json_encode(['id' => $id])
             );
         }
@@ -1217,8 +1215,8 @@ class EmailSpoolerServiceTest extends TestCase
         $reclaimed = $this->spooler->reclaimOrphanedSending();
 
         $this->assertEquals(3, $reclaimed);
-        $this->assertCount(0, glob($this->testSpoolDir . '/sending/*.json'));
-        $this->assertCount(3, glob($this->testSpoolDir . '/pending/*.json'));
+        $this->assertCount(0, glob($this->testSpoolDir.'/sending/*.json'));
+        $this->assertCount(3, glob($this->testSpoolDir.'/pending/*.json'));
     }
 
     /**
@@ -1227,9 +1225,9 @@ class EmailSpoolerServiceTest extends TestCase
      */
     public function test_process_spool_moves_unparseable_file_to_failed(): void
     {
-        $id = 'test_corrupt_' . uniqid();
+        $id = 'test_corrupt_'.uniqid();
         file_put_contents(
-            $this->testSpoolDir . '/pending/' . $id . '.json',
+            $this->testSpoolDir.'/pending/'.$id.'.json',
             '{not valid json'
         );
 
@@ -1237,7 +1235,7 @@ class EmailSpoolerServiceTest extends TestCase
 
         $this->assertEquals(1, $stats['invalid']);
         $this->assertEquals(0, $stats['sent']);
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/'.$id.'.json');
+        $this->assertFileExists($this->testSpoolDir.'/failed/'.$id.'.json');
     }
 }

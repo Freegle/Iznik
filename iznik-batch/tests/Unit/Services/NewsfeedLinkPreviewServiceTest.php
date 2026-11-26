@@ -53,14 +53,14 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new TestableNewsfeedLinkPreviewService();
+        $this->service = new TestableNewsfeedLinkPreviewService;
     }
 
     // -------------------------------------------------------------------------
     // isFetchableUrl — SSRF guard
     // -------------------------------------------------------------------------
 
-    public function test_isFetchableUrl_blocks_internal_and_bad_schemes(): void
+    public function test_is_fetchable_url_blocks_internal_and_bad_schemes(): void
     {
         // Literal-IP URLs so no DNS lookup is needed. Internal/private/link-local and non-http(s)
         // schemes must all be rejected before the server-side fetch happens.
@@ -78,7 +78,7 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
         }
     }
 
-    public function test_isFetchableUrl_allows_public_ip(): void
+    public function test_is_fetchable_url_allows_public_ip(): void
     {
         $this->assertTrue($this->service->isFetchableUrlPublic('https://8.8.8.8/image.png'));
     }
@@ -90,10 +90,10 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_uses_og_title(): void
     {
         $html = '<html><head>'
-            . '<meta property="og:title" content="OG Title">'
-            . '<meta name="twitter:title" content="Twitter Title">'
-            . '<title>Page Title</title>'
-            . '</head><body></body></html>';
+            .'<meta property="og:title" content="OG Title">'
+            .'<meta name="twitter:title" content="Twitter Title">'
+            .'<title>Page Title</title>'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -103,9 +103,9 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_falls_back_to_twitter_title(): void
     {
         $html = '<html><head>'
-            . '<meta name="twitter:title" content="Twitter Title">'
-            . '<title>Page Title</title>'
-            . '</head><body></body></html>';
+            .'<meta name="twitter:title" content="Twitter Title">'
+            .'<title>Page Title</title>'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -137,9 +137,9 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_uses_og_description(): void
     {
         $html = '<html><head>'
-            . '<meta property="og:description" content="OG Desc">'
-            . '<meta name="description" content="Meta Desc">'
-            . '</head><body></body></html>';
+            .'<meta property="og:description" content="OG Desc">'
+            .'<meta name="description" content="Meta Desc">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -149,8 +149,8 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_falls_back_to_meta_description(): void
     {
         $html = '<html><head>'
-            . '<meta name="description" content="Meta Desc">'
-            . '</head><body></body></html>';
+            .'<meta name="description" content="Meta Desc">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -173,9 +173,9 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_uses_og_image(): void
     {
         $html = '<html><head>'
-            . '<meta property="og:image" content="https://example.com/og.jpg">'
-            . '<meta name="twitter:image" content="https://example.com/twitter.jpg">'
-            . '</head><body></body></html>';
+            .'<meta property="og:image" content="https://example.com/og.jpg">'
+            .'<meta name="twitter:image" content="https://example.com/twitter.jpg">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -185,8 +185,8 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_falls_back_to_twitter_image(): void
     {
         $html = '<html><head>'
-            . '<meta name="twitter:image" content="https://example.com/twitter.jpg">'
-            . '</head><body></body></html>';
+            .'<meta name="twitter:image" content="https://example.com/twitter.jpg">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -219,8 +219,8 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     {
         $nonPrintable = "\x01\x02\x03";
         $html = '<html><head>'
-            . '<meta property="og:title" content="Clean' . $nonPrintable . 'Title">'
-            . '</head><body></body></html>';
+            .'<meta property="og:title" content="Clean'.$nonPrintable.'Title">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -231,8 +231,8 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     {
         $nonPrintable = "\x01\x08";
         $html = '<html><head>'
-            . '<meta property="og:description" content="Clean' . $nonPrintable . 'Desc">'
-            . '</head><body></body></html>';
+            .'<meta property="og:description" content="Clean'.$nonPrintable.'Desc">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -242,8 +242,8 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_trims_whitespace_from_image_url(): void
     {
         $html = '<html><head>'
-            . '<meta property="og:image" content="  https://example.com/img.jpg  ">'
-            . '</head><body></body></html>';
+            .'<meta property="og:image" content="  https://example.com/img.jpg  ">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -276,10 +276,10 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     public function test_parse_html_returns_all_fields_at_once(): void
     {
         $html = '<html><head>'
-            . '<meta property="og:title" content="Full Title">'
-            . '<meta property="og:description" content="Full Description">'
-            . '<meta property="og:image" content="https://example.com/full.jpg">'
-            . '</head><body></body></html>';
+            .'<meta property="og:title" content="Full Title">'
+            .'<meta property="og:description" content="Full Description">'
+            .'<meta property="og:image" content="https://example.com/full.jpg">'
+            .'</head><body></body></html>';
 
         $result = $this->service->parseHtmlPublic($html);
 
@@ -351,7 +351,7 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
     public function test_upsert_invalid_inserts_new_record(): void
     {
-        $url = 'https://invalid-' . uniqid() . '.example.com/';
+        $url = 'https://invalid-'.uniqid().'.example.com/';
 
         $id = $this->service->upsertInvalidPublic($url);
 
@@ -359,16 +359,16 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
         $this->assertGreaterThan(0, $id);
 
         $this->assertDatabaseHas('link_previews', [
-            'url'     => $url,
+            'url' => $url,
             'invalid' => 1,
         ]);
     }
 
     public function test_upsert_invalid_returns_existing_id_on_duplicate(): void
     {
-        $url = 'https://invalid-dup-' . uniqid() . '.example.com/';
+        $url = 'https://invalid-dup-'.uniqid().'.example.com/';
 
-        $firstId  = $this->service->upsertInvalidPublic($url);
+        $firstId = $this->service->upsertInvalidPublic($url);
         $secondId = $this->service->upsertInvalidPublic($url);
 
         $this->assertEquals($firstId, $secondId);
@@ -381,13 +381,13 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
     public function test_get_or_create_returns_cached_id(): void
     {
-        $url = 'https://cached-' . uniqid() . '.example.com/';
+        $url = 'https://cached-'.uniqid().'.example.com/';
 
         $insertedId = DB::table('link_previews')->insertGetId([
-            'url'       => $url,
-            'title'     => 'Cached',
+            'url' => $url,
+            'title' => 'Cached',
             'retrieved' => now()->subDays(3),
-            'invalid'   => 0,
+            'invalid' => 0,
         ]);
 
         Http::fake();
@@ -400,13 +400,13 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
     public function test_get_or_create_refetches_expired_cache(): void
     {
-        $url = 'https://expired-' . uniqid() . '.example.com/';
+        $url = 'https://expired-'.uniqid().'.example.com/';
 
         DB::table('link_previews')->insert([
-            'url'       => $url,
-            'title'     => 'Old',
+            'url' => $url,
+            'title' => 'Old',
             'retrieved' => now()->subDays(8),
-            'invalid'   => 0,
+            'invalid' => 0,
         ]);
 
         $html = '<html><head><meta property="og:title" content="Refreshed"></head></html>';
@@ -424,12 +424,12 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
     public function test_create_stores_parsed_metadata(): void
     {
-        $url  = 'https://new-' . uniqid() . '.example.com/';
+        $url = 'https://new-'.uniqid().'.example.com/';
         $html = '<html><head>'
-            . '<meta property="og:title" content="New Title">'
-            . '<meta property="og:description" content="New Desc">'
-            . '<meta property="og:image" content="https://example.com/img.png">'
-            . '</head><body></body></html>';
+            .'<meta property="og:title" content="New Title">'
+            .'<meta property="og:description" content="New Desc">'
+            .'<meta property="og:image" content="https://example.com/img.png">'
+            .'</head><body></body></html>';
 
         Http::fake([$url => Http::response($html, 200)]);
 
@@ -437,46 +437,46 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
 
         $this->assertIsInt($id);
         $this->assertDatabaseHas('link_previews', [
-            'url'         => $url,
-            'title'       => 'New Title',
+            'url' => $url,
+            'title' => 'New Title',
             'description' => 'New Desc',
-            'image'       => 'https://example.com/img.png',
-            'invalid'     => 0,
+            'image' => 'https://example.com/img.png',
+            'invalid' => 0,
         ]);
     }
 
     public function test_create_marks_invalid_on_http_failure(): void
     {
-        $url = 'https://fail-' . uniqid() . '.example.com/page';
+        $url = 'https://fail-'.uniqid().'.example.com/page';
         Http::fake([$url => Http::response('', 503)]);
 
         $id = $this->service->createPublic($url);
 
         $this->assertIsInt($id);
         $this->assertDatabaseHas('link_previews', [
-            'url'     => $url,
+            'url' => $url,
             'invalid' => 1,
         ]);
     }
 
     public function test_create_marks_invalid_on_exception(): void
     {
-        $url = 'https://throw-' . uniqid() . '.example.com/';
+        $url = 'https://throw-'.uniqid().'.example.com/';
         Http::fake([$url => fn () => throw new \RuntimeException('Network error')]);
 
         $id = $this->service->createPublic($url);
 
         $this->assertIsInt($id);
         $this->assertDatabaseHas('link_previews', [
-            'url'     => $url,
+            'url' => $url,
             'invalid' => 1,
         ]);
     }
 
     public function test_create_upgrades_http_to_https_for_request(): void
     {
-        $httpUrl   = 'http://upgrade-' . uniqid() . '.example.com/';
-        $httpsUrl  = str_replace('http://', 'https://', $httpUrl);
+        $httpUrl = 'http://upgrade-'.uniqid().'.example.com/';
+        $httpsUrl = str_replace('http://', 'https://', $httpUrl);
 
         $html = '<html><head><title>Upgraded</title></head><body></body></html>';
         Http::fake([$httpsUrl => Http::response($html, 200)]);

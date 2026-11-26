@@ -99,7 +99,7 @@ class ServerSizingReportMailTest extends TestCase
         $this->assertSame('£16.87', $facts['moves_up_would_cost_a_month_more']);
         $this->assertSame(21, $facts['days_of_readings']);
         $this->assertSame(14, $facts['days_needed_before_a_move_down']);
-        $this->assertSame(['old-cache'], $facts['disks_attached_to_nothing_or_not_built']);
+        $this->assertSame(['old-cache, 200 GB, not attached to any server'], $facts['disks_to_look_at']);
         $this->assertSame(['stray'], $facts['hosts_sampled_but_not_on_katapult']);
         // Each server is its card, less the colour hint that means nothing to a reader of text.
         $card = $mail->cards()[0];

@@ -19,8 +19,8 @@ class MessageExpiryServiceTest extends TestCase
     {
         parent::setUp();
         // Ensure feature flag is enabled for tests.
-        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types') . ',MessageExpiry']);
-        $this->service = new MessageExpiryService();
+        config(['freegle.mail.enabled_types' => config('freegle.mail.enabled_types').',MessageExpiry']);
+        $this->service = new MessageExpiryService;
     }
 
     public function test_process_deadline_expired_with_no_messages(): void
@@ -965,5 +965,4 @@ class MessageExpiryServiceTest extends TestCase
 
         $this->assertEquals(100, $count);
     }
-
 }

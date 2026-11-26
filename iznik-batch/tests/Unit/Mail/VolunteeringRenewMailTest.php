@@ -18,7 +18,7 @@ class VolunteeringRenewMailTest extends TestCase
                 'title' => $title,
                 'groupName' => 'Freegle Testville',
                 // A loginLink()-style auto-login URL pointing at the opportunity.
-                'renewUrl' => $userSite . '/volunteering/42?u=7&k=abcdef&src=voldigest',
+                'renewUrl' => $userSite.'/volunteering/42?u=7&k=abcdef&src=voldigest',
             ]],
             userId: 7,
         );
@@ -32,9 +32,9 @@ class VolunteeringRenewMailTest extends TestCase
             recipientEmail: 'owner@example.com',
             opportunities: [
                 ['id' => 42, 'title' => 'Garden help', 'groupName' => 'Freegle Testville',
-                    'renewUrl' => $userSite . '/volunteering/42?u=7&k=abcdef'],
+                    'renewUrl' => $userSite.'/volunteering/42?u=7&k=abcdef'],
                 ['id' => 43, 'title' => 'Beach clean', 'groupName' => 'Freegle Seaton',
-                    'renewUrl' => $userSite . '/volunteering/43?u=7&k=abcdef'],
+                    'renewUrl' => $userSite.'/volunteering/43?u=7&k=abcdef'],
             ],
             userId: 7,
         );
@@ -57,7 +57,7 @@ class VolunteeringRenewMailTest extends TestCase
     /** The tracked link carries its destination base64'd and percent-encoded. */
     private function encoded(string $path): string
     {
-        return rawurlencode(base64_encode(config('freegle.sites.user') . $path));
+        return rawurlencode(base64_encode(config('freegle.sites.user').$path));
     }
 
     public function test_tracking_row_is_written(): void
@@ -120,14 +120,14 @@ class VolunteeringRenewMailTest extends TestCase
         $userSite = config('freegle.sites.user');
 
         $html = view('emails.mjml.volunteering.renew', [
-            'opportunities'  => [[
+            'opportunities' => [[
                 'id' => 77,
                 'title' => 'Litter-pick helpers needed',
-                'renewUrl' => $userSite . '/volunteering/77?u=3&k=xyz',
+                'renewUrl' => $userSite.'/volunteering/77?u=3&k=xyz',
                 'groupName' => 'Freegle Riverside',
             ]],
-            'email'          => 'owner@example.com',
-            'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'email' => 'owner@example.com',
+            'unsubscribeUrl' => $userSite.'/unsubscribe',
         ])->render();
 
         $this->assertStringContainsString(

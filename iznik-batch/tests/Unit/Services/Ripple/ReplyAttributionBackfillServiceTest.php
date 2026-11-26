@@ -21,7 +21,7 @@ class ReplyAttributionBackfillServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ReplyAttributionBackfillService();
+        $this->service = new ReplyAttributionBackfillService;
     }
 
     private function insertLegacyRow(int $msgid, int $userid, int $wasHome, ?string $repliedAt = null): void

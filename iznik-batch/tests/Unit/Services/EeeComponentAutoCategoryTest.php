@@ -49,7 +49,6 @@ class EeeComponentAutoCategoryTest extends TestCase
         );
     }
 
-
     // ─────────────────────────────────────────────────────────────────────────
     // SECTION: distinct_function_eee — a substantive electrical function
     // alongside a non-electrical basic function.
@@ -68,7 +67,7 @@ class EeeComponentAutoCategoryTest extends TestCase
 
     public static function provideDistinctFunctionCases(): array
     {
-        return array_map(fn($c) => [$c], [
+        return array_map(fn ($c) => [$c], [
             // Powered water/air circulation — fish tanks, ponds, spa baths
             'filter pump', 'filtration pump', 'pond pump', 'tank pump',
             'circulation pump', 'air pump',
@@ -146,18 +145,18 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideMotorAndDriveCases(): array
     {
         return [
-            'motor'              => ['motor'],
-            'drum motor'         => ['drum motor'],
-            'fan motor'          => ['fan motor'],
-            'pump motor'         => ['pump motor'],
-            'compressor'         => ['compressor'],
-            'drum assembly'      => ['drum assembly'],
-            'electric fan'       => ['electric fan'],
-            'electric pump'      => ['electric pump'],
-            'mains powered motor'=> ['mains powered motor'],
-            'extractor fan'      => ['extractor fan'],
-            'motorised drum'     => ['motorised drum'],
-            'motorized belt'     => ['motorized belt'],
+            'motor' => ['motor'],
+            'drum motor' => ['drum motor'],
+            'fan motor' => ['fan motor'],
+            'pump motor' => ['pump motor'],
+            'compressor' => ['compressor'],
+            'drum assembly' => ['drum assembly'],
+            'electric fan' => ['electric fan'],
+            'electric pump' => ['electric pump'],
+            'mains powered motor' => ['mains powered motor'],
+            'extractor fan' => ['extractor fan'],
+            'motorised drum' => ['motorised drum'],
+            'motorized belt' => ['motorized belt'],
         ];
     }
 
@@ -170,24 +169,24 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideHeatingElementCases(): array
     {
         return [
-            'heating element'        => ['heating element'],
-            'heating elements'       => ['heating elements'],
-            'grill element'          => ['grill element'],
-            'magnetron'              => ['magnetron'],
-            'electric oven'          => ['electric oven'],
-            'electric hob'           => ['electric hob'],
-            'electric cooker'        => ['electric cooker'],
-            'ceramic hob'            => ['ceramic hob'],
-            'ceramic glass hob'      => ['ceramic glass hob'],
-            'double oven'            => ['double oven'],
-            'oven cavity'            => ['oven cavity'],
-            'submersible heater'     => ['submersible heater'],
-            'aquarium heater'        => ['aquarium heater'],
-            'heater'                 => ['heater'],
-            'electric kettle'        => ['electric kettle'],
-            'microwave oven'         => ['microwave oven'],
-            'built-in oven'          => ['built-in oven'],
-            'oven (exact)'           => ['oven'],
+            'heating element' => ['heating element'],
+            'heating elements' => ['heating elements'],
+            'grill element' => ['grill element'],
+            'magnetron' => ['magnetron'],
+            'electric oven' => ['electric oven'],
+            'electric hob' => ['electric hob'],
+            'electric cooker' => ['electric cooker'],
+            'ceramic hob' => ['ceramic hob'],
+            'ceramic glass hob' => ['ceramic glass hob'],
+            'double oven' => ['double oven'],
+            'oven cavity' => ['oven cavity'],
+            'submersible heater' => ['submersible heater'],
+            'aquarium heater' => ['aquarium heater'],
+            'heater' => ['heater'],
+            'electric kettle' => ['electric kettle'],
+            'microwave oven' => ['microwave oven'],
+            'built-in oven' => ['built-in oven'],
+            'oven (exact)' => ['oven'],
         ];
     }
 
@@ -200,14 +199,14 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideBatteryAndPowerCases(): array
     {
         return [
-            'rechargeable battery'    => ['rechargeable battery'],
-            'rechargeable lithium'    => ['rechargeable lithium cell'],
-            'internal battery'        => ['internal battery'],
-            'built-in battery'        => ['built-in battery'],
-            'lithium battery'         => ['lithium battery'],
-            'battery pack'            => ['battery pack'],
-            'battery compartment'     => ['battery compartment'],
-            'solar panel'             => ['solar panel'],
+            'rechargeable battery' => ['rechargeable battery'],
+            'rechargeable lithium' => ['rechargeable lithium cell'],
+            'internal battery' => ['internal battery'],
+            'built-in battery' => ['built-in battery'],
+            'lithium battery' => ['lithium battery'],
+            'battery pack' => ['battery pack'],
+            'battery compartment' => ['battery compartment'],
+            'solar panel' => ['solar panel'],
         ];
     }
 
@@ -220,11 +219,11 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function providePrintingAndScanCases(): array
     {
         return [
-            'print head'              => ['print head'],
-            'printing mechanism'      => ['printing mechanism'],
-            'laser print'             => ['laser print module'],
-            'inkjet print mechanism'  => ['inkjet print mechanism'],
-            'flatbed scanner'         => ['flatbed scanner'],
+            'print head' => ['print head'],
+            'printing mechanism' => ['printing mechanism'],
+            'laser print' => ['laser print module'],
+            'inkjet print mechanism' => ['inkjet print mechanism'],
+            'flatbed scanner' => ['flatbed scanner'],
             'automatic document feeder' => ['automatic document feeder'],
         ];
     }
@@ -238,14 +237,14 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideTunerAndSignalCases(): array
     {
         return [
-            'tuner'           => ['tuner'],
-            'signal tuner'    => ['signal tuner'],
-            'freeview tuner'  => ['freeview tuner'],
-            'dvb-t'           => ['dvb-t'],
-            'signal processor'=> ['signal processor'],
-            'set-top box'     => ['set-top box'],
-            'digital media player'    => ['digital media player'],
-            'freeview receiver'       => ['freeview receiver'],
+            'tuner' => ['tuner'],
+            'signal tuner' => ['signal tuner'],
+            'freeview tuner' => ['freeview tuner'],
+            'dvb-t' => ['dvb-t'],
+            'signal processor' => ['signal processor'],
+            'set-top box' => ['set-top box'],
+            'digital media player' => ['digital media player'],
+            'freeview receiver' => ['freeview receiver'],
         ];
     }
 
@@ -258,23 +257,23 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideDisplayAndScreenCases(): array
     {
         return [
-            'lcd display'           => ['lcd display'],
-            'led display'           => ['led display'],
-            'oled screen'           => ['oled screen'],
-            'plasma screen'         => ['plasma screen'],
-            'qled display'          => ['qled display'],
-            'flat panel display'    => ['flat panel display'],
-            'flat-panel display'    => ['flat-panel display'],
-            'computer monitor'      => ['computer monitor'],
-            'lcd monitor'           => ['lcd monitor'],
-            'laptop'                => ['laptop'],
-            'flat-screen television'=> ['flat-screen television'],
-            'crt display'           => ['crt display'],
-            'cathode ray tube'      => ['cathode ray tube'],
-            'desktop computer'      => ['desktop computer'],
-            'desktop tower'         => ['desktop tower'],
-            'display console'       => ['display console'],
-            'tv (exact string)'     => ['tv'],
+            'lcd display' => ['lcd display'],
+            'led display' => ['led display'],
+            'oled screen' => ['oled screen'],
+            'plasma screen' => ['plasma screen'],
+            'qled display' => ['qled display'],
+            'flat panel display' => ['flat panel display'],
+            'flat-panel display' => ['flat-panel display'],
+            'computer monitor' => ['computer monitor'],
+            'lcd monitor' => ['lcd monitor'],
+            'laptop' => ['laptop'],
+            'flat-screen television' => ['flat-screen television'],
+            'crt display' => ['crt display'],
+            'cathode ray tube' => ['cathode ray tube'],
+            'desktop computer' => ['desktop computer'],
+            'desktop tower' => ['desktop tower'],
+            'display console' => ['display console'],
+            'tv (exact string)' => ['tv'],
         ];
     }
 
@@ -287,22 +286,22 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideLightingCases(): array
     {
         return [
-            'led bulb'              => ['led bulb'],
-            'led bulbs'             => ['led bulbs'],
-            'light bulb'            => ['light bulb'],
-            'halogen bulbs'         => ['halogen bulbs'],
-            'incandescent bulb'     => ['incandescent bulb'],
-            'gu10 bulbs'            => ['gu10 bulbs'],
-            'led strip lights'      => ['led strip lights'],
-            'led spotlights'        => ['led spotlights'],
-            'led mood lighting'     => ['led mood lighting'],
-            'lightbulb'             => ['lightbulb'],
-            'cfl bulb'              => ['cfl bulb'],
-            'compact fluorescent bulb'  => ['compact fluorescent bulb'],
-            'fluorescent tube'      => ['fluorescent tube'],
-            'aquarium light'        => ['aquarium light'],
-            'fairy lights'          => ['fairy lights'],
-            'christmas lights'      => ['christmas lights'],
+            'led bulb' => ['led bulb'],
+            'led bulbs' => ['led bulbs'],
+            'light bulb' => ['light bulb'],
+            'halogen bulbs' => ['halogen bulbs'],
+            'incandescent bulb' => ['incandescent bulb'],
+            'gu10 bulbs' => ['gu10 bulbs'],
+            'led strip lights' => ['led strip lights'],
+            'led spotlights' => ['led spotlights'],
+            'led mood lighting' => ['led mood lighting'],
+            'lightbulb' => ['lightbulb'],
+            'cfl bulb' => ['cfl bulb'],
+            'compact fluorescent bulb' => ['compact fluorescent bulb'],
+            'fluorescent tube' => ['fluorescent tube'],
+            'aquarium light' => ['aquarium light'],
+            'fairy lights' => ['fairy lights'],
+            'christmas lights' => ['christmas lights'],
         ];
     }
 
@@ -315,14 +314,14 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideAudioCases(): array
     {
         return [
-            'audio amplifier'     => ['audio amplifier'],
-            'speaker drivers'     => ['speaker drivers'],
-            'speaker cone'        => ['speaker cone'],
-            'voice coil'          => ['voice coil'],
-            'soundbar'            => ['soundbar'],
-            'built-in speakers'   => ['built-in speakers'],
-            'woofer'              => ['woofer'],
-            'subwoofer'           => ['subwoofer'],
+            'audio amplifier' => ['audio amplifier'],
+            'speaker drivers' => ['speaker drivers'],
+            'speaker cone' => ['speaker cone'],
+            'voice coil' => ['voice coil'],
+            'soundbar' => ['soundbar'],
+            'built-in speakers' => ['built-in speakers'],
+            'woofer' => ['woofer'],
+            'subwoofer' => ['subwoofer'],
             'loudspeaker drivers' => ['loudspeaker drivers'],
         ];
     }
@@ -336,13 +335,13 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideOpticalDriveCases(): array
     {
         return [
-            'cd drive'            => ['cd drive'],
-            'dvd drive'           => ['dvd drive'],
-            'blu-ray drive'       => ['blu-ray drive'],
-            'cassette deck'       => ['cassette deck'],
-            'optical disc drive'  => ['optical disc drive'],
-            'hard disk drive'     => ['hard disk drive'],
-            'hdd'                 => ['hdd'],
+            'cd drive' => ['cd drive'],
+            'dvd drive' => ['dvd drive'],
+            'blu-ray drive' => ['blu-ray drive'],
+            'cassette deck' => ['cassette deck'],
+            'optical disc drive' => ['optical disc drive'],
+            'hard disk drive' => ['hard disk drive'],
+            'hdd' => ['hdd'],
         ];
     }
 
@@ -355,14 +354,14 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideComputingCases(): array
     {
         return [
-            'graphics card'       => ['graphics card'],
-            'expansion card'      => ['expansion card'],
-            'webcam'              => ['webcam'],
-            'motherboard'         => ['motherboard'],
-            'camera'              => ['camera'],
-            'image sensor'        => ['image sensor'],
-            'ccd image sensor'    => ['ccd image sensor'],
-            'cmos sensor'         => ['cmos sensor'],
+            'graphics card' => ['graphics card'],
+            'expansion card' => ['expansion card'],
+            'webcam' => ['webcam'],
+            'motherboard' => ['motherboard'],
+            'camera' => ['camera'],
+            'image sensor' => ['image sensor'],
+            'ccd image sensor' => ['ccd image sensor'],
+            'cmos sensor' => ['cmos sensor'],
         ];
     }
 
@@ -375,15 +374,15 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideInputDeviceCases(): array
     {
         return [
-            'keyboard'              => ['keyboard'],
-            'mouse'                 => ['mouse'],
-            'computer mouse'        => ['computer mouse'],
-            'wired keyboard'        => ['wired keyboard'],
-            'wireless keyboard'     => ['wireless keyboard'],
-            'bluetooth mouse'       => ['bluetooth mouse'],
-            'usb receiver dongle'   => ['usb receiver dongle'],
-            'remote control'        => ['remote control'],
-            'tv remote control'     => ['tv remote control'],
+            'keyboard' => ['keyboard'],
+            'mouse' => ['mouse'],
+            'computer mouse' => ['computer mouse'],
+            'wired keyboard' => ['wired keyboard'],
+            'wireless keyboard' => ['wireless keyboard'],
+            'bluetooth mouse' => ['bluetooth mouse'],
+            'usb receiver dongle' => ['usb receiver dongle'],
+            'remote control' => ['remote control'],
+            'tv remote control' => ['tv remote control'],
         ];
     }
 
@@ -400,16 +399,16 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideDisplayAndIndicatorCases(): array
     {
         return [
-            'digital display'         => ['digital display'],
-            'digital clock'           => ['digital clock'],
-            'digital timer'           => ['digital timer'],
-            'display panel'           => ['display panel'],
-            'electronic display'      => ['electronic display'],
-            'indicator panel'         => ['indicator panel'],
-            'indicator light'         => ['indicator light'],
-            'power indicator led'     => ['power indicator led'],
-            'indicator led'           => ['indicator led'],
-            'standby indicator'       => ['standby indicator'],
+            'digital display' => ['digital display'],
+            'digital clock' => ['digital clock'],
+            'digital timer' => ['digital timer'],
+            'display panel' => ['display panel'],
+            'electronic display' => ['electronic display'],
+            'indicator panel' => ['indicator panel'],
+            'indicator light' => ['indicator light'],
+            'power indicator led' => ['power indicator led'],
+            'indicator led' => ['indicator led'],
+            'standby indicator' => ['standby indicator'],
         ];
     }
 
@@ -422,17 +421,17 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideSwitchAndControlCases(): array
     {
         return [
-            'on/off switch'          => ['on/off switch'],
-            'power switch'           => ['power switch'],
-            'power button'           => ['power button'],
-            'start button'           => ['start button'],
-            'eject button'           => ['eject button'],
-            'reset button'           => ['reset button'],
-            'control button'         => ['control button'],
-            'push-button'            => ['push-button'],
-            'foot pedal'             => ['foot pedal'],
-            'safety switch'          => ['safety switch'],
-            'heat selector switch'   => ['heat selector switch'],
+            'on/off switch' => ['on/off switch'],
+            'power switch' => ['power switch'],
+            'power button' => ['power button'],
+            'start button' => ['start button'],
+            'eject button' => ['eject button'],
+            'reset button' => ['reset button'],
+            'control button' => ['control button'],
+            'push-button' => ['push-button'],
+            'foot pedal' => ['foot pedal'],
+            'safety switch' => ['safety switch'],
+            'heat selector switch' => ['heat selector switch'],
         ];
     }
 
@@ -445,23 +444,23 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideCableAndConnectorCases(): array
     {
         return [
-            'power cable'           => ['power cable'],
-            'power cord'            => ['power cord'],
-            'mains power flex'      => ['mains power flex'],
-            'electrical cable'      => ['electrical cable'],
-            'hdmi port'             => ['hdmi port'],
-            'usb port'              => ['usb port'],
-            'usb cable'             => ['usb cable'],
-            '3.5mm jack'            => ['3.5mm jack'],
-            'audio jack'            => ['audio jack'],
-            'scart socket'          => ['scart socket'],
-            'coaxial cable'         => ['coaxial cable'],
-            'charging cable'        => ['charging cable'],
-            'charging port'         => ['charging port'],
-            'power adapter'         => ['power adapter'],
-            'speaker cable'         => ['speaker cable'],
-            'speaker terminals'     => ['speaker terminals'],
-            'rca connector'         => ['rca connector'],
+            'power cable' => ['power cable'],
+            'power cord' => ['power cord'],
+            'mains power flex' => ['mains power flex'],
+            'electrical cable' => ['electrical cable'],
+            'hdmi port' => ['hdmi port'],
+            'usb port' => ['usb port'],
+            'usb cable' => ['usb cable'],
+            '3.5mm jack' => ['3.5mm jack'],
+            'audio jack' => ['audio jack'],
+            'scart socket' => ['scart socket'],
+            'coaxial cable' => ['coaxial cable'],
+            'charging cable' => ['charging cable'],
+            'charging port' => ['charging port'],
+            'power adapter' => ['power adapter'],
+            'speaker cable' => ['speaker cable'],
+            'speaker terminals' => ['speaker terminals'],
+            'rca connector' => ['rca connector'],
         ];
     }
 
@@ -474,12 +473,12 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideLightingSupplementaryCases(): array
     {
         return [
-            'led light'          => ['led light'],
-            'led lighting'       => ['led lighting'],
-            'interior lighting'  => ['interior lighting'],
-            'oven light'         => ['oven light'],
-            'built-in light'     => ['built-in light'],
-            'hood light'         => ['hood light'],
+            'led light' => ['led light'],
+            'led lighting' => ['led lighting'],
+            'interior lighting' => ['interior lighting'],
+            'oven light' => ['oven light'],
+            'built-in light' => ['built-in light'],
+            'hood light' => ['hood light'],
         ];
     }
 
@@ -492,12 +491,12 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideIgnitionAndSensorCases(): array
     {
         return [
-            'electronic ignition'   => ['electronic ignition'],
-            'electric ignition'     => ['electric ignition'],
-            'pulse sensor'          => ['pulse sensor'],
-            'infrared receiver'     => ['infrared receiver'],
-            'infrared emitter'      => ['infrared emitter'],
-            'infrared transmitter'  => ['infrared transmitter'],
+            'electronic ignition' => ['electronic ignition'],
+            'electric ignition' => ['electric ignition'],
+            'pulse sensor' => ['pulse sensor'],
+            'infrared receiver' => ['infrared receiver'],
+            'infrared emitter' => ['infrared emitter'],
+            'infrared transmitter' => ['infrared transmitter'],
         ];
     }
 
@@ -514,37 +513,37 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideNonElectricalCases(): array
     {
         return [
-            'drain hose'            => ['drain hose'],
-            'door seal'             => ['door seal'],
-            'glass turntable'       => ['glass turntable'],
-            'turntable plate'       => ['turntable plate'],
-            'detergent drawer'      => ['detergent drawer'],
-            'door lock mechanism'   => ['door lock mechanism'],
-            'door interlock mechanism'=> ['door interlock mechanism'],
-            'door handle'           => ['door handle'],
-            'door hinge'            => ['door hinge'],
-            'mechanical timer'      => ['mechanical timer'],
-            'rotary control knob'   => ['rotary control knob'],
-            'warning label'         => ['warning label'],
-            'speaker grille'        => ['speaker grille'],
-            'air vent'              => ['air vent'],
-            'ventilation grille'    => ['ventilation grille'],
-            'lamp shade'            => ['lamp shade'],
-            'viewing window'        => ['viewing window'],
-            'volume knob'           => ['volume knob'],
-            'filter'                => ['filter'],
-            'gas burners'           => ['gas burners'],
-            'gas oven'              => ['gas oven'],
+            'drain hose' => ['drain hose'],
+            'door seal' => ['door seal'],
+            'glass turntable' => ['glass turntable'],
+            'turntable plate' => ['turntable plate'],
+            'detergent drawer' => ['detergent drawer'],
+            'door lock mechanism' => ['door lock mechanism'],
+            'door interlock mechanism' => ['door interlock mechanism'],
+            'door handle' => ['door handle'],
+            'door hinge' => ['door hinge'],
+            'mechanical timer' => ['mechanical timer'],
+            'rotary control knob' => ['rotary control knob'],
+            'warning label' => ['warning label'],
+            'speaker grille' => ['speaker grille'],
+            'air vent' => ['air vent'],
+            'ventilation grille' => ['ventilation grille'],
+            'lamp shade' => ['lamp shade'],
+            'viewing window' => ['viewing window'],
+            'volume knob' => ['volume knob'],
+            'filter' => ['filter'],
+            'gas burners' => ['gas burners'],
+            'gas oven' => ['gas oven'],
             'internal combustion engine' => ['internal combustion engine'],
-            'camera lens'           => ['camera lens'],
-            'dust canister'         => ['dust canister'],
-            'extension wand'        => ['extension wand'],
-            'fuel tank'             => ['fuel tank'],
-            'cartridge'             => ['cartridge'],
-            'gooseneck arm'         => ['gooseneck arm'],
-            'energy rating label'   => ['energy rating label'],
-            'oven doors'            => ['oven doors'],
-            'drum interior'         => ['drum interior'],
+            'camera lens' => ['camera lens'],
+            'dust canister' => ['dust canister'],
+            'extension wand' => ['extension wand'],
+            'fuel tank' => ['fuel tank'],
+            'cartridge' => ['cartridge'],
+            'gooseneck arm' => ['gooseneck arm'],
+            'energy rating label' => ['energy rating label'],
+            'oven doors' => ['oven doors'],
+            'drum interior' => ['drum interior'],
         ];
     }
 
@@ -561,13 +560,13 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideUnknownCases(): array
     {
         return [
-            'empty string'              => [''],
-            'whitespace only'           => ['   '],
-            'arbitrary text'            => ['some random component xyz'],
-            'numbers only'              => ['12345'],
-            'gibberish'                 => ['qwerty asdf zxcv'],
-            'partial word (no match)'   => ['mot'],   // 'motor' needs word boundary
-            'compress (no match)'       => ['compress'],  // not 'compressor'
+            'empty string' => [''],
+            'whitespace only' => ['   '],
+            'arbitrary text' => ['some random component xyz'],
+            'numbers only' => ['12345'],
+            'gibberish' => ['qwerty asdf zxcv'],
+            'partial word (no match)' => ['mot'],   // 'motor' needs word boundary
+            'compress (no match)' => ['compress'],  // not 'compressor'
         ];
     }
 
@@ -584,14 +583,14 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideCaseInsensitiveCases(): array
     {
         return [
-            'MOTOR uppercase'           => ['MOTOR', 'primary_eee'],
-            'Motor mixed'               => ['Motor', 'primary_eee'],
-            'LCD DISPLAY uppercase'     => ['LCD DISPLAY', 'primary_eee'],
-            'Lcd Display title case'    => ['Lcd Display', 'primary_eee'],
-            'HEATING ELEMENT upper'     => ['HEATING ELEMENT', 'primary_eee'],
-            'POWER CABLE upper'         => ['POWER CABLE', 'supplementary_eee'],
-            'DRAIN HOSE upper'          => ['DRAIN HOSE', 'non_electrical'],
-            'DOOR SEAL upper'           => ['DOOR SEAL', 'non_electrical'],
+            'MOTOR uppercase' => ['MOTOR', 'primary_eee'],
+            'Motor mixed' => ['Motor', 'primary_eee'],
+            'LCD DISPLAY uppercase' => ['LCD DISPLAY', 'primary_eee'],
+            'Lcd Display title case' => ['Lcd Display', 'primary_eee'],
+            'HEATING ELEMENT upper' => ['HEATING ELEMENT', 'primary_eee'],
+            'POWER CABLE upper' => ['POWER CABLE', 'supplementary_eee'],
+            'DRAIN HOSE upper' => ['DRAIN HOSE', 'non_electrical'],
+            'DOOR SEAL upper' => ['DOOR SEAL', 'non_electrical'],
         ];
     }
 
@@ -608,11 +607,11 @@ class EeeComponentAutoCategoryTest extends TestCase
     public static function provideWhitespaceCases(): array
     {
         return [
-            'leading spaces motor'       => ['  motor', 'primary_eee'],
-            'trailing spaces motor'      => ['motor  ', 'primary_eee'],
-            'both spaces motor'          => ['  motor  ', 'primary_eee'],
-            'leading spaces drain hose'  => ['  drain hose  ', 'non_electrical'],
-            'tab-padded power cable'     => ["\tpower cable\t", 'supplementary_eee'],
+            'leading spaces motor' => ['  motor', 'primary_eee'],
+            'trailing spaces motor' => ['motor  ', 'primary_eee'],
+            'both spaces motor' => ['  motor  ', 'primary_eee'],
+            'leading spaces drain hose' => ['  drain hose  ', 'non_electrical'],
+            'tab-padded power cable' => ["\tpower cable\t", 'supplementary_eee'],
         ];
     }
 

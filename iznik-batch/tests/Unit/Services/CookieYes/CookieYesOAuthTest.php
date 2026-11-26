@@ -24,7 +24,7 @@ class CookieYesOAuthTest extends TestCase
         parent::setUp();
         config(['freegle.cookieyes.base_url' => self::BASE]);
         DB::table('config')->whereIn('key', [CookieYesTokenStore::KEY, CookieYesTokenStore::PENDING_KEY])->delete();
-        $this->store = new CookieYesTokenStore();
+        $this->store = new CookieYesTokenStore;
         $this->oauth = new CookieYesOAuth($this->store);
     }
 
@@ -42,9 +42,9 @@ class CookieYesOAuthTest extends TestCase
             if (str_ends_with($url, '/.well-known/oauth-authorization-server')) {
                 return Http::response([
                     'issuer' => self::BASE,
-                    'authorization_endpoint' => self::BASE . '/oauth2/auth',
-                    'token_endpoint' => self::BASE . '/oauth2/token',
-                    'registration_endpoint' => self::BASE . '/oauth2/register',
+                    'authorization_endpoint' => self::BASE.'/oauth2/auth',
+                    'token_endpoint' => self::BASE.'/oauth2/token',
+                    'registration_endpoint' => self::BASE.'/oauth2/register',
                 ]);
             }
 
@@ -56,7 +56,7 @@ class CookieYesOAuthTest extends TestCase
                 return $token($request);
             }
 
-            return Http::response('unexpected ' . $url, 500);
+            return Http::response('unexpected '.$url, 500);
         });
     }
 
@@ -81,7 +81,7 @@ class CookieYesOAuthTest extends TestCase
     {
         $this->store->saveCredentials(array_merge([
             'client_id' => 'client-123',
-            'token_endpoint' => self::BASE . '/oauth2/token',
+            'token_endpoint' => self::BASE.'/oauth2/token',
             'refresh_token' => 'refresh-old',
             'access_token' => 'access-old',
             'access_expires_at' => now()->subMinute()->timestamp,
@@ -94,7 +94,7 @@ class CookieYesOAuthTest extends TestCase
 
         $url = $this->oauth->beginLogin();
 
-        $this->assertStringStartsWith(self::BASE . '/oauth2/auth?', $url);
+        $this->assertStringStartsWith(self::BASE.'/oauth2/auth?', $url);
         $params = $this->query($url);
         $pending = $this->store->pending();
 
@@ -102,7 +102,7 @@ class CookieYesOAuthTest extends TestCase
         $this->assertSame('client-123', $params['client_id']);
         $this->assertSame(CookieYesOAuth::REDIRECT_URI, $params['redirect_uri']);
         $this->assertSame('S256', $params['code_challenge_method']);
-        $this->assertSame(self::BASE . '/mcp', $params['resource']);
+        $this->assertSame(self::BASE.'/mcp', $params['resource']);
         $this->assertStringContainsString('offline_access', $params['scope']);
         $this->assertSame($pending['state'], $params['state']);
         $this->assertSame(
@@ -125,7 +125,7 @@ class CookieYesOAuthTest extends TestCase
         $this->oauth->beginLogin();
         $pending = $this->store->pending();
 
-        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?code=abc&state=' . $pending['state']);
+        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?code=abc&state='.$pending['state']);
 
         Http::assertSent(function (Request $request) use ($pending) {
             return str_ends_with($request->url(), '/oauth2/token')
@@ -134,7 +134,7 @@ class CookieYesOAuthTest extends TestCase
                 && $request['code_verifier'] === $pending['verifier']
                 && $request['client_id'] === 'client-123'
                 && $request['redirect_uri'] === CookieYesOAuth::REDIRECT_URI
-                && $request['resource'] === self::BASE . '/mcp';
+                && $request['resource'] === self::BASE.'/mcp';
         });
 
         $this->assertNull($this->store->pending());
@@ -155,7 +155,7 @@ class CookieYesOAuthTest extends TestCase
         $this->oauth->beginLogin();
 
         try {
-            $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?code=abc&state=forged');
+            $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?code=abc&state=forged');
             $this->fail('Expected a state mismatch to be rejected');
         } catch (CookieYesException $e) {
             $this->assertStringContainsString('state', $e->getMessage());
@@ -174,14 +174,14 @@ class CookieYesOAuthTest extends TestCase
 
         $this->expectException(CookieYesException::class);
         $this->expectExceptionMessage('expired');
-        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?code=abc&state=' . $state);
+        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?code=abc&state='.$state);
     }
 
     public function test_complete_login_without_a_pending_login_says_to_start_one(): void
     {
         $this->expectException(CookieYesException::class);
         $this->expectExceptionMessage('cookieyes:authorize');
-        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?code=abc&state=x');
+        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?code=abc&state=x');
     }
 
     public function test_complete_login_reports_a_refused_consent(): void
@@ -192,7 +192,7 @@ class CookieYesOAuthTest extends TestCase
 
         $this->expectException(CookieYesException::class);
         $this->expectExceptionMessage('access_denied');
-        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?error=access_denied&state=' . $state);
+        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?error=access_denied&state='.$state);
     }
 
     public function test_complete_login_fails_when_no_refresh_token_is_issued(): void
@@ -204,7 +204,7 @@ class CookieYesOAuthTest extends TestCase
 
         $this->expectException(CookieYesException::class);
         $this->expectExceptionMessage('refresh token');
-        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI . '?code=abc&state=' . $state);
+        $this->oauth->completeLogin(CookieYesOAuth::REDIRECT_URI.'?code=abc&state='.$state);
     }
 
     public function test_an_expired_access_token_is_refreshed_and_the_rotated_refresh_token_saved(): void
@@ -218,7 +218,7 @@ class CookieYesOAuthTest extends TestCase
             return $request['grant_type'] === 'refresh_token'
                 && $request['refresh_token'] === 'refresh-old'
                 && $request['client_id'] === 'client-123'
-                && $request['resource'] === self::BASE . '/mcp';
+                && $request['resource'] === self::BASE.'/mcp';
         });
         $this->assertSame('refresh-new', $this->store->credentials()['refresh_token']);
     }

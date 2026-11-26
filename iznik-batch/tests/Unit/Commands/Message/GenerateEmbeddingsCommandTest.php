@@ -91,7 +91,7 @@ class GenerateEmbeddingsCommandTest extends TestCase
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
              VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
             [$message->id, $group->id, 'Offer', now(),
-             sprintf('POINT(%F %F)', $group->lng, $group->lat)]
+                sprintf('POINT(%F %F)', $group->lng, $group->lat)]
         );
 
         return (int) $message->id;

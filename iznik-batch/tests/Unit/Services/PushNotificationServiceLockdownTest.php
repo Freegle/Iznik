@@ -39,8 +39,8 @@ class PushNotificationServiceLockdownTest extends TestCase
         // The cache is a static, process-wide property (section 11.6), so a row cached
         // by an earlier test class in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->service = new PushNotificationService();
-        $this->lockdown = new LockdownService();
+        $this->service = new PushNotificationService;
+        $this->lockdown = new LockdownService;
     }
 
     private function pushCounter(): int
@@ -54,7 +54,8 @@ class PushNotificationServiceLockdownTest extends TestCase
 
     private function fakeMessaging(): object
     {
-        $fake = new class {
+        $fake = new class
+        {
             public array $sent = [];
 
             public function validate($message): void {}

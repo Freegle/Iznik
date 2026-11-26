@@ -35,7 +35,7 @@ class DiscourseClientTest extends TestCase
             ->push(['errors' => ['Too many requests']], 429)
             ->push(['single_sign_on_record' => ['external_id' => '12345']], 200);
 
-        $user = (new DiscourseClient())->getUser(1, 'alice');
+        $user = (new DiscourseClient)->getUser(1, 'alice');
 
         $this->assertSame('12345', $user['single_sign_on_record']['external_id']);
         Http::assertSentCount(3);
@@ -48,7 +48,7 @@ class DiscourseClientTest extends TestCase
             ->push(['errors' => ['You have performed this action too many times']], 200)
             ->push(['single_sign_on_record' => ['external_id' => '7']], 200);
 
-        $user = (new DiscourseClient())->getUser(7, 'bob');
+        $user = (new DiscourseClient)->getUser(7, 'bob');
 
         $this->assertSame('7', $user['single_sign_on_record']['external_id']);
         Http::assertSentCount(2);
@@ -61,7 +61,7 @@ class DiscourseClientTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/max retries/i');
 
-        (new DiscourseClient())->getUser(1, 'alice');
+        (new DiscourseClient)->getUser(1, 'alice');
     }
 
     public function test_get_user_throws_on_non_rate_limit_error_body(): void
@@ -72,14 +72,14 @@ class DiscourseClientTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/could not be found/');
 
-        (new DiscourseClient())->getUser(99, 'ghost');
+        (new DiscourseClient)->getUser(99, 'ghost');
     }
 
     public function test_get_all_users_returns_members(): void
     {
         Http::fake(fn () => Http::response(['members' => [['id' => 1, 'username' => 'a']]], 200));
 
-        $members = (new DiscourseClient())->getAllUsers();
+        $members = (new DiscourseClient)->getAllUsers();
 
         $this->assertCount(1, $members);
         $this->assertSame('a', $members[0]['username']);
@@ -89,14 +89,14 @@ class DiscourseClientTest extends TestCase
     {
         Http::fake(fn () => Http::response(['email' => 'mod@example.com'], 200));
 
-        $this->assertSame('mod@example.com', (new DiscourseClient())->getUserEmail('alice'));
+        $this->assertSame('mod@example.com', (new DiscourseClient)->getUserEmail('alice'));
     }
 
     public function test_find_category_by_slug_returns_category(): void
     {
         Http::fake(fn () => Http::response(['category' => ['id' => 18, 'name' => 'AGM 2026']], 200));
 
-        $category = (new DiscourseClient())->findCategoryBySlug('agm-2026');
+        $category = (new DiscourseClient)->findCategoryBySlug('agm-2026');
 
         $this->assertSame(18, $category['id']);
     }
@@ -107,7 +107,7 @@ class DiscourseClientTest extends TestCase
         // (that is how it decides to create one), not an error to throw on.
         Http::fake(fn () => Http::response(['errors' => ['The requested URL or resource could not be found.']], 404));
 
-        $this->assertNull((new DiscourseClient())->findCategoryBySlug('agm-2099'));
+        $this->assertNull((new DiscourseClient)->findCategoryBySlug('agm-2099'));
     }
 
     public function test_update_site_setting_sends_singular_update_existing_user(): void
@@ -118,7 +118,7 @@ class DiscourseClientTest extends TestCase
         // assertion exists to prevent.
         Http::fake(fn () => Http::response('', 204));
 
-        (new DiscourseClient())->updateSiteSetting('default_categories_watching', '7|18', true);
+        (new DiscourseClient)->updateSiteSetting('default_categories_watching', '7|18', true);
 
         Http::assertSent(function ($request) {
             return $request->method() === 'PUT'
@@ -132,9 +132,9 @@ class DiscourseClientTest extends TestCase
     {
         Http::fake(fn () => Http::response('', 204));
 
-        (new DiscourseClient())->updateSiteSetting('default_categories_watching', '7', false);
+        (new DiscourseClient)->updateSiteSetting('default_categories_watching', '7', false);
 
-        Http::assertSent(fn ($request) => !isset($request['update_existing_user']));
+        Http::assertSent(fn ($request) => ! isset($request['update_existing_user']));
     }
 
     public function test_write_accepts_204_with_empty_body(): void
@@ -143,7 +143,7 @@ class DiscourseClientTest extends TestCase
         // non-JSON body as a failure would make every successful write throw.
         Http::fake(fn () => Http::response('', 204));
 
-        $this->assertSame([], (new DiscourseClient())->updateSiteSetting('default_categories_watching', '7', false));
+        $this->assertSame([], (new DiscourseClient)->updateSiteSetting('default_categories_watching', '7', false));
     }
 
     public function test_get_with_an_empty_body_still_throws(): void
@@ -156,7 +156,7 @@ class DiscourseClientTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessageMatches('/unexpected non-JSON/');
 
-        (new DiscourseClient())->getUserEmail('alice');
+        (new DiscourseClient)->getUserEmail('alice');
     }
 
     public function test_write_retries_on_rate_limit(): void
@@ -166,7 +166,7 @@ class DiscourseClientTest extends TestCase
             ->push(['errors' => ['You’ve performed this action too many times.']], 429)
             ->push('', 204);
 
-        (new DiscourseClient())->updateSiteSetting('default_categories_watching', '7', false);
+        (new DiscourseClient)->updateSiteSetting('default_categories_watching', '7', false);
 
         Http::assertSentCount(2);
     }
@@ -175,7 +175,7 @@ class DiscourseClientTest extends TestCase
     {
         Http::fake(fn () => Http::response(['category' => ['id' => 42]], 200));
 
-        $category = (new DiscourseClient())->createCategory([
+        $category = (new DiscourseClient)->createCategory([
             'name' => 'AGM 2027',
             'slug' => 'agm-2027',
             'permissions' => ['everyone' => 2, 'staff' => 1],
@@ -203,6 +203,6 @@ class DiscourseClientTest extends TestCase
             ],
         ], 200));
 
-        $this->assertSame('7|18', (new DiscourseClient())->getSiteSetting('default_categories_watching'));
+        $this->assertSame('7|18', (new DiscourseClient)->getSiteSetting('default_categories_watching'));
     }
 }

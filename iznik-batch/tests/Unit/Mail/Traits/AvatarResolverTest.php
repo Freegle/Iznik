@@ -23,7 +23,7 @@ class AvatarResolverTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->host = new AvatarResolverHost();
+        $this->host = new AvatarResolverHost;
     }
 
     public function test_returns_absolute_url_when_no_avatar_server_configured(): void
@@ -34,7 +34,7 @@ class AvatarResolverTest extends TestCase
         config(['freegle.avatar_server_url' => '']);
         config(['freegle.sites.user' => 'https://www.ilovefreegle.org']);
 
-        $user = new User();
+        $user = new User;
         $user->fullname = 'bolarinb';
 
         $url = $this->host->resolveAvatarUrl($user, 40);
@@ -48,7 +48,7 @@ class AvatarResolverTest extends TestCase
     {
         config(['freegle.avatar_server_url' => 'https://avatars.example.com/api']);
 
-        $user = new User();
+        $user = new User;
         $user->fullname = 'someone';
 
         $url = $this->host->resolveAvatarUrl($user, 48);
@@ -63,7 +63,7 @@ class AvatarResolverTest extends TestCase
         config(['freegle.avatar_server_url' => '']);
         config(['freegle.sites.user' => 'https://www.ilovefreegle.org']);
 
-        $user = new User();
+        $user = new User;
         $user->fullname = 'first last';
 
         $url = $this->host->resolveAvatarUrl($user, 40);
@@ -113,7 +113,7 @@ class AvatarResolverTest extends TestCase
         // default), and a no-photo user must resolve to the avatar server.
         $this->assertNotEmpty(config('freegle.avatar_server_url'));
 
-        $user = new User();
+        $user = new User;
         $user->fullname = 'craigj1385';
         $url = $this->host->resolveAvatarUrl($user, 36);
 

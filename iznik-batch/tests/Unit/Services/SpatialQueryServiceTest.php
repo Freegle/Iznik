@@ -34,7 +34,7 @@ class SpatialQueryServiceTest extends TestCase
             ], 200),
         ]);
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         // Order from the response is preserved, not re-sorted.
         $this->assertSame([30, 10, 20], $ids);
@@ -46,7 +46,7 @@ class SpatialQueryServiceTest extends TestCase
             '*' => Http::response(['results' => [['id' => '42']]], 200),
         ]);
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([42], $ids);
         $this->assertIsInt($ids[0]);
@@ -58,7 +58,7 @@ class SpatialQueryServiceTest extends TestCase
             '*' => Http::response(['other' => 'field'], 200),
         ]);
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -72,7 +72,7 @@ class SpatialQueryServiceTest extends TestCase
             '*' => Http::response(['results' => null], 200),
         ]);
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -83,7 +83,7 @@ class SpatialQueryServiceTest extends TestCase
             '*' => Http::response(['results' => []], 200),
         ]);
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -101,7 +101,7 @@ class SpatialQueryServiceTest extends TestCase
                 ['lat' => 51.5, 'lng' => -0.1]
             );
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -116,7 +116,7 @@ class SpatialQueryServiceTest extends TestCase
             ->once()
             ->with($this->stringContains('HTTP 404'), \Mockery::any());
 
-        $ids = (new SpatialQueryService())->nearestIds('jobs', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('jobs', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -134,7 +134,7 @@ class SpatialQueryServiceTest extends TestCase
                 ['lat' => 51.5, 'lng' => -0.1]
             );
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -149,7 +149,7 @@ class SpatialQueryServiceTest extends TestCase
             ->once()
             ->with($this->stringContains('unexpected failure'), \Mockery::any());
 
-        $ids = (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        $ids = (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         $this->assertSame([], $ids);
     }
@@ -158,7 +158,7 @@ class SpatialQueryServiceTest extends TestCase
     {
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('locations', 51.5074, -0.1278);
+        (new SpatialQueryService)->nearestIds('locations', 51.5074, -0.1278);
 
         Http::assertSent(function ($request) {
             $params = $this->queryParams($request);
@@ -168,7 +168,7 @@ class SpatialQueryServiceTest extends TestCase
                 && $params['lat'] === '51.5074'
                 && $params['lng'] === '-0.1278'
                 && $params['limit'] === '1'
-                && !array_key_exists('type', $params);
+                && ! array_key_exists('type', $params);
         });
     }
 
@@ -183,7 +183,7 @@ class SpatialQueryServiceTest extends TestCase
     {
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1, 5);
+        (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1, 5);
 
         Http::assertSent(function ($request) {
             return ($this->queryParams($request)['limit'] ?? null) === '5';
@@ -194,7 +194,7 @@ class SpatialQueryServiceTest extends TestCase
     {
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1, 1, 'freegle');
+        (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1, 1, 'freegle');
 
         Http::assertSent(function ($request) {
             return ($this->queryParams($request)['type'] ?? null) === 'freegle';
@@ -205,10 +205,10 @@ class SpatialQueryServiceTest extends TestCase
     {
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         Http::assertSent(function ($request) {
-            return !array_key_exists('type', $this->queryParams($request));
+            return ! array_key_exists('type', $this->queryParams($request));
         });
     }
 
@@ -216,7 +216,7 @@ class SpatialQueryServiceTest extends TestCase
     {
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('jobs', 51.5, -0.1);
+        (new SpatialQueryService)->nearestIds('jobs', 51.5, -0.1);
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), '/v1/jobs/knn');
@@ -229,10 +229,10 @@ class SpatialQueryServiceTest extends TestCase
 
         Http::fake(['*' => Http::response(['results' => []], 200)]);
 
-        (new SpatialQueryService())->nearestIds('locations', 51.5, -0.1);
+        (new SpatialQueryService)->nearestIds('locations', 51.5, -0.1);
 
         Http::assertSent(function ($request) {
-            return !str_contains($request->url(), 'test//v1');
+            return ! str_contains($request->url(), 'test//v1');
         });
     }
 }

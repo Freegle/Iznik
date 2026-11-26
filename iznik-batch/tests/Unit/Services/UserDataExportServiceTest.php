@@ -13,7 +13,7 @@ class UserDataExportServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new UserDataExportService();
+        $this->service = new UserDataExportService;
     }
 
     // --- Basic processing ---
@@ -176,7 +176,7 @@ class UserDataExportServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        $postcode = 'ZP' . random_int(10, 99) . ' ' . random_int(1, 9) . 'ZZ';
+        $postcode = 'ZP'.random_int(10, 99).' '.random_int(1, 9).'ZZ';
         $postcodeId = DB::table('locations')->insertGetId([
             'name' => $postcode,
             'type' => 'Postcode',
@@ -184,7 +184,7 @@ class UserDataExportServiceTest extends TestCase
             'osm_amenity' => 0,
             'osm_shop' => 0,
         ]);
-        $street = 'Export Road ' . uniqid();
+        $street = 'Export Road '.uniqid();
         $pafId = DB::table('paf_addresses')->insertGetId([
             'postcodeid' => $postcodeId,
             'udprn' => random_int(900000000, 999999999),

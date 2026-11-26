@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services\WorkerPool;
 
 use App\Services\WorkerPool\BoundedPool;
-use App\Services\WorkerPool\PoolCapacityException;
 use App\Services\WorkerPool\PoolTimeoutException;
 use Illuminate\Support\Facades\Redis;
 use Tests\TestCase;
@@ -17,7 +16,7 @@ class BoundedPoolTest extends TestCase
         parent::setUp();
 
         // Use unique pool name for test isolation
-        $this->testPoolName = 'test_' . uniqid('', true);
+        $this->testPoolName = 'test_'.uniqid('', true);
 
         // Ensure test pool is clean before each test
         $this->cleanupTestPool();

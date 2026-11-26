@@ -20,7 +20,7 @@ class UserForgetTest extends TestCase
         $user->forget('Test GDPR request');
 
         $updated = DB::table('users')->where('id', $user->id)->first();
-        $this->assertEquals('Deleted User #' . $user->id, $updated->fullname);
+        $this->assertEquals('Deleted User #'.$user->id, $updated->fullname);
     }
 
     public function test_forget_clears_personal_attributes(): void
@@ -202,7 +202,7 @@ class UserForgetTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        $user->forget('TN account removed', TRUE);
+        $user->forget('TN account removed', true);
 
         $this->assertDatabaseMissing('users_deletions', ['userid' => $user->id]);
     }

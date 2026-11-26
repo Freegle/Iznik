@@ -15,7 +15,7 @@ class RippleTuneServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new RippleTuneService();
+        $this->service = new RippleTuneService;
         DB::statement('DELETE FROM rippling_hotspots');
         DB::statement('DELETE FROM rippling_live_metrics');
         DB::statement('DELETE FROM rippling_params');

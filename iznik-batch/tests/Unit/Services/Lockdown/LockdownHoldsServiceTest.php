@@ -31,7 +31,7 @@ class LockdownHoldsServiceTest extends TestCase
         // The cache is a static, process-wide property (section 11.6), so a row cached
         // by an earlier test class in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->lockdown = new LockdownService();
+        $this->lockdown = new LockdownService;
         $this->holds = new LockdownHoldsService($this->lockdown);
     }
 
@@ -278,7 +278,8 @@ class LockdownHoldsServiceTest extends TestCase
 
         // Holds ChitChat again after the first batch, standing in for Support pressing
         // Hold again while the release is under way.
-        $lockdown = new class extends LockdownService {
+        $lockdown = new class extends LockdownService
+        {
             public int $calls = 0;
 
             public function held(string $surface): bool

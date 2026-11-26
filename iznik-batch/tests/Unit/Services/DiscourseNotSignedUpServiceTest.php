@@ -2,8 +2,8 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Membership;
 use App\Mail\Housekeeper\DiscourseReportMail;
+use App\Models\Membership;
 use App\Services\DiscourseClient;
 use App\Services\DiscourseNotSignedUpService;
 use Carbon\Carbon;

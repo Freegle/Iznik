@@ -10,10 +10,10 @@ class EngageMissingMailTest extends TestCase
     private function viewData(): array
     {
         return [
-            'name'           => 'Alice',
-            'email'          => 'alice@example.com',
-            'engageId'       => 42,
-            'userSite'       => 'https://www.ilovefreegle.org',
+            'name' => 'Alice',
+            'email' => 'alice@example.com',
+            'engageId' => 42,
+            'userSite' => 'https://www.ilovefreegle.org',
             'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe/abc',
         ];
     }
@@ -32,11 +32,11 @@ class EngageMissingMailTest extends TestCase
     public function test_can_be_constructed_and_built(): void
     {
         $mail = new EngageMail(
-            recipientName:  'Alice',
+            recipientName: 'Alice',
             recipientEmail: 'alice@example.com',
-            emailSubject:   'We miss you on Freegle!',
-            template:       'missing',
-            engageId:       42,
+            emailSubject: 'We miss you on Freegle!',
+            template: 'missing',
+            engageId: 42,
             unsubscribeUrl: 'https://www.ilovefreegle.org/unsubscribe/abc',
         );
 

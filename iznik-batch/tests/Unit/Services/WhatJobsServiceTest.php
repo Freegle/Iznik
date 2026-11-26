@@ -30,7 +30,8 @@ class WhatJobsServiceTest extends TestCase
      */
     private function makeServiceWithFixedGeocode(?array $geo): WhatJobsService
     {
-        return new class($geo) extends WhatJobsService {
+        return new class($geo) extends WhatJobsService
+        {
             public function __construct(private readonly ?array $fixedGeo) {}
 
             public function geocodeCityState(
@@ -50,6 +51,7 @@ class WhatJobsServiceTest extends TestCase
     {
         $path = tempnam(sys_get_temp_dir(), 'wj_test_');
         file_put_contents($path, $xml);
+
         return $path;
     }
 
@@ -73,42 +75,45 @@ class WhatJobsServiceTest extends TestCase
                 ? $this->format1Item($j)
                 : $this->format2Item($j);
         }
+
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-             . "<source>\n<jobs>\n{$items}</jobs>\n</source>\n";
+             ."<source>\n<jobs>\n{$items}</jobs>\n</source>\n";
     }
 
     private function format2Item(array $j): string
     {
         $item = "<job>\n";
         foreach ($j as $k => $v) {
-            $item .= '  <' . $k . '>' . htmlspecialchars((string) $v, ENT_XML1, 'UTF-8') . '</' . $k . ">\n";
+            $item .= '  <'.$k.'>'.htmlspecialchars((string) $v, ENT_XML1, 'UTF-8').'</'.$k.">\n";
         }
         $item .= "</job>\n";
+
         return $item;
     }
 
     private function format1Item(array $j): string
     {
         $e = fn (string $v) => htmlspecialchars($v, ENT_XML1, 'UTF-8');
+
         return "<job>\n"
-             . '  <id>' . $e((string) ($j['id'] ?? '')) . "</id>\n"
-             . '  <title>' . $e((string) ($j['title'] ?? '')) . "</title>\n"
-             . '  <custom><CPC>' . $e((string) ($j['cpc'] ?? '0.50')) . "</CPC></custom>\n"
-             . (isset($j['timePosted'])
-                 ? '  <timePosted>' . $e((string) $j['timePosted']) . "</timePosted>\n"
+             .'  <id>'.$e((string) ($j['id'] ?? ''))."</id>\n"
+             .'  <title>'.$e((string) ($j['title'] ?? ''))."</title>\n"
+             .'  <custom><CPC>'.$e((string) ($j['cpc'] ?? '0.50'))."</CPC></custom>\n"
+             .(isset($j['timePosted'])
+                 ? '  <timePosted>'.$e((string) $j['timePosted'])."</timePosted>\n"
                  : '')
-             . "  <locations><location>\n"
-             . '    <city>' . $e((string) ($j['city'] ?? '')) . "</city>\n"
-             . '    <state>' . $e((string) ($j['state'] ?? '')) . "</state>\n"
-             . '    <country>' . $e((string) ($j['country'] ?? '')) . "</country>\n"
-             . '    <zip>' . $e((string) ($j['zip'] ?? '')) . "</zip>\n"
-             . '    <location>' . $e((string) ($j['location_name'] ?? '')) . "</location>\n"
-             . "  </location></locations>\n"
-             . '  <urlDeeplink>' . $e((string) ($j['url'] ?? '')) . "</urlDeeplink>\n"
-             . '  <description>' . $e((string) ($j['body'] ?? '')) . "</description>\n"
-             . '  <company><name>' . $e((string) ($j['company'] ?? '')) . "</name></company>\n"
-             . '  <category>' . $e((string) ($j['category'] ?? '')) . "</category>\n"
-             . "</job>\n";
+             ."  <locations><location>\n"
+             .'    <city>'.$e((string) ($j['city'] ?? ''))."</city>\n"
+             .'    <state>'.$e((string) ($j['state'] ?? ''))."</state>\n"
+             .'    <country>'.$e((string) ($j['country'] ?? ''))."</country>\n"
+             .'    <zip>'.$e((string) ($j['zip'] ?? ''))."</zip>\n"
+             .'    <location>'.$e((string) ($j['location_name'] ?? ''))."</location>\n"
+             ."  </location></locations>\n"
+             .'  <urlDeeplink>'.$e((string) ($j['url'] ?? ''))."</urlDeeplink>\n"
+             .'  <description>'.$e((string) ($j['body'] ?? ''))."</description>\n"
+             .'  <company><name>'.$e((string) ($j['company'] ?? ''))."</name></company>\n"
+             .'  <category>'.$e((string) ($j['category'] ?? ''))."</category>\n"
+             ."</job>\n";
     }
 
     // =========================================================================
@@ -159,19 +164,19 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_canonical_null_returns_null(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertNull($svc->canonicalJobTitle(null));
     }
 
     public function test_canonical_empty_string_returns_null(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertNull($svc->canonicalJobTitle(''));
     }
 
     public function test_canonical_no_matching_title_returns_null(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertNull($svc->canonicalJobTitle('Quantum Entanglement Specialist'));
     }
 
@@ -182,26 +187,26 @@ class WhatJobsServiceTest extends TestCase
     public static function exactCanonicalProvider(): array
     {
         return [
-            'exact title unchanged'           => ['Software Engineer',     'Software Engineer'],
-            'lowercase input'                  => ['software engineer',     'Software Engineer'],
-            'uppercase input'                  => ['SOFTWARE ENGINEER',     'Software Engineer'],
-            'mixed case'                       => ['sOfTwArE eNgInEeR',     'Software Engineer'],
-            'nurse'                            => ['Nurse',                  'Nurse'],
-            'chef'                             => ['Chef',                   'Chef'],
-            'accountant'                       => ['Accountant',             'Accountant'],
-            'team leader'                      => ['Team Leader',            'Team Leader'],
-            'project manager'                  => ['Project Manager',        'Project Manager'],
-            'teaching assistant'               => ['Teaching Assistant',     'Teaching Assistant'],
-            'receptionist'                     => ['Receptionist',           'Receptionist'],
-            'warehouse operative'              => ['Warehouse Operative',    'Warehouse Operative'],
-            'quantity surveyor'                => ['Quantity Surveyor',      'Quantity Surveyor'],
+            'exact title unchanged' => ['Software Engineer',     'Software Engineer'],
+            'lowercase input' => ['software engineer',     'Software Engineer'],
+            'uppercase input' => ['SOFTWARE ENGINEER',     'Software Engineer'],
+            'mixed case' => ['sOfTwArE eNgInEeR',     'Software Engineer'],
+            'nurse' => ['Nurse',                  'Nurse'],
+            'chef' => ['Chef',                   'Chef'],
+            'accountant' => ['Accountant',             'Accountant'],
+            'team leader' => ['Team Leader',            'Team Leader'],
+            'project manager' => ['Project Manager',        'Project Manager'],
+            'teaching assistant' => ['Teaching Assistant',     'Teaching Assistant'],
+            'receptionist' => ['Receptionist',           'Receptionist'],
+            'warehouse operative' => ['Warehouse Operative',    'Warehouse Operative'],
+            'quantity surveyor' => ['Quantity Surveyor',      'Quantity Surveyor'],
         ];
     }
 
     #[DataProvider('exactCanonicalProvider')]
     public function test_canonical_exact_match(string $input, string $expected): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertSame($expected, $svc->canonicalJobTitle($input));
     }
 
@@ -253,7 +258,7 @@ class WhatJobsServiceTest extends TestCase
     #[DataProvider('suffixStrippingProvider')]
     public function test_canonical_suffix_stripping(string $input, string $expected): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertSame($expected, $svc->canonicalJobTitle($input));
     }
 
@@ -264,30 +269,30 @@ class WhatJobsServiceTest extends TestCase
     public static function keywordMapProvider(): array
     {
         return [
-            'hgv class 1 driver'                  => ['HGV Class 1 Tipper Driver',         'HGV Class 1 Driver'],
-            'hgv class 2 driver'                  => ['HGV Class 2 Distribution Driver',    'HGV Class 2 Driver'],
-            'delivery driver keyword'              => ['Overnight Delivery Driver',           'Delivery Driver'],
-            'machine learning keyword'             => ['Machine Learning Researcher',          'Machine Learning Engineer'],
-            'data analyst keyword'                 => ['Senior Data Analyst Role',             'Data Analyst'],
-            'software engineer keyword'            => ['Lead Software Engineer',               'Software Engineer'],
-            'care assistant keyword'               => ['Domiciliary Care Assistant',           'Care Assistant'],
-            'support worker keyword'               => ['Specialist Support Worker',            'Support Worker'],
-            'customer service keyword'             => ['Customer Service Representative',      'Customer Service Advisor'],
-            'sales executive keyword'              => ['Graduate Sales Executive',             'Sales Executive'],
-            'teaching assistant keyword'           => ['Primary Teaching Assistant',           'Teaching Assistant'],
-            'welder keyword'                       => ['MIG Welder - Permanent',               'Welder'],
-            'forklift keyword'                     => ['Counterbalance Forklift Operator',     'Forklift Driver'],
-            'reach truck keyword'                  => ['Reach Truck Operator AM Shift',        'Reach Truck Driver'],
-            'embedded software keyword'            => ['Embedded Software Developer',          'Embedded Software Engineer'],
-            'hr business partner keyword'          => ['HR Business Partner - FMCG',           'HR Business Partner'],
-            'management accountant keyword'        => ['Part Qualified Management Accountant', 'Management Accountant'],
+            'hgv class 1 driver' => ['HGV Class 1 Tipper Driver',         'HGV Class 1 Driver'],
+            'hgv class 2 driver' => ['HGV Class 2 Distribution Driver',    'HGV Class 2 Driver'],
+            'delivery driver keyword' => ['Overnight Delivery Driver',           'Delivery Driver'],
+            'machine learning keyword' => ['Machine Learning Researcher',          'Machine Learning Engineer'],
+            'data analyst keyword' => ['Senior Data Analyst Role',             'Data Analyst'],
+            'software engineer keyword' => ['Lead Software Engineer',               'Software Engineer'],
+            'care assistant keyword' => ['Domiciliary Care Assistant',           'Care Assistant'],
+            'support worker keyword' => ['Specialist Support Worker',            'Support Worker'],
+            'customer service keyword' => ['Customer Service Representative',      'Customer Service Advisor'],
+            'sales executive keyword' => ['Graduate Sales Executive',             'Sales Executive'],
+            'teaching assistant keyword' => ['Primary Teaching Assistant',           'Teaching Assistant'],
+            'welder keyword' => ['MIG Welder - Permanent',               'Welder'],
+            'forklift keyword' => ['Counterbalance Forklift Operator',     'Forklift Driver'],
+            'reach truck keyword' => ['Reach Truck Operator AM Shift',        'Reach Truck Driver'],
+            'embedded software keyword' => ['Embedded Software Developer',          'Embedded Software Engineer'],
+            'hr business partner keyword' => ['HR Business Partner - FMCG',           'HR Business Partner'],
+            'management accountant keyword' => ['Part Qualified Management Accountant', 'Management Accountant'],
         ];
     }
 
     #[DataProvider('keywordMapProvider')]
     public function test_canonical_keyword_map_match(string $input, string $expected): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $this->assertSame($expected, $svc->canonicalJobTitle($input));
     }
 
@@ -300,18 +305,18 @@ class WhatJobsServiceTest extends TestCase
         $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'JOB001',
-            'title'         => 'Software Engineer',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
-            'body'          => 'Great software role in London',
-            'location'      => 'London, England',
-            'company'       => 'ACME Ltd',
-            'url'           => 'https://example.com/jobs/1',
+            'title' => 'Software Engineer',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
+            'body' => 'Great software role in London',
+            'location' => 'London, England',
+            'company' => 'ACME Ltd',
+            'url' => 'https://example.com/jobs/1',
         ]]);
         $path = $this->makeFeedFile($xml);
         $cache = [];
@@ -320,12 +325,12 @@ class WhatJobsServiceTest extends TestCase
             $jobs = iterator_to_array($svc->parseFeed($path, 2, $cache));
 
             $this->assertCount(1, $jobs);
-            $this->assertSame('JOB001',            $jobs[0]['job_reference']);
+            $this->assertSame('JOB001', $jobs[0]['job_reference']);
             $this->assertSame('Software Engineer', $jobs[0]['title']);
             $this->assertSame('Software Engineer', $jobs[0]['canonical_title']);
-            $this->assertSame(0.50,                $jobs[0]['cpc']);
-            $this->assertSame(1,                   $jobs[0]['visible']);
-            $this->assertSame(1,                   $jobs[0]['clickability']);
+            $this->assertSame(0.50, $jobs[0]['cpc']);
+            $this->assertSame(1, $jobs[0]['visible']);
+            $this->assertSame(1, $jobs[0]['clickability']);
             $this->assertStringStartsWith('POLYGON(', $jobs[0]['geometry']);
             $this->assertNotNull($jobs[0]['bodyhash']);
             $this->assertSame(32, strlen($jobs[0]['bodyhash'])); // MD5 length
@@ -348,7 +353,7 @@ class WhatJobsServiceTest extends TestCase
             $j += ['city' => 'London', 'state' => 'England', 'country' => 'UK', 'posted_at' => date('Y-m-d')];
         }
 
-        $path  = $this->makeFeedFile($this->makeFeedXml($jobDefs));
+        $path = $this->makeFeedFile($this->makeFeedXml($jobDefs));
         $cache = [];
 
         try {
@@ -369,19 +374,19 @@ class WhatJobsServiceTest extends TestCase
         $geo = [53.4, -2.2, 53.6, -2.0, WhatJobsService::boxPoly(53.4, -2.2, 53.6, -2.0)];
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
-            'id'          => 'F1JOB001',
-            'title'       => 'Nurse',
-            'city'        => 'Manchester',
-            'state'       => 'England',
-            'country'     => 'UK',
-            'cpc'         => '0.75',
-            'timePosted'  => date('Y-m-d'),
-            'body'        => 'Hospital nursing vacancy',
-            'company'     => 'NHS',
-            'url'         => 'https://example.com/jobs/f1/1',
+        $xml = $this->makeFeedXml([[
+            'id' => 'F1JOB001',
+            'title' => 'Nurse',
+            'city' => 'Manchester',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.75',
+            'timePosted' => date('Y-m-d'),
+            'body' => 'Hospital nursing vacancy',
+            'company' => 'NHS',
+            'url' => 'https://example.com/jobs/f1/1',
         ]], format: 1);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -389,9 +394,9 @@ class WhatJobsServiceTest extends TestCase
 
             $this->assertCount(1, $jobs);
             $this->assertSame('F1JOB001', $jobs[0]['job_reference']);
-            $this->assertSame('Nurse',    $jobs[0]['title']);
-            $this->assertSame('Nurse',    $jobs[0]['canonical_title']);
-            $this->assertSame(0.75,       $jobs[0]['cpc']);
+            $this->assertSame('Nurse', $jobs[0]['title']);
+            $this->assertSame('Nurse', $jobs[0]['canonical_title']);
+            $this->assertSame(0.75, $jobs[0]['cpc']);
         } finally {
             @unlink($path);
         }
@@ -404,19 +409,19 @@ class WhatJobsServiceTest extends TestCase
     public static function titleCaseLocationProvider(): array
     {
         return [
-            'simple town'            => ['preston', 'Preston'],
-            'town, county'           => ['poole, dorset', 'Poole, Dorset'],
-            'connector words'        => ['stockton on tees', 'Stockton on Tees'],
-            'upon stays lowercase'   => ['newcastle upon tyne', 'Newcastle upon Tyne'],
-            'hyphenated connectors'  => ['weston-super-mare', 'Weston-super-Mare'],
-            'de la chain'            => ['ashby-de-la-zouch', 'Ashby-de-la-Zouch'],
-            'dotted abbreviation'    => ['st. columb', 'St. Columb'],
-            'apostrophe intact'      => ["bishop's stortford", "Bishop's Stortford"],
+            'simple town' => ['preston', 'Preston'],
+            'town, county' => ['poole, dorset', 'Poole, Dorset'],
+            'connector words' => ['stockton on tees', 'Stockton on Tees'],
+            'upon stays lowercase' => ['newcastle upon tyne', 'Newcastle upon Tyne'],
+            'hyphenated connectors' => ['weston-super-mare', 'Weston-super-Mare'],
+            'de la chain' => ['ashby-de-la-zouch', 'Ashby-de-la-Zouch'],
+            'dotted abbreviation' => ['st. columb', 'St. Columb'],
+            'apostrophe intact' => ["bishop's stortford", "Bishop's Stortford"],
             'leading connector caps' => ['the wirral', 'The Wirral'],
-            'already cased kept'     => ['Dunham on the Hill', 'Dunham on the Hill'],
-            'mixed case kept'        => ['London SE1', 'London SE1'],
-            'empty string'           => ['', ''],
-            'null'                   => [null, null],
+            'already cased kept' => ['Dunham on the Hill', 'Dunham on the Hill'],
+            'mixed case kept' => ['London SE1', 'London SE1'],
+            'empty string' => ['', ''],
+            'null' => [null, null],
         ];
     }
 
@@ -432,17 +437,17 @@ class WhatJobsServiceTest extends TestCase
         $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'LOC1',
-            'title'         => 'Chef',
-            'city'          => 'preston',
-            'state'         => 'england',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
-            'location'      => 'preston, lancashire',
+            'title' => 'Chef',
+            'city' => 'preston',
+            'state' => 'england',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
+            'location' => 'preston, lancashire',
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -464,16 +469,16 @@ class WhatJobsServiceTest extends TestCase
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
         // One penny under the floor, whatever the floor currently is.
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'LOWCPC1',
-            'title'         => 'Driver',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => number_format(WhatJobsService::MINIMUM_CPC - 0.01, 2),
-            'posted_at'     => date('Y-m-d'),
+            'title' => 'Driver',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => number_format(WhatJobsService::MINIMUM_CPC - 0.01, 2),
+            'posted_at' => date('Y-m-d'),
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -489,16 +494,16 @@ class WhatJobsServiceTest extends TestCase
         $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
         $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'MINCPC1',
-            'title'         => 'Accountant',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => number_format(WhatJobsService::MINIMUM_CPC, 2),   // exactly at threshold
-            'posted_at'     => date('Y-m-d'),
+            'title' => 'Accountant',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => number_format(WhatJobsService::MINIMUM_CPC, 2),   // exactly at threshold
+            'posted_at' => date('Y-m-d'),
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -515,19 +520,19 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_skips_empty_job_reference(): void
     {
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => '',          // empty → skipped
-            'title'         => 'Driver',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
+            'title' => 'Driver',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -544,19 +549,19 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_skips_postings_older_than_max_age(): void
     {
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'OLD001',
-            'title'         => 'Nurse',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => '2020-01-01',    // well beyond MAX_AGE_DAYS (7)
+            'title' => 'Nurse',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => '2020-01-01',    // well beyond MAX_AGE_DAYS (7)
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -570,19 +575,19 @@ class WhatJobsServiceTest extends TestCase
     public function test_parse_feed_accepts_job_with_no_date(): void
     {
         // Empty posted_at → strtotime('') is false → condition never fires → kept
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'NODATE1',
-            'title'         => 'Chef',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => '',              // no date → not filtered by age
+            'title' => 'Chef',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => '',              // no date → not filtered by age
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -599,18 +604,18 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_skips_when_geocode_returns_null(): void
     {
-        $svc  = $this->makeServiceWithFixedGeocode(null); // always fails geocoding
+        $svc = $this->makeServiceWithFixedGeocode(null); // always fails geocoding
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'GEO001',
-            'title'         => 'Chef',
-            'city'          => 'UnknownCity',
-            'state'         => 'Unknown',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
+            'title' => 'Chef',
+            'city' => 'UnknownCity',
+            'state' => 'Unknown',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -627,20 +632,20 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_body_present_yields_md5_hash(): void
     {
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'HASH001',
-            'title'         => 'Software Engineer',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
-            'body'          => 'Exciting software engineering role at a tech company',
+            'title' => 'Software Engineer',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
+            'body' => 'Exciting software engineering role at a tech company',
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -655,20 +660,20 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_empty_body_yields_null_hash(): void
     {
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'NOBOD1',
-            'title'         => 'Chef',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
-            'body'          => '',              // empty body
+            'title' => 'Chef',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
+            'body' => '',              // empty body
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -686,7 +691,7 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_missing_file_yields_empty_generator(): void
     {
-        $svc   = $this->makeServiceWithFixedGeocode(null);
+        $svc = $this->makeServiceWithFixedGeocode(null);
         $cache = [];
 
         $jobs = iterator_to_array($svc->parseFeed(
@@ -700,8 +705,8 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_empty_xml_file_yields_nothing(): void
     {
-        $svc   = $this->makeServiceWithFixedGeocode(null);
-        $path  = $this->makeFeedFile('');
+        $svc = $this->makeServiceWithFixedGeocode(null);
+        $path = $this->makeFeedFile('');
         $cache = [];
 
         try {
@@ -716,39 +721,39 @@ class WhatJobsServiceTest extends TestCase
     {
         // Three jobs: one valid, one low-CPC, one too-old
         // Only the first should be yielded.
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
-        $xml  = $this->makeFeedXml([
+        $xml = $this->makeFeedXml([
             [
                 'job_reference' => 'VALID1',
-                'title'         => 'Chef',
-                'city'          => 'London',
-                'state'         => 'England',
-                'country'       => 'UK',
-                'cpc'           => '0.50',
-                'posted_at'     => date('Y-m-d'),
+                'title' => 'Chef',
+                'city' => 'London',
+                'state' => 'England',
+                'country' => 'UK',
+                'cpc' => '0.50',
+                'posted_at' => date('Y-m-d'),
             ],
             [
                 'job_reference' => 'LOWCPC',
-                'title'         => 'Driver',
-                'city'          => 'London',
-                'state'         => 'England',
-                'country'       => 'UK',
-                'cpc'           => '0.01',
-                'posted_at'     => date('Y-m-d'),
+                'title' => 'Driver',
+                'city' => 'London',
+                'state' => 'England',
+                'country' => 'UK',
+                'cpc' => '0.01',
+                'posted_at' => date('Y-m-d'),
             ],
             [
                 'job_reference' => 'OLDONE',
-                'title'         => 'Nurse',
-                'city'          => 'London',
-                'state'         => 'England',
-                'country'       => 'UK',
-                'cpc'           => '0.50',
-                'posted_at'     => '2019-06-01',
+                'title' => 'Nurse',
+                'city' => 'London',
+                'state' => 'England',
+                'country' => 'UK',
+                'cpc' => '0.50',
+                'posted_at' => '2019-06-01',
             ],
         ]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -762,20 +767,20 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_parse_feed_html_entities_in_title_decoded(): void
     {
-        $geo  = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
-        $svc  = $this->makeServiceWithFixedGeocode($geo);
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
 
         // The XML helper will HTML-encode the &amp; entity; parseFeed must decode it
-        $xml  = $this->makeFeedXml([[
+        $xml = $this->makeFeedXml([[
             'job_reference' => 'ENT001',
-            'title'         => 'Sales &amp; Marketing Manager',
-            'city'          => 'London',
-            'state'         => 'England',
-            'country'       => 'UK',
-            'cpc'           => '0.50',
-            'posted_at'     => date('Y-m-d'),
+            'title' => 'Sales &amp; Marketing Manager',
+            'city' => 'London',
+            'state' => 'England',
+            'country' => 'UK',
+            'cpc' => '0.50',
+            'posted_at' => date('Y-m-d'),
         ]]);
-        $path  = $this->makeFeedFile($xml);
+        $path = $this->makeFeedFile($xml);
         $cache = [];
 
         try {
@@ -798,25 +803,25 @@ class WhatJobsServiceTest extends TestCase
 
     public function test_is_spam_detects_focus_group_scam(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Customer Service Representative Agent Work From Home - Part Time Focus Group Panelists';
-        $body  = 'Now accepting applicants for Focus Group studies. Earn up to £700 per week part-time working from home.';
+        $body = 'Now accepting applicants for Focus Group studies. Earn up to £700 per week part-time working from home.';
         $this->assertTrue($svc->isSpamJob($title, $body));
     }
 
     public function test_is_spam_detects_research_study_wfh_scam(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Work from home – Part time research study opportunity';
-        $body  = 'Work From Home – Flexible Earnings Opportunity. Be your own boss.';
+        $body = 'Work From Home – Flexible Earnings Opportunity. Be your own boss.';
         $this->assertTrue($svc->isSpamJob($title, $body));
     }
 
     public function test_is_spam_detects_mlm_money_range(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Work From Home - £500 - £3000+ per month, Full time or Part time.';
-        $body  = 'Work Your Own Hours. Home Based Opportunity with Utility Warehouse.';
+        $body = 'Work Your Own Hours. Home Based Opportunity with Utility Warehouse.';
         $this->assertTrue($svc->isSpamJob($title, $body));
     }
 
@@ -824,27 +829,27 @@ class WhatJobsServiceTest extends TestCase
     {
         // Brakes Class 2 driver listing — earn_per_unit hits but no other
         // pattern; single signal is allowed.
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Driver - Class 2';
-        $body  = '£42,922 pa with the opportunity to earn £46,500 including attendance bonus & overtime plus great benefits. Monday to Friday 45hrs per week.';
+        $body = '£42,922 pa with the opportunity to earn £46,500 including attendance bonus & overtime plus great benefits. Monday to Friday 45hrs per week.';
         $this->assertFalse($svc->isSpamJob($title, $body));
     }
 
     public function test_is_spam_allows_legit_sales_advisor(): void
     {
         // EE Sales Advisor — uncapped commission listing, hits zero patterns.
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Sales Advisor - Uncapped Commission (Doncaster)';
-        $body  = "A great starting salary of £26,116 rising to £26,738 after 8 months, plus an uncapped monthly commission scheme. Online GP, Paid Carer's Leave.";
+        $body = "A great starting salary of £26,116 rising to £26,738 after 8 months, plus an uncapped monthly commission scheme. Online GP, Paid Carer's Leave.";
         $this->assertFalse($svc->isSpamJob($title, $body));
     }
 
     public function test_is_spam_allows_legit_remote_internship(): void
     {
         // Borgen Project remote internship — hits zero patterns.
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $title = 'Political Affairs Internship Part-Time - Remote Worldwide';
-        $body  = 'The Borgen Project is an international organization that works at the political level to improve living conditions for people impacted by war.';
+        $body = 'The Borgen Project is an international organization that works at the political level to improve living conditions for people impacted by war.';
         $this->assertFalse($svc->isSpamJob($title, $body));
     }
 
@@ -857,7 +862,7 @@ class WhatJobsServiceTest extends TestCase
             [
                 'job_reference' => 'spam-1',
                 'title' => 'Work From Home - Part Time Focus Group Panelists',
-                'body'  => 'Now accepting applicants. Earn £700 per week.',
+                'body' => 'Now accepting applicants. Earn £700 per week.',
                 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK',
                 'cpc' => '0.50', 'url' => 'https://x', 'category' => 'Other',
                 'posted_at' => $today,
@@ -865,7 +870,7 @@ class WhatJobsServiceTest extends TestCase
             [
                 'job_reference' => 'legit-1',
                 'title' => 'Software Engineer',
-                'body'  => 'Senior Software Engineer with 5 years experience required.',
+                'body' => 'Senior Software Engineer with 5 years experience required.',
                 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK',
                 'cpc' => '0.50', 'url' => 'https://y', 'category' => 'IT',
                 'posted_at' => $today,
@@ -891,7 +896,7 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_the_replacement_jobs_table_gets_the_visible_cpc_index(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
         $columns = fn () => collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
             ->sortBy('Seq_in_index')
             ->pluck('Column_name')
@@ -926,7 +931,7 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_adding_visible_cpc_twice_is_harmless(): void
     {
-        $svc = new WhatJobsService();
+        $svc = new WhatJobsService;
 
         try {
             $svc->prepareTempTable();

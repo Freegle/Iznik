@@ -52,7 +52,7 @@ class BlankEnvMeansDefaultTest extends TestCase
      * container's), and a test that quietly left such a variable alone would prove nothing about
      * it.
      *
-     * @param array<string, string|null> $environment
+     * @param  array<string, string|null>  $environment
      */
     private function withEnvironment(array $environment, callable $then): mixed
     {
@@ -104,7 +104,7 @@ class BlankEnvMeansDefaultTest extends TestCase
     /**
      * Evaluate config/freegle.php with the given variables set or removed.
      *
-     * @param array<string, string|null> $environment
+     * @param  array<string, string|null>  $environment
      * @return array<string, mixed> the whole resolved file
      */
     private function configWith(array $environment): array
@@ -122,12 +122,12 @@ class BlankEnvMeansDefaultTest extends TestCase
     {
         $out = [];
         foreach ($notSet + $blank as $key => $unused) {
-            $path = $prefix . $key;
+            $path = $prefix.$key;
             $a = $notSet[$key] ?? null;
             $b = $blank[$key] ?? null;
 
             if (is_array($a) && is_array($b)) {
-                $out = array_merge($out, $this->differences($a, $b, $path . '.'));
+                $out = array_merge($out, $this->differences($a, $b, $path.'.'));
             } elseif ($a !== $b || array_key_exists($key, $notSet) !== array_key_exists($key, $blank)) {
                 $out[] = sprintf('%s: not set => %s, blank => %s', $path, var_export($a, true), var_export($b, true));
             }
@@ -163,8 +163,8 @@ class BlankEnvMeansDefaultTest extends TestCase
             [],
             $differences,
             "These settings read a blank variable as a value instead of as the default:\n  "
-                . implode("\n  ", $differences)
-                . "\nRead the variable through EnvSetting::env instead of a bare env()."
+                .implode("\n  ", $differences)
+                ."\nRead the variable through EnvSetting::env instead of a bare env()."
         );
         $this->assertSame($notSet, $blank);
     }
@@ -233,8 +233,8 @@ class BlankEnvMeansDefaultTest extends TestCase
             $this->withEnvironment([self::PROBE => $value], function () use ($label) {
                 $this->assertSame(42, EnvSetting::env(self::PROBE, 42), $label);
                 $this->assertSame('x', EnvSetting::env(self::PROBE, 'x'), $label);
-                $this->assertNull(EnvSetting::env(self::PROBE), $label . ' with no default');
-                $this->assertSame('computed', EnvSetting::env(self::PROBE, fn () => 'computed'), $label . ' with a closure default');
+                $this->assertNull(EnvSetting::env(self::PROBE), $label.' with no default');
+                $this->assertSame('computed', EnvSetting::env(self::PROBE, fn () => 'computed'), $label.' with a closure default');
             });
         }
     }

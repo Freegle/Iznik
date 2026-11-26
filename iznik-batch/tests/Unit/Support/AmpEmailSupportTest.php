@@ -34,7 +34,7 @@ class AmpEmailSupportTest extends TestCase
         );
 
         // Test with whitespace.
-        $whitespaceEmail = '  ' . $this->uniqueEmail('user', 'gmail.com') . '  ';
+        $whitespaceEmail = '  '.$this->uniqueEmail('user', 'gmail.com').'  ';
         $this->assertTrue(
             AmpEmailSupport::isSupported($whitespaceEmail),
             "Expected Gmail address '$whitespaceEmail' to be supported"
@@ -147,7 +147,7 @@ class AmpEmailSupportTest extends TestCase
     public function test_extract_domain_handles_whitespace(): void
     {
         $gmailEmail = $this->uniqueEmail('user', 'gmail.com');
-        $this->assertEquals('gmail.com', AmpEmailSupport::extractDomain('  ' . $gmailEmail . '  '));
+        $this->assertEquals('gmail.com', AmpEmailSupport::extractDomain('  '.$gmailEmail.'  '));
     }
 
     public function test_extract_domain_returns_null_for_invalid(): void

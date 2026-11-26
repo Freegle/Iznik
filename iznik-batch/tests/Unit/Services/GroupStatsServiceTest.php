@@ -13,7 +13,7 @@ class GroupStatsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new GroupStatsService();
+        $this->service = new GroupStatsService;
     }
 
     public function test_fixes_repost_string_values(): void
@@ -61,7 +61,7 @@ class GroupStatsServiceTest extends TestCase
 
         $result = $this->service->updateGroupStats();
 
-        $monthDate = now()->subDays(5)->format('Y') . '-' . str_pad(now()->subDays(5)->format('n'), 2, '0', STR_PAD_LEFT);
+        $monthDate = now()->subDays(5)->format('Y').'-'.str_pad(now()->subDays(5)->format('n'), 2, '0', STR_PAD_LEFT);
         $outcomeCount = DB::table('stats_outcomes')
             ->where('groupid', $group->id)
             ->where('date', $monthDate)

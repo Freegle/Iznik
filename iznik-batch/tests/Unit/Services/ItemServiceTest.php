@@ -20,7 +20,7 @@ class ItemServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ItemService();
+        $this->service = new ItemService;
     }
 
     public function test_extracts_item_name_from_well_formed_subject(): void
@@ -104,7 +104,7 @@ class ItemServiceTest extends TestCase
      */
     public function test_link_to_message_increments_popularity(): void
     {
-        $group  = $this->createTestGroup();
+        $group = $this->createTestGroup();
         $itemid = $this->service->findOrCreate('Kettle');
 
         $this->assertSame(0, (int) DB::table('items')->where('id', $itemid)->value('popularity'));
@@ -124,7 +124,7 @@ class ItemServiceTest extends TestCase
     public function test_relinking_the_same_message_does_not_inflate_popularity(): void
     {
         $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
-        $itemid  = $this->service->findOrCreate('Toaster');
+        $itemid = $this->service->findOrCreate('Toaster');
 
         $this->service->linkToMessage($message->id, $itemid);
         $this->service->linkToMessage($message->id, $itemid);
@@ -136,8 +136,8 @@ class ItemServiceTest extends TestCase
     /** Each item counts its own postings, not another item's. */
     public function test_popularity_is_per_item(): void
     {
-        $group   = $this->createTestGroup();
-        $kettle  = $this->service->findOrCreate('Kettle');
+        $group = $this->createTestGroup();
+        $kettle = $this->service->findOrCreate('Kettle');
         $blender = $this->service->findOrCreate('Blender');
 
         $this->service->linkToMessage($this->createTestMessage($this->createTestUser(), $group)->id, $kettle);

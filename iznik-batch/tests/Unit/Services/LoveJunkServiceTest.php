@@ -30,7 +30,7 @@ class LoveJunkServiceTest extends TestCase
 
     private function createGroup(array $attrs = []): int
     {
-        $nameshort = $attrs['nameshort'] ?? ('TestLJGroup_' . uniqid());
+        $nameshort = $attrs['nameshort'] ?? ('TestLJGroup_'.uniqid());
         $onlovejunk = $attrs['onlovejunk'] ?? 1;
 
         // polyindex is NOT NULL spatial — must be set in the INSERT statement
@@ -110,7 +110,7 @@ class LoveJunkServiceTest extends TestCase
         $itemId = DB::table('items')->insertGetId(['name' => 'Sofa', 'popularity' => 1, 'updated' => now()]);
         DB::table('messages_items')->insert(['msgid' => $msgId, 'itemid' => $itemId]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(1, $result['sent']);
@@ -136,7 +136,7 @@ class LoveJunkServiceTest extends TestCase
         // Pre-insert lovejunk record (already sent)
         DB::table('lovejunk')->insert(['msgid' => $msgId, 'success' => 1, 'status' => '{"draftId":"existing"}']);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -161,7 +161,7 @@ class LoveJunkServiceTest extends TestCase
             ['msgid' => $msgId, 'position' => 1, 'name' => 'Desks', 'quantity' => 4],
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -192,7 +192,7 @@ class LoveJunkServiceTest extends TestCase
             ['msgid' => $msgId, 'externaluid' => 'freegletusd-photo1', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}'],
         ]);
 
-        $result = (new LoveJunkService())->sync();
+        $result = (new LoveJunkService)->sync();
 
         $this->assertEquals(1, $result['sent']);
         Http::assertSent(function ($request) {
@@ -211,7 +211,7 @@ class LoveJunkServiceTest extends TestCase
         $locationId = $this->createLocation();
         $this->createMessage($userId, $groupId, $locationId);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -239,7 +239,7 @@ class LoveJunkServiceTest extends TestCase
         ]);
         DB::table('messages_groups')->insert(['msgid' => $msgId, 'groupid' => $groupId, 'collection' => 'Approved', 'arrival' => now()]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -257,7 +257,7 @@ class LoveJunkServiceTest extends TestCase
         $locationId = $this->createLocation();
         $msgId = $this->createMessage($userId, $groupId, $locationId);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -295,7 +295,7 @@ class LoveJunkServiceTest extends TestCase
             'byuser' => $userId,
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(0, $result['sent']);
@@ -327,7 +327,7 @@ class LoveJunkServiceTest extends TestCase
             'timestamp' => now(),
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(1, $result['completed_or_deleted']);
@@ -374,7 +374,7 @@ class LoveJunkServiceTest extends TestCase
             'timestamp' => now(),
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(1, $result['completed_or_deleted']);
@@ -406,13 +406,14 @@ class LoveJunkServiceTest extends TestCase
             'externaluid' => 'freegletusd-abc123',
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(1, $result['sent']);
 
         Http::assertSent(function ($request) {
             $data = $request->data();
+
             return isset($data['images'][0]['url']) && str_contains($data['images'][0]['url'], 'abc123');
         });
     }
@@ -430,13 +431,14 @@ class LoveJunkServiceTest extends TestCase
             'subject' => 'OFFER: Vintage lamp (Shoreditch)',
         ]);
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $result = $service->sync();
 
         $this->assertEquals(1, $result['sent']);
 
         Http::assertSent(function ($request) {
             $data = $request->data();
+
             return isset($data['title']) && trim($data['title']) === 'Vintage lamp';
         });
     }
@@ -462,13 +464,12 @@ class LoveJunkServiceTest extends TestCase
 
         \Illuminate\Support\Facades\Log::spy();
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $service->sync();
 
         \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')
             ->once()
-            ->withArgs(fn ($message, $context = []) =>
-                str_contains($message, "LoveJunk: failed to send message $msgId")
+            ->withArgs(fn ($message, $context = []) => str_contains($message, "LoveJunk: failed to send message $msgId")
                 && ($context['status'] ?? null) === 409
             );
         \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
@@ -498,13 +499,12 @@ class LoveJunkServiceTest extends TestCase
 
         \Illuminate\Support\Facades\Log::spy();
 
-        $service = new LoveJunkService();
+        $service = new LoveJunkService;
         $service->sync();
 
         \Illuminate\Support\Facades\Log::shouldHaveReceived('error')
             ->once()
-            ->withArgs(fn ($message, $context = []) =>
-                str_contains($message, "LoveJunk: failed to send message $msgId")
+            ->withArgs(fn ($message, $context = []) => str_contains($message, "LoveJunk: failed to send message $msgId")
                 && ($context['status'] ?? null) === 500
             );
     }

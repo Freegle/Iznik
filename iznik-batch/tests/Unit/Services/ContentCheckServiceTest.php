@@ -4,7 +4,6 @@ namespace Tests\Unit\Services;
 
 use App\Models\Membership;
 use App\Models\Message;
-use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +18,7 @@ class ContentCheckServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ContentCheckService();
+        $this->service = new ContentCheckService;
     }
 
     // =========================================================================
@@ -31,6 +30,7 @@ class ContentCheckServiceTest extends TestCase
         $ref = new ReflectionClass($this->service);
         $m = $ref->getMethod($method);
         $m->setAccessible(true);
+
         return $m->invoke($this->service, ...$args);
     }
 
@@ -48,16 +48,16 @@ class ContentCheckServiceTest extends TestCase
     public static function damerauLevenshteinProvider(): array
     {
         return [
-            'identical strings'         => ['hello', 'hello', 0],
-            'one insertion'             => ['hello', 'helllo', 1],
-            'one deletion'              => ['helllo', 'hello', 1],
-            'one substitution'          => ['hello', 'hxllo', 1],
-            'adjacent transposition'    => ['beleived', 'believed', 1],
-            'empty a'                   => ['', 'abc', 3],
-            'empty b'                   => ['abc', '', 3],
-            'both empty'                => ['', '', 0],
-            'completely different'      => ['abc', 'xyz', 3],
-            'two edits'                 => ['kitten', 'sitting', 3],
+            'identical strings' => ['hello', 'hello', 0],
+            'one insertion' => ['hello', 'helllo', 1],
+            'one deletion' => ['helllo', 'hello', 1],
+            'one substitution' => ['hello', 'hxllo', 1],
+            'adjacent transposition' => ['beleived', 'believed', 1],
+            'empty a' => ['', 'abc', 3],
+            'empty b' => ['abc', '', 3],
+            'both empty' => ['', '', 0],
+            'completely different' => ['abc', 'xyz', 3],
+            'two edits' => ['kitten', 'sitting', 3],
         ];
     }
 
@@ -75,13 +75,13 @@ class ContentCheckServiceTest extends TestCase
     public static function inflectionVariantsProvider(): array
     {
         return [
-            'plural -s'          => ['sell', 'sells'],
-            'plural -es'         => ['sell', 'selles'],
-            '-ing suffix'        => ['sell', 'selling'],
-            '-ed suffix'         => ['sell', 'selled'],
-            '-y -> -ies'         => ['supply', 'supplies'],
+            'plural -s' => ['sell', 'sells'],
+            'plural -es' => ['sell', 'selles'],
+            '-ing suffix' => ['sell', 'selling'],
+            '-ed suffix' => ['sell', 'selled'],
+            '-y -> -ies' => ['supply', 'supplies'],
             'CVC double+ed swap' => ['swap', 'swapped'],
-            'CVC double+ing'     => ['swap', 'swapping'],
+            'CVC double+ing' => ['swap', 'swapping'],
         ];
     }
 
@@ -179,51 +179,51 @@ class ContentCheckServiceTest extends TestCase
     public static function vagueItemProvider(): array
     {
         return [
-            'null item'                  => [null, false],
-            'empty string'               => ['', false],
-            'whitespace only'            => ['   ', false],
-            'specific item sofa'         => ['Sofa', false],
-            'specific item TV'           => ['TV', false],
-            'specific item PC'           => ['PC', false],
-            'pure vague: stuff'          => ['stuff', true],
-            'pure vague: things'         => ['things', true],
-            'pure vague: items'          => ['items', true],
-            'pure vague: junk'           => ['junk', true],
-            'vague phrase: free stuff'   => ['free stuff', true],
-            'vague: bits and pieces'     => ['bits and pieces', true],
-            'mixed: assorted frames'     => ['assorted picture frames', false],
-            'mixed: Marilyn stuff'       => ['Marilyn monroe stuff', false],
-            'numeric token ignored'      => ['2024', false],
-            'short token TV + vague'     => ['TV stuff', false], // "TV" is <=2 chars, ignored; "stuff" is vague but only 1 significant token
-            'specific: computer desk'    => ['Computer desk', false],
-            'vague: assorted'            => ['assorted', true],
+            'null item' => [null, false],
+            'empty string' => ['', false],
+            'whitespace only' => ['   ', false],
+            'specific item sofa' => ['Sofa', false],
+            'specific item TV' => ['TV', false],
+            'specific item PC' => ['PC', false],
+            'pure vague: stuff' => ['stuff', true],
+            'pure vague: things' => ['things', true],
+            'pure vague: items' => ['items', true],
+            'pure vague: junk' => ['junk', true],
+            'vague phrase: free stuff' => ['free stuff', true],
+            'vague: bits and pieces' => ['bits and pieces', true],
+            'mixed: assorted frames' => ['assorted picture frames', false],
+            'mixed: Marilyn stuff' => ['Marilyn monroe stuff', false],
+            'numeric token ignored' => ['2024', false],
+            'short token TV + vague' => ['TV stuff', false], // "TV" is <=2 chars, ignored; "stuff" is vague but only 1 significant token
+            'specific: computer desk' => ['Computer desk', false],
+            'vague: assorted' => ['assorted', true],
             'mixed: assorted bike parts' => ['assorted bike parts', false],
             // Point 1: vocabulary gaps
-            'vague: any'                 => ['Any', true],
-            'vague: all'                 => ['all', true],
-            'vague: everything'          => ['Everything', true],
-            'vague: household goods'     => ['household goods', true],
-            'vague: household items'     => ['household items', true],
-            'vague: sundries'            => ['sundries', true],
-            'vague: bric-a-brac'         => ['bric-a-brac', true],
-            'vague: odds and ends'       => ['odds and ends', true],
-            'vague: general'             => ['general', true],
+            'vague: any' => ['Any', true],
+            'vague: all' => ['all', true],
+            'vague: everything' => ['Everything', true],
+            'vague: household goods' => ['household goods', true],
+            'vague: household items' => ['household items', true],
+            'vague: sundries' => ['sundries', true],
+            'vague: bric-a-brac' => ['bric-a-brac', true],
+            'vague: odds and ends' => ['odds and ends', true],
+            'vague: general' => ['general', true],
             // Point 2: inflection folding
-            'vague: thing (singular)'    => ['thing', true],
-            'vague: item (singular)'     => ['item', true],
+            'vague: thing (singular)' => ['thing', true],
+            'vague: item (singular)' => ['item', true],
             // Point 3: category qualifiers don't rescue (vague + non-rescuing qualifier)
-            'vague: assorted junk'       => ['assorted junk', true],
-            'vague: various items'       => ['various items', true],
+            'vague: assorted junk' => ['assorted junk', true],
+            'vague: various items' => ['various items', true],
             'vague: miscellaneous stuff' => ['miscellaneous stuff', true],
             // Rescue still works for genuine specific tokens
             'specific rescues: vintage bundle' => ['vintage bundle', false],
-            'specific rescues: baby bundle'    => ['baby bundle', false],
+            'specific rescues: baby bundle' => ['baby bundle', false],
             'specific rescues: stamp collection' => ['stamp collection', false],
             // Point 7: ambiguous tokens alone don't flag
-            'ambiguous alone: bundle'    => ['bundle', false],
+            'ambiguous alone: bundle' => ['bundle', false],
             'ambiguous alone: collection' => ['collection', false],
-            'ambiguous alone: lots'      => ['lots', false],
-            'ambiguous alone: random'    => ['random', false],
+            'ambiguous alone: lots' => ['lots', false],
+            'ambiguous alone: random' => ['random', false],
             // Ambiguous + unambiguous vague still flags
             'ambiguous + vague: random stuff' => ['random stuff', true],
             'ambiguous + vague: bundle of junk' => ['bundle of junk', true],
@@ -262,16 +262,16 @@ class ContentCheckServiceTest extends TestCase
     public static function phoneNumberProvider(): array
     {
         return [
-            'no number'                        => ['', 'Clean text', false],
-            'UK mobile 07xxx'                  => ['', 'Call 07911 123456 for details', true],
-            '+44 format'                       => ['', 'Ring +44 7911 123456', true],
-            '0044 format'                      => ['', '0044 7911 123456', true],
-            'landline 01xxx'                   => ['', '01234 567890 is our number', true],
-            'number in subject'                => ['Call 07911 123456', '', true],
-            'number with hyphens'              => ['', '07911-123-456', true],
-            'too short number'                 => ['', '012 34', false],
-            'postal code not a phone'          => ['', 'SW1A 1AA', false],
-            'flat number not a phone'          => ['', 'Flat 12', false],
+            'no number' => ['', 'Clean text', false],
+            'UK mobile 07xxx' => ['', 'Call 07911 123456 for details', true],
+            '+44 format' => ['', 'Ring +44 7911 123456', true],
+            '0044 format' => ['', '0044 7911 123456', true],
+            'landline 01xxx' => ['', '01234 567890 is our number', true],
+            'number in subject' => ['Call 07911 123456', '', true],
+            'number with hyphens' => ['', '07911-123-456', true],
+            'too short number' => ['', '012 34', false],
+            'postal code not a phone' => ['', 'SW1A 1AA', false],
+            'flat number not a phone' => ['', 'Flat 12', false],
         ];
     }
 
@@ -295,17 +295,17 @@ class ContentCheckServiceTest extends TestCase
     public static function messagingLinkProvider(): array
     {
         return [
-            'no link'                    => ['Sofa available', 'Good condition', false],
-            'whatsapp chat link'         => ['', 'Join us at chat.whatsapp.com/abc123', true],
-            'wa.me link'                 => ['', 'Chat: wa.me/447911123456', true],
-            'telegram t.me'              => ['', 'https://t.me/mygroup', true],
-            'telegram.me'                => ['', 'telegram.me/join/xyz', true],
-            'discord.gg'                 => ['', 'Join discord.gg/freegle', true],
-            'discord invite'             => ['', 'discord.com/invite/abc', true],
-            'signal.group'               => ['', 'https://signal.group/abc', true],
-            'normal website'             => ['', 'See https://freegle.in for details', false],
-            'link in subject'            => ['Join wa.me/group', '', true],
-            'case insensitive'           => ['', 'Chat.WhatsApp.Com/group', true],
+            'no link' => ['Sofa available', 'Good condition', false],
+            'whatsapp chat link' => ['', 'Join us at chat.whatsapp.com/abc123', true],
+            'wa.me link' => ['', 'Chat: wa.me/447911123456', true],
+            'telegram t.me' => ['', 'https://t.me/mygroup', true],
+            'telegram.me' => ['', 'telegram.me/join/xyz', true],
+            'discord.gg' => ['', 'Join discord.gg/freegle', true],
+            'discord invite' => ['', 'discord.com/invite/abc', true],
+            'signal.group' => ['', 'https://signal.group/abc', true],
+            'normal website' => ['', 'See https://freegle.in for details', false],
+            'link in subject' => ['Join wa.me/group', '', true],
+            'case insensitive' => ['', 'Chat.WhatsApp.Com/group', true],
         ];
     }
 
@@ -330,13 +330,13 @@ class ContentCheckServiceTest extends TestCase
     public static function moneySymbolProvider(): array
     {
         return [
-            'no symbols'             => ['Sofa free', 'Take it', false],
-            'pound in subject'       => ['Only £5', 'Great condition', true],
-            'pound in body'          => ['Free sofa', 'Worth £200', true],
-            'dollar in body'         => ['Free sofa', 'Worth $200', true],
-            'both symbols'           => ['£ and $ offer', 'text', true],
-            'euro symbol no flag'    => ['', '€100 value', false],
-            'hash no flag'           => ['', '#100', false],
+            'no symbols' => ['Sofa free', 'Take it', false],
+            'pound in subject' => ['Only £5', 'Great condition', true],
+            'pound in body' => ['Free sofa', 'Worth £200', true],
+            'dollar in body' => ['Free sofa', 'Worth $200', true],
+            'both symbols' => ['£ and $ offer', 'text', true],
+            'euro symbol no flag' => ['', '€100 value', false],
+            'hash no flag' => ['', '#100', false],
         ];
     }
 
@@ -364,39 +364,39 @@ class ContentCheckServiceTest extends TestCase
     {
         return [
             // --- positives: flag, with expected category ---
-            'cleaner wanted'      => ['WANTED: Cleaner wanted', '', 'service'],
-            'man with a van'      => ['WANTED: Man with a Van', '', 'service'],
+            'cleaner wanted' => ['WANTED: Cleaner wanted', '', 'service'],
+            'man with a van' => ['WANTED: Man with a Van', '', 'service'],
             'man and car removal' => ['WANTED: man and car removal', '', 'service'],
-            'dog walker'          => ['WANTED: dog walker', '', 'service'],
-            'babysitter needed'   => ['WANTED: babysitter needed', '', 'service'],
-            'gardening service'   => ['OFFER: gardening service available', '', 'service'],
-            'services plural'     => ['OFFER: Services', '', 'service'],
-            'room to rent'        => ['OFFER: Room to rent', '', 'accommodation'],
-            'warehouse to rent'   => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
-            'garage to rent'      => ['WANTED: Lockup garage to rent', '', 'accommodation'],
-            'lodger'              => ['WANTED: lodger wanted', '', 'accommodation'],
-            'job vacancy'         => ['', 'I have a job vacancy to fill', 'work'],
-            'part time job'       => ['WANTED: part time job', '', 'work'],
-            'food advice'         => ['WANTED: Food advice', '', 'advice'],
+            'dog walker' => ['WANTED: dog walker', '', 'service'],
+            'babysitter needed' => ['WANTED: babysitter needed', '', 'service'],
+            'gardening service' => ['OFFER: gardening service available', '', 'service'],
+            'services plural' => ['OFFER: Services', '', 'service'],
+            'room to rent' => ['OFFER: Room to rent', '', 'accommodation'],
+            'warehouse to rent' => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
+            'garage to rent' => ['WANTED: Lockup garage to rent', '', 'accommodation'],
+            'lodger' => ['WANTED: lodger wanted', '', 'accommodation'],
+            'job vacancy' => ['', 'I have a job vacancy to fill', 'work'],
+            'part time job' => ['WANTED: part time job', '', 'work'],
+            'food advice' => ['WANTED: Food advice', '', 'advice'],
 
             // --- negatives: real production items that must NOT trip ---
-            'vacuum cleaner'      => ['OFFER: Shark vacuum cleaner', '', null],
-            'patio cleaner'       => ['OFFER: Patio Cleaner', '', null],
-            'plain vacuum'        => ['WANTED: Vacuum cleaner', '', null],
-            'removal boxes'       => ['WANTED: Removal boxes', '', null],
-            'hair removal cream'  => ['OFFER: Nads hair removal cream', '', null],
-            'job lot'             => ['OFFER: job lot of books', '', null],
-            'dinner service'      => ['OFFER: Dinner service', '', null],
-            'ladder loan'         => ['WANTED: Ladder loan', '', null],
-            'loan camera'         => ['WANTED: Loan IR camera', '', null],
-            'gardeners world'     => ["OFFER: Gardener's World magazines", '', null],
-            'decorator spares'    => ['OFFER: Decorator spares', '', null],
-            'different items'     => ['WANTED: different items', '', null],
-            'lifted turf'         => ['OFFER: Lifted turf', '', null],
-            'guitar tutor'        => ['OFFER: Guitar tutor', '', null],
-            'plain sofa'          => ['WANTED: Sofa', '', null],
-            'garden soil'         => ['OFFER: Garden soil', '', null],
-            'motorway services'   => ['WANTED: footstool', 'Collection near the motorway services', null],
+            'vacuum cleaner' => ['OFFER: Shark vacuum cleaner', '', null],
+            'patio cleaner' => ['OFFER: Patio Cleaner', '', null],
+            'plain vacuum' => ['WANTED: Vacuum cleaner', '', null],
+            'removal boxes' => ['WANTED: Removal boxes', '', null],
+            'hair removal cream' => ['OFFER: Nads hair removal cream', '', null],
+            'job lot' => ['OFFER: job lot of books', '', null],
+            'dinner service' => ['OFFER: Dinner service', '', null],
+            'ladder loan' => ['WANTED: Ladder loan', '', null],
+            'loan camera' => ['WANTED: Loan IR camera', '', null],
+            'gardeners world' => ["OFFER: Gardener's World magazines", '', null],
+            'decorator spares' => ['OFFER: Decorator spares', '', null],
+            'different items' => ['WANTED: different items', '', null],
+            'lifted turf' => ['OFFER: Lifted turf', '', null],
+            'guitar tutor' => ['OFFER: Guitar tutor', '', null],
+            'plain sofa' => ['WANTED: Sofa', '', null],
+            'garden soil' => ['OFFER: Garden soil', '', null],
+            'motorway services' => ['WANTED: footstool', 'Collection near the motorway services', null],
         ];
     }
 
@@ -421,17 +421,17 @@ class ContentCheckServiceTest extends TestCase
     public static function greetingSpamProvider(): array
     {
         return [
-            'no greeting no link'       => ['Sofa', 'Good condition sofa available', false],
-            'greeting no link'          => ['', 'Hello, I have a sofa to give away', false],
-            'no greeting with http'     => ['', 'See https://example.com for info', false],
-            'hello + http link'         => ['', 'Hello, visit https://buy-here.com', true],
-            'hi + http link'            => ['Hi there', 'Check https://site.com', true],
-            'hey + www link'            => ['', 'Hey visit www.site.com today', true],
-            'good morning + http'       => ['', 'Good morning, see https://offer.com', true],
-            'salutations + www'         => ['', 'Salutations! www.spam.com', true],
-            'greetings + link'          => ['', 'Greetings from https://site.org', true],
-            'good evening + link'       => ['', 'Good evening, http://spam.biz', true],
-            'sup + link'                => ['Sup', 'https://buy.com', true],
+            'no greeting no link' => ['Sofa', 'Good condition sofa available', false],
+            'greeting no link' => ['', 'Hello, I have a sofa to give away', false],
+            'no greeting with http' => ['', 'See https://example.com for info', false],
+            'hello + http link' => ['', 'Hello, visit https://buy-here.com', true],
+            'hi + http link' => ['Hi there', 'Check https://site.com', true],
+            'hey + www link' => ['', 'Hey visit www.site.com today', true],
+            'good morning + http' => ['', 'Good morning, see https://offer.com', true],
+            'salutations + www' => ['', 'Salutations! www.spam.com', true],
+            'greetings + link' => ['', 'Greetings from https://site.org', true],
+            'good evening + link' => ['', 'Good evening, http://spam.biz', true],
+            'sup + link' => ['Sup', 'https://buy.com', true],
             'greeting case insensitive' => ['', 'HELLO check https://site.com', true],
         ];
     }
@@ -442,7 +442,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_spamhaus_no_urls_returns_null(): void
     {
-        $result = $this->service->checkSpamhaus('Free sofa', 'Good condition', fn($d) => []);
+        $result = $this->service->checkSpamhaus('Free sofa', 'Good condition', fn ($d) => []);
         $this->assertNull($result);
     }
 
@@ -451,6 +451,7 @@ class ContentCheckServiceTest extends TestCase
         $called = [];
         $dns = function (string $domain) use (&$called): array {
             $called[] = $domain;
+
             return [];
         };
 
@@ -461,7 +462,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_spamhaus_blocked_domain_returns_flag(): void
     {
-        $dns = fn(string $d) => [['ip' => '127.0.0.2']]; // non-empty = blocked
+        $dns = fn (string $d) => [['ip' => '127.0.0.2']]; // non-empty = blocked
 
         $result = $this->service->checkSpamhaus('', 'Check https://spam-site.com for offers', $dns);
         $this->assertNotNull($result);
@@ -475,6 +476,7 @@ class ContentCheckServiceTest extends TestCase
         $calls = [];
         $dns = function (string $domain) use (&$calls): array {
             $calls[] = $domain;
+
             // Block only the second domain
             return str_contains($domain, 'second') ? [['ip' => '127.0.0.2']] : [];
         };
@@ -494,6 +496,7 @@ class ContentCheckServiceTest extends TestCase
         $checked = [];
         $dns = function (string $domain) use (&$checked): array {
             $checked[] = $domain;
+
             return [];
         };
 
@@ -592,7 +595,7 @@ class ContentCheckServiceTest extends TestCase
         // text, so a sub-80-char message is skipped before detection even if a
         // detector would flag it. This is how terse English replies (Discourse
         // #9481) stop being false-flagged.
-        $alwaysFlags = static fn(string $text) => ['fr' => 0.90, 'en' => 0.10];
+        $alwaysFlags = static fn (string $text) => ['fr' => 0.90, 'en' => 0.10];
         $text = 'Yes please can collect this thanks very much';
         $this->assertLessThanOrEqual(80, strlen($text));
         $result = $this->service->checkLanguage('', $text, $alwaysFlags);
@@ -602,7 +605,7 @@ class ContentCheckServiceTest extends TestCase
     public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
     {
         // A message the detector confidently identifies as French must still be flagged.
-        $nonEnglishDetector = static fn(string $text) => ['lang' => 'fr', 'reliable' => true];
+        $nonEnglishDetector = static fn (string $text) => ['lang' => 'fr', 'reliable' => true];
         $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
         $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
         $this->assertNotNull($result);
@@ -655,7 +658,7 @@ class ContentCheckServiceTest extends TestCase
         // the enforcement setting - it must not hold posts (Discourse #9987).
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'rules'    => json_encode(['fullymoderated' => true]),
+            'rules' => json_encode(['fullymoderated' => true]),
             'settings' => json_encode(['moderated' => 0]),
         ]);
 
@@ -673,17 +676,17 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_null_status_is_moderated(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         // Membership with NULL ourPostingStatus
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => null,
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -693,16 +696,16 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_explicit_moderated_status(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -712,16 +715,16 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_prohibited_status(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'PROHIBITED',
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -733,16 +736,16 @@ class ContentCheckServiceTest extends TestCase
     {
         // ENUM values are MODERATED / DEFAULT / PROHIBITED / UNMODERATED
         // (see memberships migration). DEFAULT means standard posting → not moderated.
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -752,7 +755,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_no_membership_is_moderated(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         // No membership inserted
         $msg = $this->createTestMessage($user, $group);
@@ -768,10 +771,10 @@ class ContentCheckServiceTest extends TestCase
         // gets. Those posts now arrive Pending awaiting this check, so calling the
         // missing membership "moderated" would strand every one of them in the mod
         // queue with nothing able to promote it.
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         // No membership inserted.
-        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-no-membership-' . uniqid()]);
+        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-no-membership-'.uniqid()]);
 
         $this->assertFalse($this->service->isUserModerated($msg->id, $group->id, $user->id));
     }
@@ -780,35 +783,35 @@ class ContentCheckServiceTest extends TestCase
     {
         // The TN fallback above applies ONLY when there is no membership at all - a
         // real moderated membership still moderates.
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
-            'added'   => now(),
+            'added' => now(),
         ]);
 
-        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-moderated-' . uniqid()]);
+        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-moderated-'.uniqid()]);
 
         $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
     }
 
     public function test_is_user_moderated_case_insensitive_moderated(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'moderated', // lowercase
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -818,16 +821,16 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_looks_up_fromuser_from_message(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid'  => $user->id,
+            'userid' => $user->id,
             'groupid' => $group->id,
-            'role'    => Membership::ROLE_MEMBER,
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',
-            'added'   => now(),
+            'added' => now(),
         ]);
 
         $msg = $this->createTestMessage($user, $group);
@@ -850,12 +853,12 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_fuzzy_match(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'heroin',
-            'category'   => 'substance_regulated',
+            'keyword' => 'heroin',
+            'category' => 'substance_regulated',
             'match_mode' => 'fuzzy',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'block',
         ]);
 
         $result = $this->service->checkConcernKeywords('free heroin', 'good stuff', 1);
@@ -868,12 +871,12 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_literal_match(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'knives',
-            'category'   => 'review',
+            'keyword' => 'knives',
+            'category' => 'review',
             'match_mode' => 'literal',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'flag',
         ]);
 
         $result = $this->service->checkConcernKeywords('', 'I have some knives available', 1);
@@ -884,12 +887,12 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_regex_match(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'crack\s+cocaine',
-            'category'   => 'substance_regulated',
+            'keyword' => 'crack\s+cocaine',
+            'category' => 'substance_regulated',
             'match_mode' => 'regex',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'block',
         ]);
 
         $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
@@ -904,12 +907,12 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_regex_match_reports_matched_text_not_pattern(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'crack\s+cocaine',
-            'category'   => 'substance_regulated',
+            'keyword' => 'crack\s+cocaine',
+            'category' => 'substance_regulated',
             'match_mode' => 'regex',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'block',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'block',
         ]);
 
         $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
@@ -922,13 +925,13 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_exclude_pattern_skips(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'guns',
-            'category'   => 'review',
+            'keyword' => 'guns',
+            'category' => 'review',
             'match_mode' => 'fuzzy',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
-            'exclude'    => 'toy|water\s+guns',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'flag',
+            'exclude' => 'toy|water\s+guns',
         ]);
 
         // Should be excluded because body matches the exclude pattern
@@ -939,12 +942,12 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_concern_keywords_allowed_category_skipped(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'sofa',
-            'category'   => 'allowed',  // Should be excluded from checks
+            'keyword' => 'sofa',
+            'category' => 'allowed',  // Should be excluded from checks
             'match_mode' => 'literal',
-            'scope'      => 'global',
-            'group_id'   => 0,
-            'action'     => 'flag',
+            'scope' => 'global',
+            'group_id' => 0,
+            'action' => 'flag',
         ]);
 
         $result = $this->service->checkConcernKeywords('Free sofa', 'collect anytime', 1);
@@ -956,12 +959,12 @@ class ContentCheckServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'badword',
-            'category'   => 'review',
+            'keyword' => 'badword',
+            'category' => 'review',
             'match_mode' => 'literal',
-            'scope'      => 'group',
-            'group_id'   => $group->id,
-            'action'     => 'flag',
+            'scope' => 'group',
+            'group_id' => $group->id,
+            'action' => 'flag',
         ]);
 
         $result = $this->service->checkConcernKeywords('', 'contains badword text', $group->id);
@@ -973,12 +976,12 @@ class ContentCheckServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'badword',
-            'category'   => 'review',
+            'keyword' => 'badword',
+            'category' => 'review',
             'match_mode' => 'literal',
-            'scope'      => 'group',
-            'group_id'   => $group->id,
-            'action'     => 'flag',
+            'scope' => 'group',
+            'group_id' => $group->id,
+            'action' => 'flag',
         ]);
 
         // Different group — should not match
@@ -1094,9 +1097,9 @@ class ContentCheckServiceTest extends TestCase
         $spammer = $this->createTestUser(['email_preferred' => 'spammer@evil.com']);
 
         DB::table('spam_users')->insert([
-            'userid'     => $spammer->id,
+            'userid' => $spammer->id,
             'collection' => 'Spammer',
-            'added'      => now(),
+            'added' => now(),
         ]);
 
         // Insert the email directly — createTestUser already does this, but ensure preferred email matches
@@ -1116,9 +1119,9 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_no_attachments_returns_null(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $msg = $this->createTestMessage($user, $group);
         // No attachments
 
         $result = $this->service->checkImageSpam($msg->id);
@@ -1127,13 +1130,13 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_no_hash_on_attachment_returns_null(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $msg = $this->createTestMessage($user, $group);
 
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id,
-            'hash'  => null,
+            'hash' => null,
         ]);
 
         $result = $this->service->checkImageSpam($msg->id);
@@ -1142,14 +1145,14 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_under_threshold_returns_null(): void
     {
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
-        $msg   = $this->createTestMessage($user, $group);
+        $msg = $this->createTestMessage($user, $group);
 
-        $hash = 'testhash_' . uniqid();
+        $hash = 'testhash_'.uniqid();
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id,
-            'hash'  => $hash,
+            'hash' => $hash,
         ]);
 
         // Only 1 occurrence (the message itself) — below threshold of 5
@@ -1163,8 +1166,8 @@ class ContentCheckServiceTest extends TestCase
     {
         // messages_attachments.hash is VARCHAR(16); cap to fit so the inserted
         // value round-trips and matches the message string verbatim.
-        $hash = substr('spamhash_' . uniqid(), 0, 16);
-        $user  = $this->createTestUser();
+        $hash = substr('spamhash_'.uniqid(), 0, 16);
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // Create 6 messages with the same image hash within 24h
@@ -1173,7 +1176,7 @@ class ContentCheckServiceTest extends TestCase
             DB::table('messages')->where('id', $msg->id)->update(['arrival' => now()->subHours(1)]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $msg->id,
-                'hash'  => $hash,
+                'hash' => $hash,
             ]);
         }
 
@@ -1187,8 +1190,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_old_occurrences_not_counted(): void
     {
-        $hash = 'oldhash_' . uniqid();
-        $user  = $this->createTestUser();
+        $hash = 'oldhash_'.uniqid();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
         // 4 messages with same hash but older than 24h
@@ -1197,7 +1200,7 @@ class ContentCheckServiceTest extends TestCase
             DB::table('messages')->where('id', $msg->id)->update(['arrival' => now()->subHours(30)]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $msg->id,
-                'hash'  => $hash,
+                'hash' => $hash,
             ]);
         }
 
@@ -1206,7 +1209,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('messages')->where('id', $recentMsg->id)->update(['arrival' => now()->subMinutes(5)]);
         DB::table('messages_attachments')->insert([
             'msgid' => $recentMsg->id,
-            'hash'  => $hash,
+            'hash' => $hash,
         ]);
 
         $result = $this->service->checkImageSpam($recentMsg->id);
@@ -1294,13 +1297,13 @@ class ContentCheckServiceTest extends TestCase
         $embedding->method('isInnocentContext')->willReturn(true);
         $service = new ContentCheckService($embedding);
 
-        $blockWord = 'testblockword' . uniqid();
-        $flagWord = 'testflagword' . uniqid();
+        $blockWord = 'testblockword'.uniqid();
+        $flagWord = 'testflagword'.uniqid();
         DB::table('concern_keywords')->insert([
             ['keyword' => $blockWord, 'category' => 'scam', 'action' => 'block',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
             ['keyword' => $flagWord, 'category' => 'scam', 'action' => 'flag',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
         ]);
 
         $blocked = $service->checkConcernKeywords('', "please confirm at {$blockWord} now", 0);
@@ -1331,25 +1334,25 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_literal_keyword_is_case_insensitive_and_whole_word(): void
     {
-        $word = 'Testblockword' . uniqid();
+        $word = 'Testblockword'.uniqid();
         DB::table('concern_keywords')->insert([
             'keyword' => $word, 'category' => 'scam', 'action' => 'block',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
         ]);
 
-        $this->assertNotNull($this->service->checkBlockKeywords('', 'see ' . strtoupper($word) . ' here'));
-        $this->assertNull($this->service->checkBlockKeywords('', 'see ' . $word . 'extra here'), 'still whole-word');
+        $this->assertNotNull($this->service->checkBlockKeywords('', 'see '.strtoupper($word).' here'));
+        $this->assertNull($this->service->checkBlockKeywords('', 'see '.$word.'extra here'), 'still whole-word');
     }
 
     public function test_block_hit_is_reported_ahead_of_an_earlier_flag_hit(): void
     {
-        $flagWord = 'aaaflagword' . uniqid();
-        $blockWord = 'zzzblockword' . uniqid();
+        $flagWord = 'aaaflagword'.uniqid();
+        $blockWord = 'zzzblockword'.uniqid();
         DB::table('concern_keywords')->insert([
             ['keyword' => $flagWord, 'category' => 'review', 'action' => 'flag',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
             ['keyword' => $blockWord, 'category' => 'scam', 'action' => 'block',
-             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
+                'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0],
         ]);
 
         $result = $this->service->checkConcernKeywords('', "{$flagWord} and {$blockWord}", 0);
@@ -1359,8 +1362,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_block_keywords_can_be_restricted_to_ids(): void
     {
-        $one = 'testblockone' . uniqid();
-        $two = 'testblocktwo' . uniqid();
+        $one = 'testblockone'.uniqid();
+        $two = 'testblocktwo'.uniqid();
         $idOne = DB::table('concern_keywords')->insertGetId([
             'keyword' => $one, 'category' => 'scam', 'action' => 'block',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,

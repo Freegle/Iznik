@@ -14,6 +14,7 @@ use Tests\TestCase;
 class Wave2SpamCleanupTest extends TestCase
 {
     private const SPAMMER_COLLECTION = 'Spammer';
+
     // SELECT memberships.userid, memberships.groupid FROM memberships
     //   INNER JOIN spam_users ... WHERE spam_users.collection = ? AND memberships.role = ?
     private const SITE_SPAM_MEMBERSHIPS = '2f303c41d476';
@@ -23,8 +24,11 @@ class Wave2SpamCleanupTest extends TestCase
 
     // DELETE FROM <t> WHERE <col> IN (SELECT userid FROM spam_users WHERE collection = ?)
     private const SITE_DEL_NEWSFEED = '0dff831da965';
+
     private const SITE_DEL_NOTIFICATIONS = 'a1058358a274';
+
     private const SITE_DEL_EXPECTED = '82d31a13ca56';
+
     private const SITE_DEL_SESSIONS = 'd8432452343e';
 
     public function test_spam_memberships(): void
@@ -50,12 +54,12 @@ class Wave2SpamCleanupTest extends TestCase
             ->select('messages.id', 'messages_groups.groupid')
             ->join('spam_users', function ($j) {
                 $j->on('messages.fromuser', '=', 'spam_users.userid')
-                  ->where('spam_users.collection', self::SPAMMER_COLLECTION);
+                    ->where('spam_users.collection', self::SPAMMER_COLLECTION);
             })
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->join('users', function ($j) {
                 $j->on('messages.fromuser', '=', 'users.id')
-                  ->where('users.systemrole', User::SYSTEMROLE_USER);
+                    ->where('users.systemrole', User::SYSTEMROLE_USER);
             })
             ->whereNull('messages.deleted'));
     }

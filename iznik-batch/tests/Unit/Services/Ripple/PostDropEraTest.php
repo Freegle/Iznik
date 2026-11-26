@@ -37,7 +37,7 @@ class PostDropEraTest extends TestCase
         parent::setUp();
         DB::statement('DELETE FROM rippling_reach');
         $this->fakeRingIndex();
-        $this->cells = new CellSetService();
+        $this->cells = new CellSetService;
     }
 
     /**
@@ -98,7 +98,7 @@ class PostDropEraTest extends TestCase
         }
         $this->verdictFakeInstalled = true;
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (!str_contains($request->url(), 'reach-eval')) {
+            if (! str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             $results = array_map(
@@ -114,14 +114,14 @@ class PostDropEraTest extends TestCase
     {
         $msgid = $this->seedReach();
         $this->fakeVerdict('in');
-        $this->assertTrue((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertTrue((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
     }
 
     public function test_reply_gate_refuses_on_the_label_verdict_alone(): void
     {
         $msgid = $this->seedReach();
         $this->fakeVerdict('out');
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
     }
 
     /**
@@ -135,7 +135,7 @@ class PostDropEraTest extends TestCase
         \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
         \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response(null, 500)]);
 
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
         \App\Services\Ripple\ReachService::resetLabelEvalBreaker();
     }
 
@@ -143,7 +143,7 @@ class PostDropEraTest extends TestCase
     {
         $msgid = $this->seedReach();
         $this->fakeVerdict('nolabels');
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
     }
 
     // ---- the first-reply passthrough gate ----
@@ -168,7 +168,7 @@ class PostDropEraTest extends TestCase
     public function test_miles_outside_reach_comes_from_the_label(): void
     {
         $msgid = $this->seedReach();
-        $svc = new RippleReplyService(new ReachQueryService());
+        $svc = new RippleReplyService(new ReachQueryService);
 
         $method = new \ReflectionMethod($svc, 'milesOutsideReach');
         $method->setAccessible(true);
@@ -191,7 +191,7 @@ class PostDropEraTest extends TestCase
         DB::statement('UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?',
             ['POLYGON((-0.01 51.49, 0.0 51.49, 0.0 51.5, -0.01 51.5, -0.01 51.49))', $msgid]);
 
-        (new ReachBoundsService())->syncFromPolygon($msgid);
+        (new ReachBoundsService)->syncFromPolygon($msgid);
 
         // Whatever it derived, the outer bound must CONTAIN the reach: that is
         // the superset guarantee every degraded read path depends on.
@@ -213,10 +213,9 @@ class PostDropEraTest extends TestCase
         DB::statement('UPDATE rippling_reach SET polygon_cells = NULL, inner_bound = ST_GeomFromText(?, 3857) WHERE msgid = ?',
             [self::INNER_POLY, $msgid]);
 
-        (new ReachBoundsService())->syncFromPolygon($msgid);
+        (new ReachBoundsService)->syncFromPolygon($msgid);
 
         $inner = DB::table('rippling_reach')->where('msgid', $msgid)->value('inner_bound');
         $this->assertNull($inner, 'an unmeasurable reach must lose its cheap-accept bound');
     }
-
 }

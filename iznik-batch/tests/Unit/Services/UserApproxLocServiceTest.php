@@ -24,7 +24,7 @@ class UserApproxLocServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new UserApproxLocService();
+        $this->service = new UserApproxLocService;
         $this->group = $this->createTestGroup();
     }
 
@@ -314,7 +314,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw('ST_SRID(POINT(-0.1, 51.5), 3857)'),
             'timestamp' => now()->subDays(250),
         ]);
 
@@ -331,7 +331,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $fresh->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw('ST_SRID(POINT(-0.1, 51.5), 3857)'),
             'timestamp' => now()->subDays(30),
         ]);
 
@@ -362,7 +362,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw('ST_SRID(POINT(-0.1, 51.5), 3857)'),
             'timestamp' => now()->subDays(250),
         ]);
 

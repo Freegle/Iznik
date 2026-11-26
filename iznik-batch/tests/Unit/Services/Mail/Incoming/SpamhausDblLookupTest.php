@@ -19,7 +19,8 @@ class SpamhausDblLookupTest extends TestCase
 
     public function test_asks_dns_for_the_host_under_the_dbl_zone(): void
     {
-        $lookup = new class extends SpamhausDblLookup {
+        $lookup = new class extends SpamhausDblLookup
+        {
             public array $asked = [];
 
             protected function aRecords(string $name): array

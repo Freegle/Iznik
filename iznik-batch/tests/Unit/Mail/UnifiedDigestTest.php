@@ -4,7 +4,6 @@ namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
 use App\Models\Membership;
-use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
 use Carbon\Carbon;
 use Illuminate\Mail\Mailable;
@@ -36,12 +35,11 @@ class UnifiedDigestTest extends TestCase
     private function spoolAndLoad(Mailable $mailable, string $recipient): array
     {
         $id = $this->spooler->spool($mailable, $recipient);
-        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $path = $this->testSpoolDir.'/pending/'.$id.'.json';
         $data = json_decode(file_get_contents($path), true);
 
         return $data ?? [];
     }
-
 
     public function test_can_be_constructed(): void
     {
@@ -370,7 +368,7 @@ class UnifiedDigestTest extends TestCase
         $this->assertSame($cap, $this->countCards($text));
         $this->assertStringContainsString('OwnItem1Zq', $text);
         $this->assertStringContainsString("OwnItem{$cap}Zq", $text);
-        $this->assertStringNotContainsString('OwnItem' . ($cap + 1) . 'Zq', $text);
+        $this->assertStringNotContainsString('OwnItem'.($cap + 1).'Zq', $text);
         $this->assertStringNotContainsString('OtherItem1Zq', $text);
         $this->assertStringContainsString("We've limited this to {$cap} posts", $text);
     }
@@ -413,7 +411,7 @@ class UnifiedDigestTest extends TestCase
 
         // The subject still describes the whole eligible set: over the cap, no count.
         $this->assertStringStartsWith("What's New", $mail->envelope()->subject);
-        $this->assertStringNotContainsString('(' . ($cap + 4) . ' posts)', $mail->envelope()->subject);
+        $this->assertStringNotContainsString('('.($cap + 4).' posts)', $mail->envelope()->subject);
     }
 
     /**
@@ -489,7 +487,7 @@ class UnifiedDigestTest extends TestCase
      * the AMP part is rendered.
      *
      * @return array{0: UnifiedDigest, 1: int} the mailable and the recipient's
-     *   own message id (0 when there is none)
+     *                                         own message id (0 when there is none)
      */
     private function dailyDigestForGmailRecipient(int $otherPosts, bool $withOwnPost = false): array
     {
@@ -561,7 +559,7 @@ class UnifiedDigestTest extends TestCase
         $this->assertCount(3, $posts);
         foreach ($posts as $post) {
             $this->assertMatchesRegularExpression(
-                '#<a href="' . preg_quote(e($post['fallbackReplyUrl']), '#') . '" class="reply-btn(?: wanted)?">Reply</a>#',
+                '#<a href="'.preg_quote(e($post['fallbackReplyUrl']), '#').'" class="reply-btn(?: wanted)?">Reply</a>#',
                 $amp,
                 "the card's Reply is an anchor to that post's website reply link"
             );
@@ -602,7 +600,7 @@ class UnifiedDigestTest extends TestCase
 
         $this->assertTrue($posts[$ownId]['isOwnPost']);
         $this->assertStringNotContainsString(
-            'href="' . e($posts[$ownId]['fallbackReplyUrl']) . '" class="reply-btn',
+            'href="'.e($posts[$ownId]['fallbackReplyUrl']).'" class="reply-btn',
             $amp,
             'you cannot reply to your own post'
         );
@@ -637,7 +635,7 @@ class UnifiedDigestTest extends TestCase
 
         $this->assertStringContainsString('<amp-accordion class="reply-acc">', $amp);
         $this->assertStringContainsString(
-            '<form method="post" action-xhr="' . e($post['ampReplyUrl']) . '">',
+            '<form method="post" action-xhr="'.e($post['ampReplyUrl']).'">',
             $amp,
             'the single-post immediate digest still replies from inside the email'
         );
@@ -747,6 +745,7 @@ class UnifiedDigestTest extends TestCase
     private function digestTemplateData(array $jobAds, array $sponsors): array
     {
         $user = (object) ['email_preferred' => 'r@example.com', 'displayname' => 'Sam'];
+
         return [
             'user' => $user,
             'posts' => collect(),
@@ -1107,7 +1106,7 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
         $envelope = $mail->envelope();
 
-        $this->assertEquals('Ewalina on ' . config('freegle.branding.name'), $envelope->from->name);
+        $this->assertEquals('Ewalina on '.config('freegle.branding.name'), $envelope->from->name);
         $this->assertStringNotContainsString('Freegler', $envelope->from->name);
     }
 
@@ -1140,7 +1139,7 @@ class UnifiedDigestTest extends TestCase
         $envelope = $mail->envelope();
 
         $this->assertEquals(
-            'Ewalina on ' . config('freegle.branding.name'),
+            'Ewalina on '.config('freegle.branding.name'),
             $envelope->from->name
         );
         $this->assertStringNotContainsString('Trash Nothing', $envelope->from->name);
@@ -1169,7 +1168,7 @@ class UnifiedDigestTest extends TestCase
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-        $expectedReplyTo = "replyto-{$message->id}-{$user->id}@" . config('freegle.mail.user_domain');
+        $expectedReplyTo = "replyto-{$message->id}-{$user->id}@".config('freegle.mail.user_domain');
         $noreply = config('freegle.mail.noreply_addr');
 
         $data = $this->spoolAndLoad($mail, $user->email_preferred);
@@ -1232,14 +1231,14 @@ class UnifiedDigestTest extends TestCase
         // AI attachment first (lower id), user photo second (higher id).
         $aiId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
             'msgid' => $message->id,
-            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'externaluid' => 'freegletusd-'.str_repeat('a', 32),
             'externalmods' => json_encode(['ai' => true]),
             'primary' => 0,
             'archived' => 0,
         ]);
         $primaryId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
             'msgid' => $message->id,
-            'externaluid' => 'freegletusd-' . str_repeat('p', 32),
+            'externaluid' => 'freegletusd-'.str_repeat('p', 32),
             'primary' => 1,
             'archived' => 0,
         ]);
@@ -1309,7 +1308,7 @@ class UnifiedDigestTest extends TestCase
 
         $body = "First line of description\nSecond line\n\nNew paragraph after blank";
         $message = $this->createTestMessage($poster, $group, [
-            'subject'  => 'OFFER: Sofa (London)',
+            'subject' => 'OFFER: Sofa (London)',
             'textbody' => $body,
         ]);
 
@@ -1330,7 +1329,7 @@ class UnifiedDigestTest extends TestCase
         $this->assertGreaterThanOrEqual(
             3,
             $brCount,
-            'Multi-line user description should render with <br> per newline; got ' . $brCount . ' <br> tags in HTML body'
+            'Multi-line user description should render with <br> per newline; got '.$brCount.' <br> tags in HTML body'
         );
 
         // And the user content must still be present (i.e. nl2br didn't
@@ -1425,11 +1424,11 @@ class UnifiedDigestTest extends TestCase
         $locationId = DB::table('locations')->insertGetId([
             'name' => 'TestUserLocation',
             'type' => 'Point',
-            'lat'  => 51.55,    // ~3 miles north of the default group/message lat
-            'lng'  => -0.1278,
+            'lat' => 51.55,    // ~3 miles north of the default group/message lat
+            'lng' => -0.1278,
         ]);
 
-        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $user = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(); // defaults: lat=51.5074, lng=-0.1278
         $this->createMembership($user, $group);
 
@@ -1440,10 +1439,10 @@ class UnifiedDigestTest extends TestCase
         ]);
 
         $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
-        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 
         $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
-        $html    = $spooled['html'] ?? '';
+        $html = $spooled['html'] ?? '';
 
         $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
         // The distance text rendered by haversineDistance() must appear in the
@@ -1462,7 +1461,7 @@ class UnifiedDigestTest extends TestCase
         // messages.date is > 60 minutes before the pivot arrival date (i.e. the
         // item was reposted). Without this test the firstPostedFormatted branch
         // in UnifiedDigest::prepareCard() was never covered.
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
@@ -1472,15 +1471,15 @@ class UnifiedDigestTest extends TestCase
         $originalDate = Carbon::now()->subDays(3);
         $message = $this->createTestMessage($poster, $group, [
             'subject' => 'OFFER: Bookshelf (London)',
-            'date'    => $originalDate,
+            'date' => $originalDate,
             'arrival' => Carbon::now(),
         ]);
 
         $posts = collect([['message' => $message, 'postedToGroups' => [$group->id]]]);
-        $mail  = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
 
         $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
-        $html    = $spooled['html'] ?? '';
+        $html = $spooled['html'] ?? '';
 
         $this->assertNotEmpty($html, 'Spooled digest HTML should not be empty');
         // The "First posted" line must appear since the item was reposted 3 days
@@ -1592,7 +1591,7 @@ class UnifiedDigestTest extends TestCase
         // email_tracking.scroll_depth_percent via the same max-update logic as the
         // long-form trackedImageUrl path. Compact URLs without s= meant scroll depth
         // was never populated for digest recipients (Fix 15).
-        $user  = $this->createTestUser();
+        $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
@@ -1605,10 +1604,10 @@ class UnifiedDigestTest extends TestCase
         // Give msg1 an internal attachment (externaluid set, no externalurl) so
         // prepareCard() takes the compact URL path instead of the fallback URL.
         DB::table('messages_attachments')->insertGetId([
-            'msgid'       => $msg1->id,
-            'externaluid' => 'freegletusd-' . str_repeat('c', 32),
-            'primary'     => 1,
-            'archived'    => 0,
+            'msgid' => $msg1->id,
+            'externaluid' => 'freegletusd-'.str_repeat('c', 32),
+            'primary' => 1,
+            'archived' => 0,
         ]);
 
         // Eager-load fromUser so prepareCard() resolves $posterUser and takes the

@@ -37,10 +37,10 @@ class LocationTest extends TestCase
     {
         $srid = (int) config('freegle.srid', 3857);
         DB::table('locations')->updateOrInsert(['id' => $id], [
-            'name'     => $name,
-            'type'     => 'Postcode',
-            'lat'      => $lat,
-            'lng'      => $lng,
+            'name' => $name,
+            'type' => 'Postcode',
+            'lat' => $lat,
+            'lng' => $lng,
             'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
         ]);
         $this->seedSpatialPoint('postcodes', $id, $lat, $lng);
@@ -49,7 +49,7 @@ class LocationTest extends TestCase
     public function test_subject_area_is_the_area_name_and_outward_code(): void
     {
         $areaId = (int) DB::table('locations')->insertGetId(['name' => 'Stoneygate', 'type' => 'Polygon']);
-        $pcId   = (int) DB::table('locations')->insertGetId(['name' => 'LE2 3HE', 'type' => 'Postcode', 'areaid' => $areaId]);
+        $pcId = (int) DB::table('locations')->insertGetId(['name' => 'LE2 3HE', 'type' => 'Postcode', 'areaid' => $areaId]);
         $bareId = (int) DB::table('locations')->insertGetId(['name' => 'ZZ9 9ZY', 'type' => 'Postcode']);
         $townId = (int) DB::table('locations')->insertGetId(['name' => 'Grantown on Spey', 'type' => 'Place']);
         try {
@@ -121,25 +121,25 @@ class LocationTest extends TestCase
 
         // Group A (Southwark): centroid ~8 km from event, but polyindex POLYGON contains event.
         $southwark = $this->createTestGroup([
-            'lat'      => 51.450,
-            'lng'      => -0.200,
-            'publish'  => 1,
+            'lat' => 51.450,
+            'lng' => -0.200,
+            'publish' => 1,
             'listable' => 1,
         ]);
         // Override the auto-created POINT polyindex with a polygon that covers the event location.
         // WKT uses the same "lat/lng degree coordinates labeled SRID 3857" convention used
         // throughout the codebase for polyindex (ST_GeomFromText(poly, 3857) where poly is WGS84).
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
             ['POLYGON((-0.15 51.46, -0.15 51.52, -0.05 51.52, -0.05 51.46, -0.15 51.46))', $srid, $southwark->id]
         );
 
         // Group B (Tower Hamlets): centroid ~140 m from event (very close), but polyindex is
         // a POINT — ST_Contains(POINT, POINT) returns false for non-identical points.
         $towerHamlets = $this->createTestGroup([
-            'lat'      => 51.491,
-            'lng'      => -0.089,
-            'publish'  => 1,
+            'lat' => 51.491,
+            'lng' => -0.089,
+            'publish' => 1,
             'listable' => 1,
         ]);
 
@@ -184,12 +184,12 @@ class LocationTest extends TestCase
         // so no real postcode out-competes the seeded sentinels).
         $group = $this->createTestGroup(['lat' => 56.70, 'lng' => 3.00, 'publish' => 1, 'listable' => 1]);
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
             ['POLYGON((2.95 56.65, 2.95 56.75, 3.05 56.75, 3.05 56.65, 2.95 56.65))', $srid, $group->id]
         );
 
         $outId = self::TEST_PC_ID;       // nearest to the point, but OUTSIDE the group
-        $inId  = self::TEST_PC_ID + 1;   // slightly farther, INSIDE the group
+        $inId = self::TEST_PC_ID + 1;   // slightly farther, INSIDE the group
         $this->seedPostcode($outId, 'OUT 1AA', 56.70, 2.945); // lng 2.945 < 2.95 -> outside
         $this->seedPostcode($inId, 'IN 1BB', 56.70, 2.975);   // inside the polygon
 

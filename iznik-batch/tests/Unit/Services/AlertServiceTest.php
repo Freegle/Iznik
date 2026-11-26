@@ -54,6 +54,7 @@ class AlertServiceTest extends TestCase
     {
         $method = new \ReflectionMethod(AlertService::class, 'resolveFrom');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $role);
     }
 
@@ -61,14 +62,14 @@ class AlertServiceTest extends TestCase
     // processAlerts — no alerts
     // ===================================================================
 
-    public function test_processAlerts_returns_zero_when_no_incomplete_alerts(): void
+    public function test_process_alerts_returns_zero_when_no_incomplete_alerts(): void
     {
         $result = $this->service->processAlerts();
 
         $this->assertSame(0, $result);
     }
 
-    public function test_processAlerts_ignores_completed_alerts(): void
+    public function test_process_alerts_ignores_completed_alerts(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -86,7 +87,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — dry-run
     // ===================================================================
 
-    public function test_processAlerts_dryRun_returns_zero_and_sends_no_mail(): void
+    public function test_process_alerts_dry_run_returns_zero_and_sends_no_mail(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -100,7 +101,7 @@ class AlertServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_processAlerts_dryRun_does_not_update_groupprogress(): void
+    public function test_process_alerts_dry_run_does_not_update_groupprogress(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -114,7 +115,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame(0, (int) $alert->groupprogress, 'groupprogress must not change in dry-run');
     }
 
-    public function test_processAlerts_dryRun_does_not_mark_alert_complete(): void
+    public function test_process_alerts_dry_run_does_not_mark_alert_complete(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -128,7 +129,7 @@ class AlertServiceTest extends TestCase
         $this->assertNull($alert->complete, 'alert must not be marked complete in dry-run');
     }
 
-    public function test_processAlerts_dryRun_does_not_insert_tracking_records(): void
+    public function test_process_alerts_dry_run_does_not_insert_tracking_records(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -146,7 +147,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — real run
     // ===================================================================
 
-    public function test_processAlerts_sends_email_to_moderator(): void
+    public function test_process_alerts_sends_email_to_moderator(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -166,7 +167,7 @@ class AlertServiceTest extends TestCase
         Mail::assertSentCount(1);
     }
 
-    public function test_processAlerts_sends_email_to_owner(): void
+    public function test_process_alerts_sends_email_to_owner(): void
     {
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
@@ -179,7 +180,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame(1, $result);
     }
 
-    public function test_processAlerts_does_not_send_to_member_role(): void
+    public function test_process_alerts_does_not_send_to_member_role(): void
     {
         $group = $this->createTestGroup();
         $member = $this->createTestUser();
@@ -193,7 +194,7 @@ class AlertServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_processAlerts_updates_groupprogress_after_each_group(): void
+    public function test_process_alerts_updates_groupprogress_after_each_group(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -209,7 +210,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame($group->id, (int) $alert->groupprogress);
     }
 
-    public function test_processAlerts_marks_alert_complete_when_under_batch_limit(): void
+    public function test_process_alerts_marks_alert_complete_when_under_batch_limit(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -223,7 +224,7 @@ class AlertServiceTest extends TestCase
         $this->assertNotNull($alert->complete, 'alert should be marked complete when fewer than 50 groups processed');
     }
 
-    public function test_processAlerts_inserts_tracking_record(): void
+    public function test_process_alerts_inserts_tracking_record(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -247,7 +248,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — multiple groups / mods
     // ===================================================================
 
-    public function test_processAlerts_sends_one_email_per_mod_across_groups(): void
+    public function test_process_alerts_sends_one_email_per_mod_across_groups(): void
     {
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
@@ -269,7 +270,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame(1, $result);
     }
 
-    public function test_processAlerts_sends_to_multiple_mods_in_same_group(): void
+    public function test_process_alerts_sends_to_multiple_mods_in_same_group(): void
     {
         $group = $this->createTestGroup();
         $mod1 = $this->createTestUser();
@@ -284,7 +285,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame(2, $result);
     }
 
-    public function test_processAlerts_returns_total_across_multiple_alerts(): void
+    public function test_process_alerts_returns_total_across_multiple_alerts(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -303,7 +304,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — groupprogress filtering
     // ===================================================================
 
-    public function test_processAlerts_skips_groups_already_processed(): void
+    public function test_process_alerts_skips_groups_already_processed(): void
     {
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
@@ -329,7 +330,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — skip conditions
     // ===================================================================
 
-    public function test_processAlerts_skips_deleted_users(): void
+    public function test_process_alerts_skips_deleted_users(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -346,7 +347,7 @@ class AlertServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_processAlerts_skips_bounced_email(): void
+    public function test_process_alerts_skips_bounced_email(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -363,7 +364,7 @@ class AlertServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_processAlerts_skips_alert_when_no_groups_match(): void
+    public function test_process_alerts_skips_alert_when_no_groups_match(): void
     {
         // Set groupprogress beyond every group id so NO group matches — this also
         // excludes any groups leaked (and not rolled back) by other test classes,
@@ -379,7 +380,7 @@ class AlertServiceTest extends TestCase
         $this->assertNotNull($alert->complete);
     }
 
-    public function test_processAlerts_skips_group_if_not_published(): void
+    public function test_process_alerts_skips_group_if_not_published(): void
     {
         $group = $this->createTestGroup(['publish' => 0]);
         $mod = $this->createTestUser();
@@ -392,13 +393,13 @@ class AlertServiceTest extends TestCase
         $this->assertSame(0, $result);
     }
 
-    public function test_processAlerts_skips_non_freegle_group(): void
+    public function test_process_alerts_skips_non_freegle_group(): void
     {
         // createTestGroup() always creates TYPE_FREEGLE, so make a non-Freegle
         // group via the Group model (not a raw DB insert) so its creating hook
         // populates the NOT-NULL polyindex geometry from lat/lng.
         $nonFreegleGroupId = \App\Models\Group::create([
-            'nameshort' => 'NotFreegle_' . uniqid('', true),
+            'nameshort' => 'NotFreegle_'.uniqid('', true),
             'namefull' => 'Not a Freegle group',
             'type' => 'Yahoo',
             'publish' => 1,
@@ -428,7 +429,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — html vs text body
     // ===================================================================
 
-    public function test_processAlerts_uses_html_field_when_present(): void
+    public function test_process_alerts_uses_html_field_when_present(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -446,7 +447,7 @@ class AlertServiceTest extends TestCase
         Mail::assertSentCount(1);
     }
 
-    public function test_processAlerts_falls_back_to_nl2br_text_when_html_empty(): void
+    public function test_process_alerts_falls_back_to_nl2br_text_when_html_empty(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -467,7 +468,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — single-group targeting (alerts.groupid)
     // ===================================================================
 
-    public function test_processAlerts_single_group_targets_only_that_group(): void
+    public function test_process_alerts_single_group_targets_only_that_group(): void
     {
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
@@ -488,7 +489,7 @@ class AlertServiceTest extends TestCase
         Mail::assertSentCount(2);
     }
 
-    public function test_processAlerts_single_group_copies_sender(): void
+    public function test_process_alerts_single_group_copies_sender(): void
     {
         config(['freegle.mail.geeks_addr' => 'geeks@ilovefreegle.org']);
 
@@ -506,7 +507,7 @@ class AlertServiceTest extends TestCase
         });
     }
 
-    public function test_processAlerts_single_group_passes_quote_files_and_required_reply(): void
+    public function test_process_alerts_single_group_passes_quote_files_and_required_reply(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -536,7 +537,7 @@ class AlertServiceTest extends TestCase
         });
     }
 
-    public function test_processAlerts_single_group_marks_complete(): void
+    public function test_process_alerts_single_group_marks_complete(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -550,7 +551,7 @@ class AlertServiceTest extends TestCase
         $this->assertNotNull($alert->complete, 'single-group alert should complete in one pass');
     }
 
-    public function test_processAlerts_single_group_dryRun_sends_nothing(): void
+    public function test_process_alerts_single_group_dry_run_sends_nothing(): void
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
@@ -570,7 +571,7 @@ class AlertServiceTest extends TestCase
     // processAlerts — group contact email (OwnerEmail)
     // ===================================================================
 
-    public function test_processAlerts_sends_to_group_contactmail(): void
+    public function test_process_alerts_sends_to_group_contactmail(): void
     {
         $group = $this->createTestGroup(['contactmail' => 'volunteers@example.org']);
         $mod = $this->createTestUser();
@@ -592,7 +593,7 @@ class AlertServiceTest extends TestCase
         $this->assertNotNull($ownerTracking, 'an OwnerEmail tracking row should be recorded');
     }
 
-    public function test_processAlerts_no_contactmail_no_owner_email(): void
+    public function test_process_alerts_no_contactmail_no_owner_email(): void
     {
         $group = $this->createTestGroup(); // no contactmail
         $mod = $this->createTestUser();
@@ -610,7 +611,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame(0, $owner);
     }
 
-    public function test_processAlerts_invalid_contactmail_skipped(): void
+    public function test_process_alerts_invalid_contactmail_skipped(): void
     {
         $group = $this->createTestGroup(['contactmail' => 'not-an-email']);
         $mod = $this->createTestUser();
@@ -628,7 +629,7 @@ class AlertServiceTest extends TestCase
     // resolveFrom — known roles with config lookup
     // ===================================================================
 
-    public function test_resolveFrom_support_returns_config_addr(): void
+    public function test_resolve_from_support_returns_config_addr(): void
     {
         config(['freegle.mail.support_addr' => 'support@ilovefreegle.org']);
 
@@ -638,7 +639,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame('Freegle Support', $name);
     }
 
-    public function test_resolveFrom_info_returns_config_addr(): void
+    public function test_resolve_from_info_returns_config_addr(): void
     {
         config(['freegle.mail.info_addr' => 'info@ilovefreegle.org']);
 
@@ -648,7 +649,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame('Freegle Info', $name);
     }
 
-    public function test_resolveFrom_geeks_returns_config_addr(): void
+    public function test_resolve_from_geeks_returns_config_addr(): void
     {
         config(['freegle.mail.geeks_addr' => 'geeks@ilovefreegle.org']);
 
@@ -658,7 +659,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame('Freegle Geeks', $name);
     }
 
-    public function test_resolveFrom_mentors_returns_config_addr(): void
+    public function test_resolve_from_mentors_returns_config_addr(): void
     {
         config(['freegle.mail.mentors_addr' => 'mentors@ilovefreegle.org']);
 
@@ -673,7 +674,7 @@ class AlertServiceTest extends TestCase
     // ===================================================================
 
     #[DataProvider('hardcodedRoleProvider')]
-    public function test_resolveFrom_hardcoded_roles(string $role, string $expectedAddr, string $expectedName): void
+    public function test_resolve_from_hardcoded_roles(string $role, string $expectedAddr, string $expectedName): void
     {
         [$addr, $name] = $this->invokeResolveFrom($role);
 
@@ -684,13 +685,13 @@ class AlertServiceTest extends TestCase
     public static function hardcodedRoleProvider(): array
     {
         return [
-            'board'       => ['board',       'board@ilovefreegle.org',       'Freegle Board'],
-            'chair'       => ['chair',       'chair@ilovefreegle.org',       'Freegle Chair'],
-            'newgroups'   => ['newgroups',   'newgroups@ilovefreegle.org',   'Freegle New Groups'],
-            'ro'          => ['ro',          'ro@ilovefreegle.org',          'Freegle Returning Officer'],
-            'volunteers'  => ['volunteers',  'volunteers@ilovefreegle.org',  'Freegle Volunteers'],
+            'board' => ['board',       'board@ilovefreegle.org',       'Freegle Board'],
+            'chair' => ['chair',       'chair@ilovefreegle.org',       'Freegle Chair'],
+            'newgroups' => ['newgroups',   'newgroups@ilovefreegle.org',   'Freegle New Groups'],
+            'ro' => ['ro',          'ro@ilovefreegle.org',          'Freegle Returning Officer'],
+            'volunteers' => ['volunteers',  'volunteers@ilovefreegle.org',  'Freegle Volunteers'],
             'centralmods' => ['centralmods', 'centralmods@ilovefreegle.org', 'Freegle Volunteer Support'],
-            'councils'    => ['councils',    'councils@ilovefreegle.org',    'Freegle Partnerships'],
+            'councils' => ['councils',    'councils@ilovefreegle.org',    'Freegle Partnerships'],
         ];
     }
 
@@ -698,7 +699,7 @@ class AlertServiceTest extends TestCase
     // resolveFrom — unknown role fallback
     // ===================================================================
 
-    public function test_resolveFrom_unknown_role_falls_back_to_geeks_addr(): void
+    public function test_resolve_from_unknown_role_falls_back_to_geeks_addr(): void
     {
         config(['freegle.mail.geeks_addr' => 'geeks@ilovefreegle.org']);
 
@@ -708,7 +709,7 @@ class AlertServiceTest extends TestCase
         $this->assertSame('Freegle', $name);
     }
 
-    public function test_resolveFrom_empty_role_falls_back_to_geeks_addr(): void
+    public function test_resolve_from_empty_role_falls_back_to_geeks_addr(): void
     {
         config(['freegle.mail.geeks_addr' => 'geeks@ilovefreegle.org']);
 
@@ -722,7 +723,7 @@ class AlertServiceTest extends TestCase
     // resolveFrom — config fallback within known roles
     // ===================================================================
 
-    public function test_resolveFrom_support_falls_back_to_geeks_when_config_absent(): void
+    public function test_resolve_from_support_falls_back_to_geeks_when_config_absent(): void
     {
         // If FREEGLE_SUPPORT_ADDR is not set, the config falls back to FREEGLE_GEEKS_ADDR.
         config([

@@ -10,19 +10,19 @@ class BatchEmailProgressModelTest extends TestCase
 {
     public function test_batch_email_progress_has_correct_table(): void
     {
-        $progress = new BatchEmailProgress();
+        $progress = new BatchEmailProgress;
         $this->assertEquals('batch_email_progress', $progress->getTable());
     }
 
     public function test_batch_email_progress_has_no_timestamps(): void
     {
-        $progress = new BatchEmailProgress();
+        $progress = new BatchEmailProgress;
         $this->assertFalse($progress->timestamps);
     }
 
     public function test_batch_email_progress_casts(): void
     {
-        $progress = new BatchEmailProgress();
+        $progress = new BatchEmailProgress;
         $casts = $progress->getCasts();
 
         $this->assertArrayHasKey('last_processed_at', $casts);
@@ -33,7 +33,7 @@ class BatchEmailProgressModelTest extends TestCase
 
     public function test_batch_email_progress_fillable(): void
     {
-        $progress = new BatchEmailProgress();
+        $progress = new BatchEmailProgress;
         $fillable = $progress->getFillable();
 
         $this->assertContains('job_type', $fillable);
@@ -78,7 +78,7 @@ class BatchEmailProgressModelTest extends TestCase
 
         $this->assertEquals(42, $progress->last_processed_id);
         $this->assertNotNull($progress->last_processed_at);
-        
+
         // Verify persisted to database.
         $reloaded = BatchEmailProgress::find($progress->id);
         $this->assertEquals(42, $reloaded->last_processed_id);
@@ -94,7 +94,7 @@ class BatchEmailProgressModelTest extends TestCase
         $progress->markStarted();
 
         $this->assertNotNull($progress->started_at);
-        
+
         // Verify persisted to database.
         $reloaded = BatchEmailProgress::find($progress->id);
         $this->assertNotNull($reloaded->started_at);

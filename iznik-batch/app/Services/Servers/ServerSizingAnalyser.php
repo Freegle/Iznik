@@ -438,8 +438,7 @@ class ServerSizingAnalyser
             ]));
             $reasons[] = $short === []
                 ? 'The next size down would fit but saves nothing once its disk is paid for.'
-                : 'No smaller package leaves headroom; '.implode(' and ', $short)
-                    .(count($short) > 1 ? ' are' : ' is').' what it needs most.';
+                : 'No smaller package leaves headroom: it would be short of '.implode(' and ', $short).'.';
         }
 
         return ['keep', null, $reasons];

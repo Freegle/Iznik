@@ -17,7 +17,7 @@ class BirthdayServiceTest extends TestCase
      */
     public function test_rippled_members_are_excluded_from_birthday_appeals(): void
     {
-        $service = new BirthdayService();
+        $service = new BirthdayService;
 
         // A group whose birthday is today (founded same month-day, a year ago).
         $group = $this->createTestGroup();
@@ -52,7 +52,7 @@ class BirthdayServiceTest extends TestCase
      */
     public function test_trashnothing_implicit_members_are_excluded_from_birthday_appeals(): void
     {
-        $service = new BirthdayService();
+        $service = new BirthdayService;
 
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([

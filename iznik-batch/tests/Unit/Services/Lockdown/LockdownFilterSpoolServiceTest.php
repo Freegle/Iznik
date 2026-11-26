@@ -24,6 +24,7 @@ class LockdownFilterSpoolServiceTest extends TestCase
     use IsolatedSpoolDirectory;
 
     private LockdownService $lockdown;
+
     private LockdownFilterSpoolService $filter;
 
     protected function setUp(): void
@@ -35,7 +36,7 @@ class LockdownFilterSpoolServiceTest extends TestCase
         // Static, process-wide cache (section 11.6) - flush so an earlier test class in
         // this same PHPUnit process cannot leak a row in.
         LockdownService::flushCache();
-        $this->lockdown = new LockdownService();
+        $this->lockdown = new LockdownService;
         $this->filter = new LockdownFilterSpoolService($this->spooler, $this->lockdown);
     }
 

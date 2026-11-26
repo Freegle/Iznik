@@ -8,11 +8,12 @@ use Tests\TestCase;
 class DigestPostScorerTest extends TestCase
 {
     private array $weights = ['close' => 1.0, 'fresh' => 0.0, 'budget' => 1.0, 'anchor' => 0.0];
+
     private array $env = ['window_hours' => 24.0, 'budget_decay' => 25.0];
 
     private function scorer(): DigestPostScorer
     {
-        return new DigestPostScorer();
+        return new DigestPostScorer;
     }
 
     public function test_close_term_is_one_at_origin_and_clamps_to_zero_beyond_reach(): void

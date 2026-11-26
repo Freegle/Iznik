@@ -42,7 +42,7 @@ class UnreadChatCatchUpMailTest extends TestCase
     {
         $data = $this->viewData(chats: 1, messages: 1, modChats: 0, modMessages: 0);
 
-        $this->assertSame(rtrim((string) config('freegle.sites.user'), '/') . '/chats', $data['chatsUrl']);
+        $this->assertSame(rtrim((string) config('freegle.sites.user'), '/').'/chats', $data['chatsUrl']);
         $this->assertSame(0, $data['modChatCount']);
     }
 
@@ -50,7 +50,7 @@ class UnreadChatCatchUpMailTest extends TestCase
     {
         $data = $this->viewData(chats: 0, messages: 0, modChats: 1, modMessages: 3);
 
-        $this->assertSame(rtrim((string) config('freegle.sites.mod'), '/') . '/chats', $data['modChatsUrl']);
+        $this->assertSame(rtrim((string) config('freegle.sites.mod'), '/').'/chats', $data['modChatsUrl']);
         $this->assertSame(1, $data['modChatCount']);
         $this->assertSame(3, $data['modMessageCount']);
     }
@@ -73,8 +73,8 @@ class UnreadChatCatchUpMailTest extends TestCase
 
         $this->assertStringContainsString('Virgin Media stopped accepting our emails on 10 September', $html);
         $this->assertStringContainsString('you moderate', $html);
-        $this->assertStringContainsString(rtrim((string) config('freegle.sites.mod'), '/') . '/chats', $html);
-        $this->assertStringNotContainsString(rtrim((string) config('freegle.sites.user'), '/') . '/chats"', $html);
+        $this->assertStringContainsString(rtrim((string) config('freegle.sites.mod'), '/').'/chats', $html);
+        $this->assertStringNotContainsString(rtrim((string) config('freegle.sites.user'), '/').'/chats"', $html);
     }
 
     public function test_both_sides_are_rendered_when_both_have_messages(): void
@@ -96,8 +96,8 @@ class UnreadChatCatchUpMailTest extends TestCase
         $this->assertStringContainsString('Your email provider stopped accepting our emails on 10 September', $html);
         $this->assertStringContainsString('5 messages across 2 chats', $html);
         $this->assertStringContainsString('you moderate', $html);
-        $this->assertStringContainsString(rtrim((string) config('freegle.sites.user'), '/') . '/chats', $html);
-        $this->assertStringContainsString(rtrim((string) config('freegle.sites.mod'), '/') . '/chats', $html);
+        $this->assertStringContainsString(rtrim((string) config('freegle.sites.user'), '/').'/chats', $html);
+        $this->assertStringContainsString(rtrim((string) config('freegle.sites.mod'), '/').'/chats', $html);
     }
 
     public function test_subject_counts_chats_on_both_sides(): void

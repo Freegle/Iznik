@@ -4,7 +4,6 @@ namespace Tests\Unit\Traits;
 
 use App\Models\User;
 use App\Traits\ChunkedProcessing;
-use Illuminate\Database\Eloquent\Builder;
 use Tests\TestCase;
 
 class ChunkedProcessingTest extends TestCase
@@ -27,8 +26,8 @@ class ChunkedProcessingTest extends TestCase
         for ($i = 0; $i < 5; $i++) {
             User::create([
                 'firstname' => 'Test',
-                'lastname' => 'User' . $i,
-                'fullname' => 'Test User' . $i,
+                'lastname' => 'User'.$i,
+                'fullname' => 'Test User'.$i,
                 'added' => now(),
             ]);
         }
@@ -118,13 +117,13 @@ class ChunkedProcessingTest extends TestCase
     public function test_process_in_chunks_logs_at_interval(): void
     {
         // Create test users with a unique marker.
-        $marker = 'Interval_' . uniqid('', true);
+        $marker = 'Interval_'.uniqid('', true);
         $userIds = [];
         for ($i = 0; $i < 5; $i++) {
             $user = User::create([
                 'firstname' => 'Test',
-                'lastname' => $marker . $i,
-                'fullname' => 'Test ' . $marker . $i,
+                'lastname' => $marker.$i,
+                'fullname' => 'Test '.$marker.$i,
                 'added' => now(),
             ]);
             $userIds[] = $user->id;
@@ -145,13 +144,13 @@ class ChunkedProcessingTest extends TestCase
     public function test_process_and_delete_logs_at_interval(): void
     {
         // Create users that will be deleted, with a unique marker.
-        $marker = 'DeleteLog_' . uniqid('', true);
+        $marker = 'DeleteLog_'.uniqid('', true);
         $userIds = [];
         for ($i = 0; $i < 4; $i++) {
             $user = User::create([
                 'firstname' => 'Delete',
-                'lastname' => $marker . $i,
-                'fullname' => 'Delete ' . $marker . $i,
+                'lastname' => $marker.$i,
+                'fullname' => 'Delete '.$marker.$i,
                 'added' => now(),
             ]);
             $userIds[] = $user->id;

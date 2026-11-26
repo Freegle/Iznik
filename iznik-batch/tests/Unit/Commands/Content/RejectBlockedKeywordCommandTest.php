@@ -22,6 +22,7 @@ use Tests\TestCase;
 class RejectBlockedKeywordCommandTest extends TestCase
 {
     private string $word;
+
     private int $keywordId;
 
     protected function setUp(): void
@@ -36,11 +37,11 @@ class RejectBlockedKeywordCommandTest extends TestCase
         // uncommitted-turned-committed. See the same note in ProcessBackgroundTasksCommandTest.
 
         // No pause between rows in tests.
-        $service = new BlockedKeywordBackfillService(new ContentCheckService());
+        $service = new BlockedKeywordBackfillService(new ContentCheckService);
         $service->pauseMicros = 0;
         $this->app->instance(BlockedKeywordBackfillService::class, $service);
 
-        $this->word = 'testblockword' . uniqid();
+        $this->word = 'testblockword'.uniqid();
         $this->keywordId = DB::table('concern_keywords')->insertGetId([
             'keyword' => $this->word, 'category' => 'scam', 'action' => 'block',
             'match_mode' => 'literal', 'scope' => 'global', 'group_id' => 0,
@@ -192,7 +193,7 @@ class RejectBlockedKeywordCommandTest extends TestCase
     public function test_unknown_keyword_fails_rather_than_applying_every_keyword(): void
     {
         $this->artisan('content:reject-blocked-keyword', [
-            '--keyword' => ['no-such-keyword-' . uniqid()],
+            '--keyword' => ['no-such-keyword-'.uniqid()],
         ])->assertFailed();
     }
 }

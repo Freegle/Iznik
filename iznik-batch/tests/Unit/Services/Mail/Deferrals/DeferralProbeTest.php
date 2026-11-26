@@ -21,8 +21,7 @@ class DeferralProbeTest extends TestCase
             public function __construct(
                 private readonly ?string $output,
                 private $spy,
-            ) {
-            }
+            ) {}
 
             public function run(string $target, string $script): ?string
             {
@@ -47,8 +46,8 @@ class DeferralProbeTest extends TestCase
                 [
                     'address' => 'someone@yahoo.co.uk',
                     'delay_reason' => 'host mta7.am0.yahoodns.net[67.195.228.94] said: 421 4.7.0 '
-                        . '[TSS04] Messages from 185.53.57.161 temporarily deferred due to '
-                        . 'unexpected volume or user complaints (in reply to MAIL FROM command)',
+                        .'[TSS04] Messages from 185.53.57.161 temporarily deferred due to '
+                        .'unexpected volume or user complaints (in reply to MAIL FROM command)',
                 ],
             ],
         ], $overrides));
@@ -56,14 +55,14 @@ class DeferralProbeTest extends TestCase
 
     private function wrap(string $queue, string $delivered = '', bool $truncated = false, ?int $windowSeconds = null): string
     {
-        return DeferralProbe::MARK_QUEUE . "\n"
-            . $queue . "\n"
-            . ($truncated ? DeferralProbe::MARK_TRUNCATED . "\n" : '')
-            . DeferralProbe::MARK_DELIVERED . "\n"
-            . $delivered . "\n"
+        return DeferralProbe::MARK_QUEUE."\n"
+            .$queue."\n"
+            .($truncated ? DeferralProbe::MARK_TRUNCATED."\n" : '')
+            .DeferralProbe::MARK_DELIVERED."\n"
+            .$delivered."\n"
             // Before MARK_END, because the parser stops dead there.
-            . ($windowSeconds !== null ? DeferralProbe::MARK_WINDOW . "\n" . $windowSeconds . "\n" : '')
-            . DeferralProbe::MARK_END . "\n";
+            .($windowSeconds !== null ? DeferralProbe::MARK_WINDOW."\n".$windowSeconds."\n" : '')
+            .DeferralProbe::MARK_END."\n";
     }
 
     /**
@@ -211,11 +210,11 @@ class DeferralProbeTest extends TestCase
     {
         $delivered = implode("\n", [
             'Sep 15 19:39:09 h postfix-warm1/smtp[1]: A1: to=<one@yahoo.com>, '
-                . 'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
+                .'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
             'Sep 15 19:39:10 h postfix-warm1/smtp[2]: A2: to=<two@yahoo.com>, '
-                . 'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
+                .'relay=mta7.am0.yahoodns.net[67.195.204.79]:25, delay=1.9, status=sent (250 ok)',
             'Sep 15 19:39:11 h postfix/smtp[3]: A3: to=<three@gmail.com>, '
-                . 'relay=alt1.gmail-smtp-in.l.google.com[142.250.102.26]:25, delay=1.1, status=sent (250 ok)',
+                .'relay=alt1.gmail-smtp-in.l.google.com[142.250.102.26]:25, delay=1.1, status=sent (250 ok)',
         ]);
 
         $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
@@ -243,9 +242,9 @@ class DeferralProbeTest extends TestCase
 
         $delivered = implode("\n", [
             'Sep 15 21:22:43 h postfix-relaywarm/smtp[1]: C8F: to=<one@yahoo.com>, '
-                . 'relay=127.0.0.1[127.0.0.1]:10026, delay=0.1, dsn=2.0.0, status=sent (250 ok)',
+                .'relay=127.0.0.1[127.0.0.1]:10026, delay=0.1, dsn=2.0.0, status=sent (250 ok)',
             'Sep 15 21:22:44 h postfix-warm1yahoodnsnet/smtp[2]: D9A: to=<one@yahoo.com>, '
-                . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, delay=1.9, status=sent (250 ok)',
+                .'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, delay=1.9, status=sent (250 ok)',
         ]);
 
         $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
@@ -268,10 +267,10 @@ class DeferralProbeTest extends TestCase
         $delivered = implode("\n", [
             // Right transport, some other port.
             'Sep 15 21:22:43 h postfix-relaywarm/smtp[1]: A: to=<a@yahoo.com>, '
-                . 'relay=127.0.0.1[127.0.0.1]:10027, status=sent (250 ok)',
+                .'relay=127.0.0.1[127.0.0.1]:10027, status=sent (250 ok)',
             // Right port, some other transport name.
             'Sep 15 21:22:43 h postfix-renamed/smtp[2]: B: to=<b@yahoo.com>, '
-                . 'relay=127.0.0.1[127.0.0.1]:10026, status=sent (250 ok)',
+                .'relay=127.0.0.1[127.0.0.1]:10026, status=sent (250 ok)',
         ]);
 
         $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
@@ -289,7 +288,7 @@ class DeferralProbeTest extends TestCase
     public function test_delivery_counts_are_scaled_to_the_window_the_relay_reports(): void
     {
         $delivered = implode("\n", array_fill(0, 10, 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
-            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)'));
+            .'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)'));
 
         // Ten deliveries over two hours is five an hour, not ten.
         $probe = new DeferralProbe($this->runner(
@@ -309,7 +308,7 @@ class DeferralProbeTest extends TestCase
     public function test_an_unknown_window_leaves_the_count_alone(): void
     {
         $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
-            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+            .'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
 
         $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
         $snapshot = $probe->probe('relay@host', 65536);
@@ -334,7 +333,7 @@ class DeferralProbeTest extends TestCase
 
         // Two instances, and a delivery sample with no hop line in it at all.
         $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
-            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+            .'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
 
         $probe = new DeferralProbe($this->runner($this->wrapInstances([
             '/etc/postfix' => $this->queueLine(),
@@ -356,7 +355,7 @@ class DeferralProbeTest extends TestCase
     public function test_a_single_instance_relay_still_reports_a_rate(): void
     {
         $delivered = 'Sep 15 21:22:44 h postfix/smtp[2]: D: to=<a@yahoo.com>, '
-            . 'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
+            .'relay=mta5.am0.yahoodns.net[67.195.228.94]:25, status=sent (250 ok)';
 
         $probe = new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered)));
         $snapshot = $probe->probe('relay@host', 65536);
@@ -473,7 +472,7 @@ class DeferralProbeTest extends TestCase
         // Half a queue listing understates every count, and understated
         // counts silently fail to trip a threshold. Better to see nothing
         // than to see half and believe it.
-        $probe = new DeferralProbe($this->runner(DeferralProbe::MARK_QUEUE . "\n" . $this->queueLine()));
+        $probe = new DeferralProbe($this->runner(DeferralProbe::MARK_QUEUE."\n".$this->queueLine()));
 
         $this->assertNull($probe->probe('relay@host', 1024));
     }
@@ -481,7 +480,7 @@ class DeferralProbeTest extends TestCase
     public function test_buckets_deferrals_by_relay_family(): void
     {
         $probe = new DeferralProbe($this->runner($this->wrap(
-            $this->queueLine() . "\n" . $this->queueLine(['queue_id' => 'ZZZ999'])
+            $this->queueLine()."\n".$this->queueLine(['queue_id' => 'ZZZ999'])
         )));
 
         $snapshot = $probe->probe('relay@host', 1024);
@@ -588,7 +587,7 @@ class DeferralProbeTest extends TestCase
 
     public function test_survives_a_half_written_json_line_from_truncation(): void
     {
-        $queue = $this->queueLine() . "\n" . '{"queue_name":"deferred","recipi';
+        $queue = $this->queueLine()."\n".'{"queue_name":"deferred","recipi';
 
         $snapshot = (new DeferralProbe($this->runner($this->wrap($queue))))->probe('relay@host', 1024);
 
@@ -687,7 +686,7 @@ class DeferralProbeTest extends TestCase
     public function test_knows_when_the_relay_can_purge(): void
     {
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_CANPURGE . "\nCANPURGE sudo\n"
+            DeferralProbe::MARK_CANPURGE."\nCANPURGE sudo\n"
         ));
 
         $this->assertTrue($probe->canPurge('relay@host'));
@@ -696,7 +695,7 @@ class DeferralProbeTest extends TestCase
     public function test_knows_when_the_relay_has_not_been_granted_the_right(): void
     {
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_CANPURGE . "\nNOPURGE deferrals\n"
+            DeferralProbe::MARK_CANPURGE."\nNOPURGE deferrals\n"
         ));
 
         $this->assertFalse($probe->canPurge('relay@host'));
@@ -721,7 +720,7 @@ class DeferralProbeTest extends TestCase
     public function test_reads_a_provider_that_is_accepting_again(): void
     {
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING gmail-smtp-in.l.google.com 250\n"
+            DeferralProbe::MARK_ACCEPTING."\nACCEPTING gmail-smtp-in.l.google.com 250\n"
         ));
 
         $this->assertTrue($probe->providerAccepting('relay@host', 'gmail.com', 'noreply@example.com'));
@@ -730,8 +729,8 @@ class DeferralProbeTest extends TestCase
     public function test_reads_a_provider_that_is_still_refusing(): void
     {
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_ACCEPTING . "\nREFUSING mx-eu.mail.am0.yahoodns.net 421 "
-            . "4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred\n"
+            DeferralProbe::MARK_ACCEPTING."\nREFUSING mx-eu.mail.am0.yahoodns.net 421 "
+            ."4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred\n"
         ));
 
         $this->assertFalse($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
@@ -763,7 +762,7 @@ class DeferralProbeTest extends TestCase
         // resolve the domain through the relay's maps and bind that address.
         $script = null;
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1\n",
+            DeferralProbe::MARK_ACCEPTING."\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1\n",
             function (string $target, string $sent) use (&$script) {
                 $script = $sent;
             }
@@ -794,7 +793,7 @@ class DeferralProbeTest extends TestCase
     {
         $script = null;
         $probe = new DeferralProbe($this->runner(
-            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1yahoodnsnet\n",
+            DeferralProbe::MARK_ACCEPTING."\nACCEPTING mta5.am0.yahoodns.net 250 from 77.72.7.253 via warm1yahoodnsnet\n",
             function (string $target, string $sent) use (&$script) {
                 $script = $sent;
             }
@@ -802,7 +801,7 @@ class DeferralProbeTest extends TestCase
         $probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com');
         $this->assertNotNull($script);
 
-        $bin = sys_get_temp_dir() . '/probe-stub-' . getmypid();
+        $bin = sys_get_temp_dir().'/probe-stub-'.getmypid();
         @mkdir($bin, 0700, true);
 
         // The primary knows only that the domain goes to the relay transport,
@@ -844,8 +843,8 @@ STUB);
         // Everything the probe emits before it hands over to python is the
         // resolution; run exactly that, then report what it decided.
         $resolution = substr($script, 0, strpos($script, 'python3 - '));
-        $out = shell_exec('PATH=' . escapeshellarg($bin) . ':$PATH bash -c '
-            . escapeshellarg($resolution . "\necho \"BIND=\$BIND TR=\$TR\"") . ' 2>&1');
+        $out = shell_exec('PATH='.escapeshellarg($bin).':$PATH bash -c '
+            .escapeshellarg($resolution."\necho \"BIND=\$BIND TR=\$TR\"").' 2>&1');
 
         array_map('unlink', glob("$bin/*"));
         @rmdir($bin);

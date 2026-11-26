@@ -18,7 +18,7 @@ class DonationSummaryServiceTest extends TestCase
     {
         parent::setUp();
 
-        $this->service = new DonationSummaryService();
+        $this->service = new DonationSummaryService;
 
         // The service queries users_donations globally (no group/day scoping
         // beyond "today"), so any committed rows left by a previous test
@@ -138,7 +138,7 @@ class DonationSummaryServiceTest extends TestCase
         $this->service->sendDailySummary();
 
         Mail::assertSent(DonationSummaryMail::class, function ($mail) {
-            return !str_contains($mail->htmlContent, 'Recurring');
+            return ! str_contains($mail->htmlContent, 'Recurring');
         });
     }
 
@@ -151,7 +151,7 @@ class DonationSummaryServiceTest extends TestCase
         $this->service->sendDailySummary();
 
         Mail::assertSent(DonationSummaryMail::class, function ($mail) {
-            return !str_contains($mail->htmlContent, '<script>')
+            return ! str_contains($mail->htmlContent, '<script>')
                 && str_contains($mail->htmlContent, '&lt;script&gt;');
         });
     }
@@ -201,7 +201,7 @@ class DonationSummaryServiceTest extends TestCase
         $this->service->sendDailySummary();
 
         Mail::assertSent(DonationSummaryMail::class, function ($mail) {
-            return !str_contains($mail->htmlContent, 'Birthday?');
+            return ! str_contains($mail->htmlContent, 'Birthday?');
         });
     }
 
@@ -217,7 +217,7 @@ class DonationSummaryServiceTest extends TestCase
 
         $this->assertSame(1, $result['donations']);
         Mail::assertSent(DonationSummaryMail::class, function ($mail) {
-            return !str_contains($mail->htmlContent, 'Birthday?');
+            return ! str_contains($mail->htmlContent, 'Birthday?');
         });
     }
 
@@ -250,7 +250,7 @@ class DonationSummaryServiceTest extends TestCase
         $this->service->sendDailySummary();
 
         Mail::assertSent(DonationSummaryMail::class, function ($mail) {
-            return !str_contains($mail->htmlContent, 'Birthday?');
+            return ! str_contains($mail->htmlContent, 'Birthday?');
         });
     }
 }

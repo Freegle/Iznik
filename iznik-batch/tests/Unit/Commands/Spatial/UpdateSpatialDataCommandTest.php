@@ -45,7 +45,7 @@ class UpdateSpatialDataCommandTest extends TestCase
             },
         ]);
         $this->dataDir = storage_path('tests/spatial');
-        if (!is_dir($this->dataDir)) {
+        if (! is_dir($this->dataDir)) {
             mkdir($this->dataDir, 0755, true);
         }
         config(['freegle.spatial_data_dir' => $this->dataDir]);
@@ -173,8 +173,8 @@ class UpdateSpatialDataCommandTest extends TestCase
                 // -F pbf: the merged file is still named .tmp, which names no format.
                 return in_array('extract', $command, true)
                     && in_array('-F', $command, true)
-                    && in_array($this->dataDir . "/probe-{$region}.osm.pbf", $command, true)
-                    && in_array($this->dataDir . '/uk-latest.osm.pbf.tmp', $command, true);
+                    && in_array($this->dataDir."/probe-{$region}.osm.pbf", $command, true)
+                    && in_array($this->dataDir.'/uk-latest.osm.pbf.tmp', $command, true);
             });
         }
     }
@@ -247,10 +247,10 @@ class UpdateSpatialDataCommandTest extends TestCase
         // Only 100 E&W rows; rest are pure Scotland (lat>56, not in E&W range)
         $csvContent = "lat,lng,quintile\n";
         for ($i = 0; $i < 100; $i++) {
-            $csvContent .= "52.0,-2.0," . (($i % 5) + 1) . "\n";
+            $csvContent .= '52.0,-2.0,'.(($i % 5) + 1)."\n";
         }
         for ($i = 0; $i < 39900; $i++) {
-            $csvContent .= "57.0,-3.0," . (($i % 5) + 1) . "\n";
+            $csvContent .= '57.0,-3.0,'.(($i % 5) + 1)."\n";
         }
 
         Http::fake($this->buildFakeHttpResponses($csvContent));
@@ -269,19 +269,19 @@ class UpdateSpatialDataCommandTest extends TestCase
     {
         $lines = ['lat,lng,quintile'];
         for ($i = 0; $i < 34000; $i++) {
-            $lines[] = '52.0,-1.5,' . (($i % 5) + 1);
+            $lines[] = '52.0,-1.5,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 4000; $i++) {
-            $lines[] = '55.86,-4.25,' . (($i % 5) + 1);
+            $lines[] = '55.86,-4.25,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 2600; $i++) {
-            $lines[] = '57.15,-2.1,' . (($i % 5) + 1);
+            $lines[] = '57.15,-2.1,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 890; $i++) {
-            $lines[] = '54.6,-5.9,' . (($i % 5) + 1);
+            $lines[] = '54.6,-5.9,'.(($i % 5) + 1);
         }
 
-        Http::fake($this->buildFakeHttpResponses(implode("\n", $lines) . "\n"));
+        Http::fake($this->buildFakeHttpResponses(implode("\n", $lines)."\n"));
 
         $this->artisan('spatial:update-data')
             ->expectsOutputToContain('Scotland rows: 6600')
@@ -376,18 +376,20 @@ class UpdateSpatialDataCommandTest extends TestCase
         // Write the CSV directly to the expected temp path so the command can
         // find it after "building".  We mock DeprivationDataService via the
         // service container so no real HTTP is made for deprivation data.
-        $csvPath     = "{$this->dataDir}/uk_lsoa_quintile.csv";
+        $csvPath = "{$this->dataDir}/uk_lsoa_quintile.csv";
         $tempCsvPath = "{$csvPath}.tmp";
 
-        $mockService = new class($tempCsvPath, $csvContent) {
+        $mockService = new class($tempCsvPath, $csvContent)
+        {
             public function __construct(private string $path, private string $csv) {}
+
             public function build(string $outputPath): void
             {
                 file_put_contents($outputPath, $this->csv);
             }
         };
 
-        app()->bind(\App\Services\DeprivationDataService::class, fn() => $mockService);
+        app()->bind(\App\Services\DeprivationDataService::class, fn () => $mockService);
 
         $pbf = "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA";
 
@@ -412,18 +414,19 @@ class UpdateSpatialDataCommandTest extends TestCase
     {
         $lines = ['lat,lng,quintile'];
         for ($i = 0; $i < 30100; $i++) {
-            $lines[] = '51.5,-2.0,' . (($i % 5) + 1);
+            $lines[] = '51.5,-2.0,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 5100; $i++) {
-            $lines[] = '57.0,-3.0,' . (($i % 5) + 1);
+            $lines[] = '57.0,-3.0,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 900; $i++) {
-            $lines[] = '54.5,-7.0,' . (($i % 5) + 1);
+            $lines[] = '54.5,-7.0,'.(($i % 5) + 1);
         }
         for ($i = 0; $i < 3900; $i++) {
-            $lines[] = '50.0,-1.0,' . (($i % 5) + 1);
+            $lines[] = '50.0,-1.0,'.(($i % 5) + 1);
         }
-        return implode("\n", $lines) . "\n";
+
+        return implode("\n", $lines)."\n";
     }
 
     /**
@@ -434,17 +437,18 @@ class UpdateSpatialDataCommandTest extends TestCase
     {
         $lines = ['lat,lng,quintile'];
         for ($i = 0; $i < 30100; $i++) {
-            $lines[] = '51.5,-2.0,' . (($i % 4) + 2);
+            $lines[] = '51.5,-2.0,'.(($i % 4) + 2);
         }
         for ($i = 0; $i < 5100; $i++) {
-            $lines[] = '57.0,-3.0,' . (($i % 4) + 2);
+            $lines[] = '57.0,-3.0,'.(($i % 4) + 2);
         }
         for ($i = 0; $i < 900; $i++) {
-            $lines[] = '54.5,-7.0,' . (($i % 4) + 2);
+            $lines[] = '54.5,-7.0,'.(($i % 4) + 2);
         }
         for ($i = 0; $i < 3900; $i++) {
-            $lines[] = '50.0,-1.0,' . (($i % 4) + 2);
+            $lines[] = '50.0,-1.0,'.(($i % 4) + 2);
         }
-        return implode("\n", $lines) . "\n";
+
+        return implode("\n", $lines)."\n";
     }
 }

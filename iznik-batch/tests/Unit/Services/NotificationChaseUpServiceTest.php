@@ -17,7 +17,7 @@ class NotificationChaseUpServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new NotificationChaseUpService();
+        $this->service = new NotificationChaseUpService;
         Mail::fake();
         // Reset feature flags before each test — config() changes persist across tests.
         config(['freegle.mail.enabled_types' => 'NotificationChaseUp']);
@@ -30,16 +30,16 @@ class NotificationChaseUpServiceTest extends TestCase
     private function createNotification(User $toUser, User $fromUser, array $attributes = []): object
     {
         $id = DB::table('users_notifications')->insertGetId(array_merge([
-            'fromuser'   => $fromUser->id,
-            'touser'     => $toUser->id,
-            'type'       => 'CommentOnYourPost',
+            'fromuser' => $fromUser->id,
+            'touser' => $toUser->id,
+            'type' => 'CommentOnYourPost',
             'newsfeedid' => null,
-            'url'        => null,
-            'title'      => null,
-            'text'       => null,
-            'timestamp'  => now()->subMinutes(10), // old enough (> 5 min)
-            'seen'       => 0,
-            'mailed'     => 0,
+            'url' => null,
+            'title' => null,
+            'text' => null,
+            'timestamp' => now()->subMinutes(10), // old enough (> 5 min)
+            'seen' => 0,
+            'mailed' => 0,
         ], $attributes));
 
         return DB::table('users_notifications')->where('id', $id)->first();
@@ -48,13 +48,13 @@ class NotificationChaseUpServiceTest extends TestCase
     private function createNewsfeedItem(array $attributes = []): object
     {
         $id = DB::table('newsfeed')->insertGetId(array_merge([
-            'userid'    => null,
-            'type'      => 'Message',
-            'message'   => 'Test newsfeed message',
+            'userid' => null,
+            'type' => 'Message',
+            'message' => 'Test newsfeed message',
             'timestamp' => now(),
-            'deleted'   => null,
-            'replyto'   => null,
-            'position'  => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'deleted' => null,
+            'replyto' => null,
+            'position' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
         ], $attributes));
 
         return DB::table('newsfeed')->where('id', $id)->first();
@@ -102,9 +102,9 @@ class NotificationChaseUpServiceTest extends TestCase
 
         $newsfeed = $this->createNewsfeedItem(['message' => 'Hello world post']);
         $this->createNotification($user, $sender, [
-            'type'       => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'newsfeedid' => $newsfeed->id,
-            'timestamp'  => now()->subMinutes(10),
+            'timestamp' => now()->subMinutes(10),
         ]);
 
         $count = $this->service->sendEmails();
@@ -322,8 +322,8 @@ class NotificationChaseUpServiceTest extends TestCase
 
         // Mark the from-user as a spammer
         DB::table('spam_users')->insert([
-            'userid'     => $spammer->id,
-            'byuserid'   => $user->id,
+            'userid' => $spammer->id,
+            'byuserid' => $user->id,
             'collection' => 'Spammer',
         ]);
 
@@ -434,11 +434,11 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_comment_on_your_post(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'fromname' => 'Alice',
             'newsfeed' => ['type' => 'Message', 'message' => 'Hello world'],
-            'title'    => null,
-            'seen'     => false,
+            'title' => null,
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Alice', $subject);
@@ -448,11 +448,11 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_comment_on_comment(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'CommentOnCommented',
+            'type' => 'CommentOnCommented',
             'fromname' => 'Bob',
             'newsfeed' => ['type' => 'Message', 'message' => 'Reply text'],
-            'title'    => null,
-            'seen'     => false,
+            'title' => null,
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Bob', $subject);
@@ -462,11 +462,11 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_loved_post(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'LovedPost',
+            'type' => 'LovedPost',
             'fromname' => 'Carol',
             'newsfeed' => ['type' => 'Message', 'message' => 'Nice item'],
-            'title'    => null,
-            'seen'     => false,
+            'title' => null,
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Carol', $subject);
@@ -488,11 +488,11 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_exhort_uses_title(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'Exhort',
+            'type' => 'Exhort',
             'fromname' => 'Freegle',
             'newsfeed' => null,
-            'title'    => 'Tell us your story!',
-            'seen'     => false,
+            'title' => 'Tell us your story!',
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Tell us your story!', $subject);
@@ -501,11 +501,11 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_loved_comment(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'LovedComment',
+            'type' => 'LovedComment',
             'fromname' => 'Dave',
             'newsfeed' => ['type' => 'Message', 'message' => 'Great comment'],
-            'title'    => null,
-            'seen'     => false,
+            'title' => null,
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Dave', $subject);
@@ -515,12 +515,12 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_membership_pending(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'MembershipPending',
+            'type' => 'MembershipPending',
             'fromname' => '',
             'newsfeed' => null,
-            'title'    => null,
-            'url'      => 'Freegle Bristol',
-            'seen'     => false,
+            'title' => null,
+            'url' => 'Freegle Bristol',
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Freegle Bristol', $subject);
@@ -530,12 +530,12 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_membership_approved(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'MembershipApproved',
+            'type' => 'MembershipApproved',
             'fromname' => '',
             'newsfeed' => null,
-            'title'    => null,
-            'url'      => 'Freegle Bristol',
-            'seen'     => false,
+            'title' => null,
+            'url' => 'Freegle Bristol',
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Freegle Bristol', $subject);
@@ -545,12 +545,12 @@ class NotificationChaseUpServiceTest extends TestCase
     public function test_subject_for_membership_rejected(): void
     {
         $subject = $this->service->getNotifTitle([[
-            'type'     => 'MembershipRejected',
+            'type' => 'MembershipRejected',
             'fromname' => '',
             'newsfeed' => null,
-            'title'    => null,
-            'url'      => 'Freegle Bristol',
-            'seen'     => false,
+            'title' => null,
+            'url' => 'Freegle Bristol',
+            'seen' => false,
         ]]);
 
         $this->assertStringContainsString('Freegle Bristol', $subject);
@@ -563,12 +563,12 @@ class NotificationChaseUpServiceTest extends TestCase
 
     public function test_sends_email_for_membership_pending_notification(): void
     {
-        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $user = $this->createTestUser(['lastaccess' => now()]);
         $sender = $this->createTestUser();
 
         $this->createNotification($user, $sender, [
             'type' => 'MembershipPending',
-            'url'  => 'Freegle Bristol',
+            'url' => 'Freegle Bristol',
         ]);
 
         $count = $this->service->sendEmails();
@@ -581,12 +581,12 @@ class NotificationChaseUpServiceTest extends TestCase
 
     public function test_sends_email_for_membership_approved_notification(): void
     {
-        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $user = $this->createTestUser(['lastaccess' => now()]);
         $sender = $this->createTestUser();
 
         $this->createNotification($user, $sender, [
             'type' => 'MembershipApproved',
-            'url'  => 'Freegle Bristol',
+            'url' => 'Freegle Bristol',
         ]);
 
         $count = $this->service->sendEmails();
@@ -599,12 +599,12 @@ class NotificationChaseUpServiceTest extends TestCase
 
     public function test_sends_email_for_membership_rejected_notification(): void
     {
-        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $user = $this->createTestUser(['lastaccess' => now()]);
         $sender = $this->createTestUser();
 
         $this->createNotification($user, $sender, [
             'type' => 'MembershipRejected',
-            'url'  => 'Freegle Bristol',
+            'url' => 'Freegle Bristol',
         ]);
 
         $count = $this->service->sendEmails();
@@ -621,18 +621,18 @@ class NotificationChaseUpServiceTest extends TestCase
 
     public function test_email_body_excludes_already_mailed_notifications(): void
     {
-        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $user = $this->createTestUser(['lastaccess' => now()]);
         $sender = $this->createTestUser();
 
         // Old notification already sent in a previous email (mailed=1, never seen)
         $this->createNotification($user, $sender, [
-            'mailed'    => 1,
+            'mailed' => 1,
             'timestamp' => now()->subHours(12),
         ]);
 
         // New notification that triggers this send
         $this->createNotification($user, $sender, [
-            'mailed'    => 0,
+            'mailed' => 0,
             'timestamp' => now()->subMinutes(10),
         ]);
 
@@ -686,7 +686,7 @@ class NotificationChaseUpServiceTest extends TestCase
 
         $newsfeed = $this->createNewsfeedItem(['message' => 'Hello world post']);
         $this->createNotification($user, $sender, [
-            'type'       => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'newsfeedid' => $newsfeed->id,
         ]);
 

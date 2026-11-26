@@ -27,34 +27,34 @@ class ChaseUpMailPreheaderTest extends TestCase
     private function makeNotification(array $overrides = []): array
     {
         return array_merge([
-            'type'        => 'CommentOnYourPost',
-            'fromname'    => 'Alice',
-            'fromimage'   => 'https://example.com/avatar.png',
-            'newsfeed'    => [
-                'id'      => 1,
-                'type'    => 'Message',
+            'type' => 'CommentOnYourPost',
+            'fromname' => 'Alice',
+            'fromimage' => 'https://example.com/avatar.png',
+            'newsfeed' => [
+                'id' => 1,
+                'type' => 'Message',
                 'message' => 'Hello there',
                 'replyto' => null,
             ],
-            'title'       => null,
-            'text'        => null,
-            'url'         => null,
-            'id'          => 1,
-            'timestamp'   => 'just now',
-            'trackedUrl'  => 'https://www.ilovefreegle.org/chitchat/1',
+            'title' => null,
+            'text' => null,
+            'url' => null,
+            'id' => 1,
+            'timestamp' => 'just now',
+            'trackedUrl' => 'https://www.ilovefreegle.org/chitchat/1',
         ], $overrides);
     }
 
     private function renderChaseUpView(array $notifications, int $count = 1): string
     {
         return view('emails.mjml.notification.chaseup', [
-            'notifications'  => $notifications,
-            'count'          => $count,
-            'userSite'       => 'https://www.ilovefreegle.org',
-            'chitchatUrl'    => 'https://www.ilovefreegle.org/chitchat',
-            'settingsUrl'    => 'https://www.ilovefreegle.org/settings',
+            'notifications' => $notifications,
+            'count' => $count,
+            'userSite' => 'https://www.ilovefreegle.org',
+            'chitchatUrl' => 'https://www.ilovefreegle.org/chitchat',
+            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
             'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',
-            'email'          => 'test@example.com',
+            'email' => 'test@example.com',
         ])->render();
     }
 
@@ -65,11 +65,11 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_commenter_name_and_snippet_for_comment_on_post(): void
     {
         $notif = $this->makeNotification([
-            'type'     => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'fromname' => 'Alice',
             'newsfeed' => [
-                'id'      => 1,
-                'type'    => 'Message',
+                'id' => 1,
+                'type' => 'Message',
                 'message' => 'This is a wonderful post!',
                 'replyto' => null,
             ],
@@ -90,11 +90,11 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_replier_name_for_comment_on_commented(): void
     {
         $notif = $this->makeNotification([
-            'type'     => 'CommentOnCommented',
+            'type' => 'CommentOnCommented',
             'fromname' => 'Bob',
             'newsfeed' => [
-                'id'      => 2,
-                'type'    => 'Message',
+                'id' => 2,
+                'type' => 'Message',
                 'message' => 'Agreed, great item!',
                 'replyto' => ['message' => 'Original post'],
             ],
@@ -114,11 +114,11 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_lover_name_for_loved_post(): void
     {
         $notif = $this->makeNotification([
-            'type'     => 'LovedPost',
+            'type' => 'LovedPost',
             'fromname' => 'Carol',
             'newsfeed' => [
-                'id'      => 3,
-                'type'    => 'Message',
+                'id' => 3,
+                'type' => 'Message',
                 'message' => 'OFFER: Vintage table (London)',
                 'replyto' => null,
             ],
@@ -138,11 +138,11 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_lover_name_for_loved_comment(): void
     {
         $notif = $this->makeNotification([
-            'type'     => 'LovedComment',
+            'type' => 'LovedComment',
             'fromname' => 'Dave',
             'newsfeed' => [
-                'id'      => 4,
-                'type'    => 'Message',
+                'id' => 4,
+                'type' => 'Message',
                 'message' => 'That is so kind, thank you!',
                 'replyto' => null,
             ],
@@ -162,10 +162,10 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_title_for_exhort_notification(): void
     {
         $notif = $this->makeNotification([
-            'type'      => 'Exhort',
-            'fromname'  => 'Freegle',
-            'title'     => 'Tell us your story!',
-            'newsfeed'  => null,
+            'type' => 'Exhort',
+            'fromname' => 'Freegle',
+            'title' => 'Tell us your story!',
+            'newsfeed' => null,
             'trackedUrl' => 'https://www.ilovefreegle.org/story',
         ]);
 
@@ -181,10 +181,10 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_shows_generic_fallback_for_unknown_type(): void
     {
         $notif = $this->makeNotification([
-            'type'     => 'MembershipApproved',
+            'type' => 'MembershipApproved',
             'fromname' => 'Eve',
             'newsfeed' => null,
-            'url'      => 'Freegle Bristol',
+            'url' => 'Freegle Bristol',
             'trackedUrl' => 'https://www.ilovefreegle.org/chitchat',
         ]);
 
@@ -200,33 +200,33 @@ class ChaseUpMailPreheaderTest extends TestCase
     public function test_preheader_appends_and_more_suffix_for_multiple_notifications(): void
     {
         $notif1 = $this->makeNotification([
-            'type'     => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'fromname' => 'Alice',
             'newsfeed' => [
-                'id'      => 1,
-                'type'    => 'Message',
+                'id' => 1,
+                'type' => 'Message',
                 'message' => 'Great sofa!',
                 'replyto' => null,
             ],
             'id' => 1,
         ]);
         $notif2 = $this->makeNotification([
-            'type'     => 'LovedPost',
+            'type' => 'LovedPost',
             'fromname' => 'Bob',
             'newsfeed' => [
-                'id'      => 2,
-                'type'    => 'Message',
+                'id' => 2,
+                'type' => 'Message',
                 'message' => 'Nice item',
                 'replyto' => null,
             ],
             'id' => 2,
         ]);
         $notif3 = $this->makeNotification([
-            'type'     => 'LovedComment',
+            'type' => 'LovedComment',
             'fromname' => 'Carol',
             'newsfeed' => [
-                'id'      => 3,
-                'type'    => 'Message',
+                'id' => 3,
+                'type' => 'Message',
                 'message' => 'Thanks!',
                 'replyto' => null,
             ],

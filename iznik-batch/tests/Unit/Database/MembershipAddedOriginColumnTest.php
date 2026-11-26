@@ -14,7 +14,7 @@ class MembershipAddedOriginColumnTest extends TestCase
      */
     public function test_added_origin_holds_exactly_the_model_values_on_both_tables(): void
     {
-        $expected = "enum('" . implode("','", Membership::ADDED_ORIGINS) . "')";
+        $expected = "enum('".implode("','", Membership::ADDED_ORIGINS)."')";
 
         foreach (['memberships', 'memberships_history'] as $table) {
             $col = DB::selectOne("SELECT COLUMN_TYPE AS t, IS_NULLABLE AS n, COLUMN_DEFAULT AS d
@@ -36,9 +36,9 @@ class MembershipAddedOriginColumnTest extends TestCase
     public function test_the_production_sql_lists_exactly_the_model_values(): void
     {
         $sql = file_get_contents(database_path('migrations/2026_10_28_000002_add_added_origin_to_memberships_migration.sql'));
-        $expected = "ENUM(''" . implode("'',''", Membership::ADDED_ORIGINS) . "'')";
+        $expected = "ENUM(''".implode("'',''", Membership::ADDED_ORIGINS)."'')";
 
-        preg_match_all("/ADD COLUMN added_origin (ENUM\\([^)]*\\))/", $sql, $matches);
+        preg_match_all('/ADD COLUMN added_origin (ENUM\\([^)]*\\))/', $sql, $matches);
 
         $this->assertCount(2, $matches[1], 'one ENUM per table');
         foreach ($matches[1] as $enum) {

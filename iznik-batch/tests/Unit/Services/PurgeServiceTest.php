@@ -21,7 +21,7 @@ class PurgeServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PurgeService();
+        $this->service = new PurgeService;
     }
 
     public function test_purge_spam_chat_messages(): void
@@ -204,7 +204,8 @@ class PurgeServiceTest extends TestCase
             $this->spamMessage($user, $room, 30, false);
         }
 
-        $service = new class extends PurgeService {
+        $service = new class extends PurgeService
+        {
             public function __construct()
             {
                 $this->chunkSize = 2;

@@ -9,11 +9,11 @@ class HousekeeperResultsMailTest extends TestCase
     private function makeViewData(array $overrides = []): array
     {
         return array_merge([
-            'task'       => 'facebook-deletion',
+            'task' => 'facebook-deletion',
             'taskStatus' => 'success',
-            'summary'    => '3 users processed',
-            'results'    => [],
-            'timestamp'  => '24/06/2026 10:00:00',
+            'summary' => '3 users processed',
+            'results' => [],
+            'timestamp' => '24/06/2026 10:00:00',
         ], $overrides);
     }
 
@@ -21,7 +21,7 @@ class HousekeeperResultsMailTest extends TestCase
     {
         $data = $this->makeViewData([
             'taskStatus' => 'success',
-            'summary'    => 'Deleted 7 Facebook accounts',
+            'summary' => 'Deleted 7 Facebook accounts',
         ]);
 
         $html = view('emails.mjml.housekeeper.results', $data)->render();
@@ -37,7 +37,7 @@ class HousekeeperResultsMailTest extends TestCase
     {
         $data = $this->makeViewData([
             'taskStatus' => 'failure',
-            'summary'    => 'Could not connect to Facebook API',
+            'summary' => 'Could not connect to Facebook API',
         ]);
 
         $html = view('emails.mjml.housekeeper.results', $data)->render();

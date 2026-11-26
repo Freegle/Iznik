@@ -13,7 +13,7 @@ class GiftAidClaimServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new GiftAidClaimService();
+        $this->service = new GiftAidClaimService;
     }
 
     // -------------------------------------------------------------------------
@@ -459,7 +459,7 @@ class GiftAidClaimServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        $email = 'orphan-donor-' . $user->id . '@example.com';
+        $email = 'orphan-donor-'.$user->id.'@example.com';
         DB::insert(
             'INSERT INTO users_emails (userid, email) VALUES (?, ?)',
             [$user->id, $email]
@@ -488,7 +488,7 @@ class GiftAidClaimServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
-        $email = 'no-match-' . $user->id . '@example.com';
+        $email = 'no-match-'.$user->id.'@example.com';
         DB::insert(
             "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, source, timestamp, Payer)
              VALUES (NULL, 5.00, 0, 'Stripe', NOW(), ?)",

@@ -15,13 +15,13 @@ class DistancePreferenceFilterTest extends TestCase
 {
     private function filter(): DistancePreferenceFilter
     {
-        return new DistancePreferenceFilter();
+        return new DistancePreferenceFilter;
     }
 
     /** Build an unsaved User model with the given settings array (no DB touched). */
     private function userWithSettings(?array $settings): User
     {
-        $user = new User();
+        $user = new User;
         $user->settings = $settings;
 
         return $user;
@@ -305,7 +305,7 @@ class DistancePreferenceFilterTest extends TestCase
             $this->assertSame(
                 10.0,
                 $this->filter()->authorMaxDistanceMiles($user),
-                'outbound ' . var_export($bad, true) . ' should fall back'
+                'outbound '.var_export($bad, true).' should fall back'
             );
         }
     }
@@ -321,7 +321,7 @@ class DistancePreferenceFilterTest extends TestCase
 
     public function test_outbound_reads_a_json_string_settings_blob(): void
     {
-        $user = new User();
+        $user = new User;
         $user->settings = json_encode(['myPostsMaxDistance' => 22.5]);
         $this->assertSame(22.5, $this->filter()->authorMaxDistanceMiles($user));
     }

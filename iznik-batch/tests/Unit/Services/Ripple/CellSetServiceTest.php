@@ -39,7 +39,7 @@ class CellSetServiceTest extends TestCase
 
     public function test_negative_grid_offsets_decode_probe_and_re_encode(): void
     {
-        $svc = new CellSetService();
+        $svc = new CellSetService;
         $bytes = base64_decode(self::GOLDEN_NEGATIVE_OFFSETS);
 
         $decoded = $svc->decode($bytes);
@@ -75,7 +75,7 @@ class CellSetServiceTest extends TestCase
 
     private function service(): CellSetService
     {
-        return new CellSetService();
+        return new CellSetService;
     }
 
     public function test_decodes_golden_vector_header(): void
@@ -131,7 +131,7 @@ class CellSetServiceTest extends TestCase
     public function test_decode_rejects_zero_sized_grid(): void
     {
         // magic + minCol=0 + minRow=0 + cols=0 + rows=0
-        $bytes = "\x43\x43\x53\x31" . str_repeat("\x00", 16);
+        $bytes = "\x43\x43\x53\x31".str_repeat("\x00", 16);
         $this->expectException(\InvalidArgumentException::class);
         $this->service()->decode($bytes);
     }
@@ -142,7 +142,7 @@ class CellSetServiceTest extends TestCase
         // 1.8e19 cells. Refusing it means "fall back to the polygon", which
         // every caller already handles; running out of memory does not.
         $bytes = "\x43\x43\x53\x31"
-            . pack('VVVV', 0, 0, 0xFFFFFFFF, 0xFFFFFFFF);
+            .pack('VVVV', 0, 0, 0xFFFFFFFF, 0xFFFFFFFF);
         $this->expectException(\InvalidArgumentException::class);
         $this->service()->decode($bytes);
     }
@@ -338,7 +338,7 @@ class CellSetServiceTest extends TestCase
      */
     public function test_max_distance_from_origin_matches_a_hand_computation(): void
     {
-        $svc = new CellSetService();
+        $svc = new CellSetService;
         // A box 0.003 x 0.003 degrees (10 x 10 cells) with its origin at the
         // south-west corner, so the farthest covered cell is the north-east one.
         $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
@@ -360,7 +360,7 @@ class CellSetServiceTest extends TestCase
      */
     public function test_distance_to_nearest_cell(): void
     {
-        $svc = new CellSetService();
+        $svc = new CellSetService;
         $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
         $bytes = $svc->rasterize($wkt);
         $this->assertNotNull($bytes);
@@ -382,7 +382,7 @@ class CellSetServiceTest extends TestCase
     /** The grid's bounding box as WKT - the cell form of ST_Envelope. */
     public function test_bounds_wkt_covers_the_grid_and_refuses_rubbish(): void
     {
-        $svc = new CellSetService();
+        $svc = new CellSetService;
         $bytes = base64_decode(self::GOLDEN_NEGATIVE_OFFSETS);
 
         $wkt = $svc->boundsWkt($bytes);
@@ -431,7 +431,7 @@ class CellSetServiceTest extends TestCase
     public function test_spatial_clients_return_null_when_the_server_cannot_answer(): void
     {
         config(['freegle.spatial_server_url' => 'http://127.0.0.1:9']); // nothing listens on discard
-        $svc = new CellSetService();
+        $svc = new CellSetService;
 
         $this->assertNull($svc->vectorize('irrelevant', 0));
         $this->assertNull($svc->groupsIntersecting('irrelevant'));
@@ -447,7 +447,7 @@ class CellSetServiceTest extends TestCase
      */
     public function test_vectorize_round_trips_back_to_the_same_coverage(): void
     {
-        $svc = new CellSetService();
+        $svc = new CellSetService;
         $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
         $bytes = $svc->rasterize($wkt);
         $this->assertNotNull($bytes);

@@ -34,7 +34,7 @@ class ReachQueryServiceTest extends TestCase
         $this->verdictOverride = null;
         $this->reachEvalDown = false;
         Http::fake(function ($request) {
-            if (!str_contains($request->url(), 'reach-eval')) {
+            if (! str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             if ($this->reachEvalDown) {
@@ -91,26 +91,26 @@ class ReachQueryServiceTest extends TestCase
 
     public function test_point_inside_reach_is_within(): void
     {
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertTrue($svc->isWithinReach($this->seedReach(), 51.5, -0.1));
     }
 
     public function test_point_outside_reach_is_not_within(): void
     {
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($this->seedReach(), 52.0, 1.0));
     }
 
     public function test_missing_reach_row_is_not_within(): void
     {
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach(999999999, 51.5, -0.1));
     }
 
     public function test_any_location_covered_returns_true_if_one_inside(): void
     {
         $msgid = $this->seedReach();
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         // First location outside, second inside → eligible (multiple viewer locations).
         $this->assertTrue($svc->isWithinReachAny($msgid, [[52.0, 1.0], [51.5, -0.1]]));
         // All outside → not eligible.
@@ -162,7 +162,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedClusterWedges($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         // No band passed at all: the wedges are unconditional, because they sit beyond every
         // band's ceiling and gating them on a band would refuse the town members they exist for.
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0), 'first wedge admits');
@@ -181,7 +181,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedClusterWedges($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertTrue($svc->isWithinReach($msgid, 54.0, -3.0), 'a wedge west of Greenwich admits');
     }
 
@@ -191,7 +191,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedClusterWedges($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
     }
 
@@ -201,7 +201,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedClusterWedges($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         // Inside the shared bbox but in neither wedge - the bbox is only a prefilter, so the
         // exact test behind it still has to reject.
         $this->assertFalse($svc->isWithinReach($msgid, 53.0, -1.0));
@@ -213,7 +213,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedClusterWedges($msgid);
 
-        (new ReachQueryService())->isWithinReach($msgid, 52.0, 1.0);
+        (new ReachQueryService)->isWithinReach($msgid, 52.0, 1.0);
 
         $this->assertDatabaseHas('rippling_event_metrics', [
             'day' => now()->toDateString(),
@@ -227,7 +227,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
     }
 
@@ -237,7 +237,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         // Same point, same ring, same post as the test above - only the flag differs.
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
     }
@@ -249,7 +249,7 @@ class ReachQueryServiceTest extends TestCase
         $this->seedRing($msgid);
         DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->delete();
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
 
@@ -272,7 +272,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedRing($msgid, 'sparse');
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, 'dense'));
     }
 
@@ -284,7 +284,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, null));
     }
 
@@ -294,7 +294,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         // The band has to survive the loop, which is exactly the kind of argument that gets
         // dropped when a parameter is threaded through a wrapper.
         $this->assertTrue($svc->isWithinReachAny($msgid, [[52.0, 1.0]], 'sparse'));
@@ -322,7 +322,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0));
     }
 
@@ -335,7 +335,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
     }
 
@@ -348,7 +348,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
     }
 
@@ -359,7 +359,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
         Http::assertNotSent(fn ($req) => str_contains($req->url(), 'quintile'));
     }
@@ -373,7 +373,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
-        $svc = new ReachQueryService();
+        $svc = new ReachQueryService;
         $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1));
         // The label admitted, so neither the rings nor the deprivation
         // service were consulted. (The one reach-eval call is the gate
@@ -381,7 +381,6 @@ class ReachQueryServiceTest extends TestCase
         Http::assertNotSent(fn ($req) => str_contains($req->url(), 'quintile'));
         Http::assertNotSent(fn ($req) => str_contains($req->url(), 'reachoverflow'));
     }
-
 
     public function test_stored_label_verdict_releases_a_held_reply_with_no_grid_left(): void
     {
@@ -393,15 +392,14 @@ class ReachQueryServiceTest extends TestCase
             ->update(['polygon_cells' => null]);
         $this->verdictOverride = 'in';
 
-        $this->assertTrue((new ReachQueryService())->isWithinReach($msgid, 52.0, 1.0));
+        $this->assertTrue((new ReachQueryService)->isWithinReach($msgid, 52.0, 1.0));
     }
-
 
     public function test_reach_verdict_is_in_for_a_location_the_labels_admit(): void
     {
         $this->assertSame(
             ReachQueryService::VERDICT_IN,
-            (new ReachQueryService())->reachVerdict($this->seedReach(), 51.5, -0.1)
+            (new ReachQueryService)->reachVerdict($this->seedReach(), 51.5, -0.1)
         );
     }
 
@@ -409,7 +407,7 @@ class ReachQueryServiceTest extends TestCase
     {
         $this->assertSame(
             ReachQueryService::VERDICT_OUT,
-            (new ReachQueryService())->reachVerdict($this->seedReach(), 52.0, 1.0)
+            (new ReachQueryService)->reachVerdict($this->seedReach(), 52.0, 1.0)
         );
     }
 
@@ -425,7 +423,7 @@ class ReachQueryServiceTest extends TestCase
 
         $this->assertSame(
             ReachQueryService::VERDICT_UNDECIDED,
-            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0)
+            (new ReachQueryService)->reachVerdict($msgid, 52.0, 1.0)
         );
     }
 
@@ -437,7 +435,7 @@ class ReachQueryServiceTest extends TestCase
 
         $this->assertSame(
             ReachQueryService::VERDICT_UNDECIDED,
-            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0)
+            (new ReachQueryService)->reachVerdict($msgid, 52.0, 1.0)
         );
     }
 
@@ -451,7 +449,7 @@ class ReachQueryServiceTest extends TestCase
 
         $this->assertSame(
             ReachQueryService::VERDICT_IN,
-            (new ReachQueryService())->reachVerdict($msgid, 52.0, 1.0, 'sparse')
+            (new ReachQueryService)->reachVerdict($msgid, 52.0, 1.0, 'sparse')
         );
     }
 
@@ -466,7 +464,7 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->reachEvalDown = true;
 
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
     }
 
     public function test_label_out_gates_on_the_rings_alone(): void
@@ -477,6 +475,6 @@ class ReachQueryServiceTest extends TestCase
         $msgid = $this->seedReach();
         $this->verdictOverride = 'out';
 
-        $this->assertFalse((new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse((new ReachQueryService)->isWithinReach($msgid, 51.5, -0.1));
     }
 }

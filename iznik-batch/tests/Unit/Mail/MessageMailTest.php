@@ -56,9 +56,9 @@ class MessageMailTest extends TestCase
 
         $mail = new DeadlineReached($message, $user);
 
-        $this->assertStringContainsString('/mypost/' . $message->id . '/extend', $mail->extendUrl);
-        $this->assertStringContainsString('/mypost/' . $message->id . '/completed', $mail->completedUrl);
-        $this->assertStringContainsString('/mypost/' . $message->id . '/withdraw', $mail->withdrawUrl);
+        $this->assertStringContainsString('/mypost/'.$message->id.'/extend', $mail->extendUrl);
+        $this->assertStringContainsString('/mypost/'.$message->id.'/completed', $mail->completedUrl);
+        $this->assertStringContainsString('/mypost/'.$message->id.'/withdraw', $mail->withdrawUrl);
     }
 
     public function test_deadline_reached_offer_has_taken_outcome(): void
@@ -213,16 +213,16 @@ class MessageMailTest extends TestCase
         ]);
 
         $html = view('emails.mjml.message.deadline-reached', [
-            'post'         => $message,
-            'user'         => $user,
-            'outcomeType'  => 'taken',
-            'groupName'    => $group->nameshort,
-            'isOffer'      => true,
-            'extendUrl'    => 'https://example.com/extend',
+            'post' => $message,
+            'user' => $user,
+            'outcomeType' => 'taken',
+            'groupName' => $group->nameshort,
+            'isOffer' => true,
+            'extendUrl' => 'https://example.com/extend',
             'completedUrl' => 'https://example.com/completed',
-            'withdrawUrl'  => 'https://example.com/withdraw',
-            'settingsUrl'  => 'https://example.com/settings',
-            'email'        => $user->email_preferred,
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => $user->email_preferred,
         ])->render();
 
         $this->assertStringContainsString(
@@ -236,15 +236,15 @@ class MessageMailTest extends TestCase
     {
         $html = view('emails.mjml.message.autorepost-warning', [
             'messageSubject' => 'OFFER: Garden Tools (Manchester)',
-            'userName'       => 'Alice',
-            'outcomeType'    => 'taken',
-            'isOffer'        => true,
-            'repostWhen'     => 'soon',
-            'completedUrl'   => 'https://example.com/completed',
-            'withdrawUrl'    => 'https://example.com/withdraw',
-            'promiseUrl'     => 'https://example.com/promise',
-            'settingsUrl'    => 'https://example.com/settings',
-            'email'          => 'alice@example.com',
+            'userName' => 'Alice',
+            'outcomeType' => 'taken',
+            'isOffer' => true,
+            'repostWhen' => 'soon',
+            'completedUrl' => 'https://example.com/completed',
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'promiseUrl' => 'https://example.com/promise',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => 'alice@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -258,15 +258,15 @@ class MessageMailTest extends TestCase
     {
         $html = view('emails.mjml.message.chaseup', [
             'messageSubject' => 'OFFER: Oak Bookcase (Leeds)',
-            'userName'       => 'Bob',
-            'outcomeType'    => 'taken',
-            'repostUrl'      => 'https://example.com/repost',
-            'completedUrl'   => 'https://example.com/completed',
-            'withdrawUrl'    => 'https://example.com/withdraw',
-            'chatsUrl'       => 'https://example.com/chats',
-            'myPostsUrl'     => 'https://example.com/myposts',
-            'settingsUrl'    => 'https://example.com/settings',
-            'email'          => 'bob@example.com',
+            'userName' => 'Bob',
+            'outcomeType' => 'taken',
+            'repostUrl' => 'https://example.com/repost',
+            'completedUrl' => 'https://example.com/completed',
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'chatsUrl' => 'https://example.com/chats',
+            'myPostsUrl' => 'https://example.com/myposts',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => 'bob@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -280,14 +280,14 @@ class MessageMailTest extends TestCase
     {
         $html = view('emails.mjml.message.chaseup-promised', [
             'messageSubject' => 'OFFER: Red Bicycle (Edinburgh)',
-            'userName'       => 'Carol',
-            'outcomeType'    => 'taken',
-            'promisedTo'     => 'Dave',
-            'completedUrl'   => 'https://example.com/completed',
-            'repostUrl'      => 'https://example.com/repost',
-            'withdrawUrl'    => 'https://example.com/withdraw',
-            'settingsUrl'    => 'https://example.com/settings',
-            'email'          => 'carol@example.com',
+            'userName' => 'Carol',
+            'outcomeType' => 'taken',
+            'promisedTo' => 'Dave',
+            'completedUrl' => 'https://example.com/completed',
+            'repostUrl' => 'https://example.com/repost',
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => 'carol@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -320,24 +320,24 @@ class MessageMailTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
         $message = $this->createTestMessage($user, $group, [
-            'type'    => $type,
-            'subject' => ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Thing (Town)',
+            'type' => $type,
+            'subject' => ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED').': Thing (Town)',
         ]);
 
         $mail = new DeadlineReached($message, $user);
 
         return view('emails.mjml.message.deadline-reached', [
-            'post'         => $message,
-            'user'         => $user,
-            'outcomeType'  => $mail->outcomeType,
-            'isOffer'      => $type === Message::TYPE_OFFER,
+            'post' => $message,
+            'user' => $user,
+            'outcomeType' => $mail->outcomeType,
+            'isOffer' => $type === Message::TYPE_OFFER,
             'deadlineDate' => $deadlineDate,
-            'groupName'    => $group->nameshort,
-            'extendUrl'    => 'https://example.com/extend',
+            'groupName' => $group->nameshort,
+            'extendUrl' => 'https://example.com/extend',
             'completedUrl' => 'https://example.com/completed',
-            'withdrawUrl'  => 'https://example.com/withdraw',
-            'settingsUrl'  => 'https://example.com/settings',
-            'email'        => $user->email_preferred,
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => $user->email_preferred,
         ])->render();
     }
 
@@ -486,15 +486,15 @@ class MessageMailTest extends TestCase
     {
         $html = view('emails.mjml.message.chaseup', [
             'messageSubject' => 'OFFER: Oak Bookcase (Leeds)',
-            'userName'       => 'Bob',
-            'outcomeType'    => 'taken',
-            'repostUrl'      => 'https://example.com/repost',
-            'completedUrl'   => 'https://example.com/completed',
-            'withdrawUrl'    => 'https://example.com/withdraw',
-            'chatsUrl'       => 'https://example.com/chats',
-            'myPostsUrl'     => 'https://example.com/myposts',
-            'settingsUrl'    => 'https://example.com/settings',
-            'email'          => 'bob@example.com',
+            'userName' => 'Bob',
+            'outcomeType' => 'taken',
+            'repostUrl' => 'https://example.com/repost',
+            'completedUrl' => 'https://example.com/completed',
+            'withdrawUrl' => 'https://example.com/withdraw',
+            'chatsUrl' => 'https://example.com/chats',
+            'myPostsUrl' => 'https://example.com/myposts',
+            'settingsUrl' => 'https://example.com/settings',
+            'email' => 'bob@example.com',
         ])->render();
 
         $this->assertStringContainsString('happened to your post', $html);
@@ -504,12 +504,12 @@ class MessageMailTest extends TestCase
     public function test_mod_std_message_preheader_contains_body_snippet(): void
     {
         $html = view('emails.mjml.message.mod-std-message', [
-            'body'           => 'Your post has been approved by the moderators. Welcome to Freegle!',
-            'modName'        => 'Mod Dave',
-            'groupName'      => 'Freegle Sheffield',
+            'body' => 'Your post has been approved by the moderators. Welcome to Freegle!',
+            'modName' => 'Mod Dave',
+            'groupName' => 'Freegle Sheffield',
             'messageSubject' => 'OFFER: Dining Table (Sheffield)',
-            'userSite'       => 'https://www.ilovefreegle.org',
-            'email'          => 'member@example.com',
+            'userSite' => 'https://www.ilovefreegle.org',
+            'email' => 'member@example.com',
         ])->render();
 
         $this->assertStringContainsString(
@@ -525,14 +525,14 @@ class MessageMailTest extends TestCase
      */
     private function promiseLinkToken(): string
     {
-        return rawurlencode(base64_encode(config('freegle.sites.user') . '/mypost/123/promise'));
+        return rawurlencode(base64_encode(config('freegle.sites.user').'/mypost/123/promise'));
     }
 
     private function renderAutoRepostWarning(string $type): string
     {
         return (new AutoRepostWarning(
             messageId: 123,
-            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Garden Tools (Manchester)',
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED').': Garden Tools (Manchester)',
             messageType: $type,
             userId: 456,
             userName: 'Alice',
@@ -545,7 +545,7 @@ class MessageMailTest extends TestCase
     {
         return (new ChaseUp(
             messageId: 123,
-            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Oak Bookcase (Leeds)',
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED').': Oak Bookcase (Leeds)',
             messageType: $type,
             userId: 456,
             userName: 'Bob',

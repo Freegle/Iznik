@@ -30,7 +30,7 @@ class ChatReviewServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ChatReviewService();
+        $this->service = new ChatReviewService;
 
         // A unique address so another test's modbot cannot be picked up.
         $this->modbotEmail = $this->uniqueEmail('modbot');
@@ -193,7 +193,7 @@ class ChatReviewServiceTest extends TestCase
     public function test_group_is_emailed_at_contactmail_with_singular_subject_and_body(): void
     {
         [, $recipient] = $this->pendingMessage('-3 days');
-        $group = $this->createTestGroup(['contactmail' => 'mods-' . uniqid() . '@example.org']);
+        $group = $this->createTestGroup(['contactmail' => 'mods-'.uniqid().'@example.org']);
         $this->createMembership($recipient, $group);
 
         $result = $this->service->processReview();
@@ -205,7 +205,7 @@ class ChatReviewServiceTest extends TestCase
         $this->assertCount(1, $mails);
         $mail = $mails[0];
         $this->assertSame(
-            '1 message between members waiting for your review on ' . $group->nameshort,
+            '1 message between members waiting for your review on '.$group->nameshort,
             $mail->getSubject()
         );
         $this->assertSame($group->contactmail, $mail->getTo()[0]->getAddress());
@@ -219,7 +219,7 @@ class ChatReviewServiceTest extends TestCase
 
     public function test_plural_subject_when_several_messages_pending(): void
     {
-        $group = $this->createTestGroup(['contactmail' => 'mods-' . uniqid() . '@example.org']);
+        $group = $this->createTestGroup(['contactmail' => 'mods-'.uniqid().'@example.org']);
         for ($i = 0; $i < 3; $i++) {
             [, $recipient] = $this->pendingMessage('-3 days');
             $this->createMembership($recipient, $group);
@@ -230,7 +230,7 @@ class ChatReviewServiceTest extends TestCase
         $mails = $this->sentFor($group);
         $this->assertCount(1, $mails);
         $this->assertSame(
-            '3 messages between members waiting for your review on ' . $group->nameshort,
+            '3 messages between members waiting for your review on '.$group->nameshort,
             $mails[0]->getSubject()
         );
     }
@@ -246,7 +246,7 @@ class ChatReviewServiceTest extends TestCase
         $mails = $this->sentFor($group);
         $this->assertCount(1, $mails);
         $this->assertSame(
-            $group->nameshort . '-volunteers@groups.example.org',
+            $group->nameshort.'-volunteers@groups.example.org',
             $mails[0]->getTo()[0]->getAddress()
         );
     }
@@ -262,7 +262,7 @@ class ChatReviewServiceTest extends TestCase
         $mails = $this->sentFor($group);
         $this->assertCount(1, $mails);
         $this->assertSame(
-            $group->nameshort . '-volunteers@groups.example.org',
+            $group->nameshort.'-volunteers@groups.example.org',
             $mails[0]->getTo()[0]->getAddress()
         );
     }
@@ -431,7 +431,7 @@ class ChatReviewServiceTest extends TestCase
         $this->assertCount(1, $summaries);
         $this->assertSame('mentors-test@example.org', $summaries[0]->getTo()[0]->getAddress());
         $this->assertSame('support-test@example.org', $summaries[0]->getFrom()[0]->getAddress());
-        $this->assertStringContainsString($group->nameshort . " count 2\r\n", $summaries[0]->getTextBody());
+        $this->assertStringContainsString($group->nameshort." count 2\r\n", $summaries[0]->getTextBody());
         $this->assertStringContainsString('more than 48 hours', $summaries[0]->getTextBody());
     }
 

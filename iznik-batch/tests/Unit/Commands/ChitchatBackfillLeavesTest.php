@@ -26,7 +26,7 @@ class ChitchatBackfillLeavesTest extends TestCase
         ]);
     }
 
-    public function testTagsUntaggedThreads(): void
+    public function test_tags_untagged_threads(): void
     {
         $id = $this->seedThread();
         $already = $this->seedThread(42);
@@ -38,7 +38,7 @@ class ChitchatBackfillLeavesTest extends TestCase
         $this->assertSame(42, (int) DB::table('newsfeed')->where('id', $already)->value('leaf'), 'tagged rows are skipped');
     }
 
-    public function testEngineUnavailableLeavesRowsUntouched(): void
+    public function test_engine_unavailable_leaves_rows_untouched(): void
     {
         $id = $this->seedThread();
         Http::fake(['*/v1/leaf*' => Http::response('not configured', 503)]);

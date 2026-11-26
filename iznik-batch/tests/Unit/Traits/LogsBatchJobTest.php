@@ -29,7 +29,7 @@ class LogsBatchJobTest extends TestCase
             ->once()
             ->with('test:command', 'completed', Mockery::type('array'));
 
-        $command = new TestCommand();
+        $command = new TestCommand;
         $command->setLaravel($this->app);
 
         $result = $command->handle();
@@ -51,7 +51,7 @@ class LogsBatchJobTest extends TestCase
                     && $context['exit_code'] === Command::SUCCESS;
             }));
 
-        $command = new TestCommand();
+        $command = new TestCommand;
         $command->setLaravel($this->app);
         $command->handle();
     }
@@ -70,7 +70,7 @@ class LogsBatchJobTest extends TestCase
                     && isset($context['duration_seconds']);
             }));
 
-        $command = new TestCommandThatFails();
+        $command = new TestCommandThatFails;
         $command->setLaravel($this->app);
 
         $this->expectException(\RuntimeException::class);
@@ -91,7 +91,7 @@ class LogsBatchJobTest extends TestCase
                 return isset($context['custom_key']) && $context['custom_key'] === 'custom_value';
             }));
 
-        $command = new TestCommandWithContext();
+        $command = new TestCommandWithContext;
         $command->setLaravel($this->app);
         $command->handle();
     }
@@ -104,7 +104,7 @@ class LogsBatchJobTest extends TestCase
         $this->lokiMock->shouldReceive('logBatchJob')
             ->with('mail:digest:unified', 'completed', Mockery::any());
 
-        $command = new TestCommandWithComplexSignature();
+        $command = new TestCommandWithComplexSignature;
         $command->setLaravel($this->app);
         $command->handle();
 

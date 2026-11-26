@@ -15,7 +15,7 @@ class GroupMaintenanceServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new GroupMaintenanceService();
+        $this->service = new GroupMaintenanceService;
     }
 
     public function test_updates_member_count(): void
@@ -132,7 +132,7 @@ class GroupMaintenanceServiceTest extends TestCase
         // Create a location with swapped lat/lng (lat should be ~50-60, lng ~-8 to 2 for UK).
         // Skewed means lat < lng, so lat=1.5, lng=51.5 is wrong.
         $locationId = DB::table('locations')->insertGetId([
-            'name' => 'TestSkewed_' . uniqid(),
+            'name' => 'TestSkewed_'.uniqid(),
             'type' => 'Postcode',
             'lat' => 1.5,
             'lng' => 51.5,
@@ -156,7 +156,7 @@ class GroupMaintenanceServiceTest extends TestCase
         $this->createMembership($user, $group);
 
         $locationId = DB::table('locations')->insertGetId([
-            'name' => 'TestSkewed_' . uniqid(),
+            'name' => 'TestSkewed_'.uniqid(),
             'type' => 'Postcode',
             'lat' => 1.5,
             'lng' => 51.5,

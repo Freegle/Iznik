@@ -38,7 +38,7 @@ class IncomingArchiveServiceTest extends TestCase
 
     private function serviceArchivingTo(string $dir): IncomingArchiveService
     {
-        $service = new IncomingArchiveService();
+        $service = new IncomingArchiveService;
         (new \ReflectionProperty(IncomingArchiveService::class, 'archiveDir'))->setValue($service, $dir);
 
         return $service;

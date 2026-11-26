@@ -18,7 +18,7 @@ class OptOutCommandTest extends TestCase
     private function rippling(int $groupid): ?array
     {
         $settings = json_decode((string) DB::table('groups')->where('id', $groupid)->value('settings'), true);
-        if (!is_array($settings) || !isset($settings['rippling']) || !is_array($settings['rippling'])) {
+        if (! is_array($settings) || ! isset($settings['rippling']) || ! is_array($settings['rippling'])) {
             return null;
         }
         $rippling = $settings['rippling'];
@@ -36,7 +36,7 @@ class OptOutCommandTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertSame(['in' => 0, 'out' => 0], $this->rippling((int) $group->id));
-        $optOut = new GroupRippleOptOut();
+        $optOut = new GroupRippleOptOut;
         $this->assertFalse($optOut->permits((int) $group->id, GroupRippleOptOut::DIRECTION_OUT));
         $this->assertFalse($optOut->permits((int) $group->id, GroupRippleOptOut::DIRECTION_IN));
     }
@@ -111,7 +111,7 @@ class OptOutCommandTest extends TestCase
             $this->assertSame(
                 ['out' => 0],
                 $this->rippling((int) $group->id),
-                'the setting lands whatever settings started as: ' . var_export($starting, true)
+                'the setting lands whatever settings started as: '.var_export($starting, true)
             );
         }
     }

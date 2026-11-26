@@ -3,7 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Services\NetlifyCertService;
-use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -25,43 +24,43 @@ class NetlifyCertServiceTest extends TestCase
         Config::set('freegle.netlify.cert_path', '/tmp/certs');
         Config::set('freegle.mail.geek_alerts_addr', 'geek-alerts@test.com');
 
-        $this->service = new NetlifyCertService();
+        $this->service = new NetlifyCertService;
     }
 
     #[Test]
-    public function isConfigured_returns_true_when_token_and_site_id_present(): void
+    public function is_configured_returns_true_when_token_and_site_id_present(): void
     {
         $this->assertTrue($this->service->isConfigured());
     }
 
     #[Test]
-    public function isConfigured_returns_false_when_token_missing(): void
+    public function is_configured_returns_false_when_token_missing(): void
     {
         Config::set('freegle.netlify.token', '');
-        $service = new NetlifyCertService();
+        $service = new NetlifyCertService;
 
         $this->assertFalse($service->isConfigured());
     }
 
     #[Test]
-    public function isConfigured_returns_false_when_site_id_missing(): void
+    public function is_configured_returns_false_when_site_id_missing(): void
     {
         Config::set('freegle.netlify.site_id', '');
-        $service = new NetlifyCertService();
+        $service = new NetlifyCertService;
 
         $this->assertFalse($service->isConfigured());
     }
 
     #[Test]
-    public function getCertPath_returns_configured_path(): void
+    public function get_cert_path_returns_configured_path(): void
     {
         $this->assertEquals('/tmp/certs', $this->service->getCertPath());
     }
 
     #[Test]
-    public function checkCertificateFiles_returns_all_exists_true_when_files_present(): void
+    public function check_certificate_files_returns_all_exists_true_when_files_present(): void
     {
-        $tempDir = sys_get_temp_dir() . '/netlify-test-' . uniqid();
+        $tempDir = sys_get_temp_dir().'/netlify-test-'.uniqid();
         mkdir($tempDir);
 
         try {
@@ -70,7 +69,7 @@ class NetlifyCertServiceTest extends TestCase
             file_put_contents("$tempDir/chain.pem", 'chain content');
 
             Config::set('freegle.netlify.cert_path', $tempDir);
-            $service = new NetlifyCertService();
+            $service = new NetlifyCertService;
 
             $result = $service->checkCertificateFiles();
 
@@ -85,9 +84,9 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function checkCertificateFiles_identifies_missing_files(): void
+    public function check_certificate_files_identifies_missing_files(): void
     {
-        $tempDir = sys_get_temp_dir() . '/netlify-test-' . uniqid();
+        $tempDir = sys_get_temp_dir().'/netlify-test-'.uniqid();
         mkdir($tempDir);
 
         try {
@@ -95,7 +94,7 @@ class NetlifyCertServiceTest extends TestCase
             // privkey.pem and chain.pem are missing
 
             Config::set('freegle.netlify.cert_path', $tempDir);
-            $service = new NetlifyCertService();
+            $service = new NetlifyCertService;
 
             $result = $service->checkCertificateFiles();
 
@@ -110,10 +109,10 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function uploadCertificate_returns_error_when_not_configured(): void
+    public function upload_certificate_returns_error_when_not_configured(): void
     {
         Config::set('freegle.netlify.token', '');
-        $service = new NetlifyCertService();
+        $service = new NetlifyCertService;
 
         $result = $service->uploadCertificate();
 
@@ -122,10 +121,10 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function uploadCertificate_returns_error_when_cert_files_missing(): void
+    public function upload_certificate_returns_error_when_cert_files_missing(): void
     {
         Config::set('freegle.netlify.cert_path', '/nonexistent/path');
-        $service = new NetlifyCertService();
+        $service = new NetlifyCertService;
 
         $result = $service->uploadCertificate();
 
@@ -134,9 +133,9 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function uploadCertificate_returns_success_on_successful_api_response(): void
+    public function upload_certificate_returns_success_on_successful_api_response(): void
     {
-        $tempDir = sys_get_temp_dir() . '/netlify-test-' . uniqid();
+        $tempDir = sys_get_temp_dir().'/netlify-test-'.uniqid();
         mkdir($tempDir);
 
         try {
@@ -145,7 +144,7 @@ class NetlifyCertServiceTest extends TestCase
             file_put_contents("$tempDir/chain.pem", 'chain content');
 
             Config::set('freegle.netlify.cert_path', $tempDir);
-            $service = new NetlifyCertService();
+            $service = new NetlifyCertService;
 
             Http::fake([
                 'https://api.netlify.com/api/v1/sites/test-site-id/ssl' => Http::response(
@@ -168,9 +167,9 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function uploadCertificate_handles_api_error_response(): void
+    public function upload_certificate_handles_api_error_response(): void
     {
-        $tempDir = sys_get_temp_dir() . '/netlify-test-' . uniqid();
+        $tempDir = sys_get_temp_dir().'/netlify-test-'.uniqid();
         mkdir($tempDir);
 
         try {
@@ -179,7 +178,7 @@ class NetlifyCertServiceTest extends TestCase
             file_put_contents("$tempDir/chain.pem", 'chain content');
 
             Config::set('freegle.netlify.cert_path', $tempDir);
-            $service = new NetlifyCertService();
+            $service = new NetlifyCertService;
 
             Http::fake([
                 'https://api.netlify.com/api/v1/sites/test-site-id/ssl' => Http::response(
@@ -203,9 +202,9 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function uploadCertificate_handles_exception(): void
+    public function upload_certificate_handles_exception(): void
     {
-        $tempDir = sys_get_temp_dir() . '/netlify-test-' . uniqid();
+        $tempDir = sys_get_temp_dir().'/netlify-test-'.uniqid();
         mkdir($tempDir);
 
         try {
@@ -214,7 +213,7 @@ class NetlifyCertServiceTest extends TestCase
             file_put_contents("$tempDir/chain.pem", 'chain content');
 
             Config::set('freegle.netlify.cert_path', $tempDir);
-            $service = new NetlifyCertService();
+            $service = new NetlifyCertService;
 
             Http::fake([
                 'https://api.netlify.com/api/v1/sites/test-site-id/ssl' => Http::response(
@@ -240,7 +239,7 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function sendNotification_sends_success_email(): void
+    public function send_notification_sends_success_email(): void
     {
         Mail::fake();
         Log::spy();
@@ -253,7 +252,7 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function sendNotification_sends_failure_email(): void
+    public function send_notification_sends_failure_email(): void
     {
         Mail::fake();
         Log::spy();
@@ -266,7 +265,7 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function buildNotificationBody_success_without_verification(): void
+    public function build_notification_body_success_without_verification(): void
     {
         $body = $this->service->buildNotificationBody(true, 'Certificate uploaded', null);
 
@@ -276,7 +275,7 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function buildNotificationBody_success_with_verification(): void
+    public function build_notification_body_success_with_verification(): void
     {
         $verification = [
             'success' => true,
@@ -294,7 +293,7 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function buildNotificationBody_failure(): void
+    public function build_notification_body_failure(): void
     {
         $body = $this->service->buildNotificationBody(false, 'Network timeout occurred');
 
@@ -304,12 +303,11 @@ class NetlifyCertServiceTest extends TestCase
     }
 
     #[Test]
-    public function verifyCertificate_returns_error_on_command_failure(): void
+    public function verify_certificate_returns_error_on_command_failure(): void
     {
         $result = $this->service->verifyCertificate('definitely.invalid');
 
         $this->assertFalse($result['success']);
         $this->assertStringContainsString('Failed to retrieve', $result['error']);
     }
-
 }

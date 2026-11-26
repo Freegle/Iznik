@@ -294,7 +294,7 @@ class UserModelTest extends TestCase
     public function test_a_member_known_only_by_a_trashnothing_address_is_held_to_the_same_rule(): void
     {
         $group = $this->createTestGroup();
-        $user = $this->createTestUser(['email_preferred' => 'someone' . random_int(100000, 999999) . '@user.trashnothing.com']);
+        $user = $this->createTestUser(['email_preferred' => 'someone'.random_int(100000, 999999).'@user.trashnothing.com']);
 
         $this->assertNull($user->tnuserid);
         $this->assertTrue($user->isTrashNothingAccount(), 'the preferred address is enough');
@@ -375,7 +375,7 @@ class UserModelTest extends TestCase
         // Use unique prefix but TN domain to test isTN() detection.
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'user_' . uniqid('', true) . '@user.trashnothing.com',
+            'email' => 'user_'.uniqid('', true).'@user.trashnothing.com',
             'preferred' => 1,
             'added' => now(),
         ]);
@@ -712,7 +712,6 @@ class UserModelTest extends TestCase
      * Tests for internal email filtering in getEmailPreferred.
      * These verify that iznik-batch matches the legacy V1 PHP implementation's behavior.
      */
-
     public function test_email_preferred_excludes_users_ilovefreegle_domain(): void
     {
         $user = User::create([
@@ -723,13 +722,13 @@ class UserModelTest extends TestCase
         // Create an internal email marked as preferred.
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'test-' . uniqid() . '@users.ilovefreegle.org',
+            'email' => 'test-'.uniqid().'@users.ilovefreegle.org',
             'preferred' => 1,
             'added' => now(),
         ]);
 
         // Create a real external email.
-        $externalEmail = 'external-' . uniqid() . '@gmail.com';
+        $externalEmail = 'external-'.uniqid().'@gmail.com';
         UserEmail::create([
             'userid' => $user->id,
             'email' => $externalEmail,
@@ -751,13 +750,13 @@ class UserModelTest extends TestCase
         // Create a groups.ilovefreegle.org email marked as preferred.
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'groupname-' . uniqid() . '@groups.ilovefreegle.org',
+            'email' => 'groupname-'.uniqid().'@groups.ilovefreegle.org',
             'preferred' => 1,
             'added' => now(),
         ]);
 
         // Create a real external email.
-        $externalEmail = 'external-' . uniqid() . '@hotmail.com';
+        $externalEmail = 'external-'.uniqid().'@hotmail.com';
         UserEmail::create([
             'userid' => $user->id,
             'email' => $externalEmail,
@@ -777,12 +776,12 @@ class UserModelTest extends TestCase
 
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'user-' . uniqid() . '@direct.ilovefreegle.org',
+            'email' => 'user-'.uniqid().'@direct.ilovefreegle.org',
             'preferred' => 1,
             'added' => now(),
         ]);
 
-        $externalEmail = 'external-' . uniqid() . '@yahoo.com';
+        $externalEmail = 'external-'.uniqid().'@yahoo.com';
         UserEmail::create([
             'userid' => $user->id,
             'email' => $externalEmail,
@@ -802,12 +801,12 @@ class UserModelTest extends TestCase
 
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'feed-' . uniqid() . '@republisher.freegle.in',
+            'email' => 'feed-'.uniqid().'@republisher.freegle.in',
             'preferred' => 1,
             'added' => now(),
         ]);
 
-        $externalEmail = 'external-' . uniqid() . '@outlook.com';
+        $externalEmail = 'external-'.uniqid().'@outlook.com';
         UserEmail::create([
             'userid' => $user->id,
             'email' => $externalEmail,
@@ -827,12 +826,12 @@ class UserModelTest extends TestCase
 
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'oldgroup-' . uniqid() . '@yahoogroups.com',
+            'email' => 'oldgroup-'.uniqid().'@yahoogroups.com',
             'preferred' => 1,
             'added' => now(),
         ]);
 
-        $externalEmail = 'external-' . uniqid() . '@protonmail.com';
+        $externalEmail = 'external-'.uniqid().'@protonmail.com';
         UserEmail::create([
             'userid' => $user->id,
             'email' => $externalEmail,
@@ -853,14 +852,14 @@ class UserModelTest extends TestCase
         // Only internal emails.
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'user1-' . uniqid() . '@users.ilovefreegle.org',
+            'email' => 'user1-'.uniqid().'@users.ilovefreegle.org',
             'preferred' => 1,
             'added' => now(),
         ]);
 
         UserEmail::create([
             'userid' => $user->id,
-            'email' => 'group1-' . uniqid() . '@groups.ilovefreegle.org',
+            'email' => 'group1-'.uniqid().'@groups.ilovefreegle.org',
             'preferred' => 0,
             'added' => now(),
         ]);

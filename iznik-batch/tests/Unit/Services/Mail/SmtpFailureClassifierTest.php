@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services\Mail;
 
-use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
 use App\Services\Mail\SmtpFailureClassifier;
 use Illuminate\Support\Facades\Log;
@@ -33,27 +32,27 @@ class SmtpFailureClassifierTest extends TestCase
     {
         return [
             // RFC 5321 5xx permanent failure codes
-            '550 mailbox unavailable'             => ['550 Mailbox unavailable'],
-            '550 with text'                       => ['SMTP error: 550 No such user'],
-            '551 user not local'                  => ['551 User not local; please try forwarding'],
-            '552 storage exceeded'                => ['552 Exceeded storage allocation'],
-            '553 mailbox name'                    => ['553 Mailbox name not allowed'],
-            '554 transaction failed'              => ['554 Transaction failed'],
-            '501 5.1.3 syntax'                    => ['501 5.1.3 Bad recipient address syntax'],
-            '501 5.1.3 with spaces'               => ['501  5.1.3 extended description'],
-            '5.0.1 bad destination'               => ['Permanent error: 5.0.1'],
-            '5.0.3 address syntax'                => ['Error code 5.0.3'],
-            '5.1.1 bad mailbox'                   => ['SMTP 5.1.1 mailbox does not exist'],
-            '5.1.3 bad address syntax'            => ['Delivery failed: 5.1.3'],
-            '5.2.1 mailbox disabled'              => ['5.2.1 Mailbox disabled, not accepting messages'],
-            'non-ASCII characters lowercase'      => ['Address contains non-ASCII characters'],
-            'non-ASCII characters uppercase'      => ['NON-ASCII CHARACTERS not allowed'],
-            'Invalid address lowercase'           => ['Invalid address: foo@'],
-            'Invalid address mixed case'          => ['INVALID ADDRESS detected'],
-            'Bad recipient address syntax lower'  => ['Bad recipient address syntax'],
-            'Bad recipient address syntax upper'  => ['BAD RECIPIENT ADDRESS SYNTAX in header'],
-            'RFC 2822 compliance'                 => ['Address does not comply with addr-spec of RFC 2822'],
-            'RFC 2822 uppercase'                  => ['Email DOES NOT COMPLY WITH ADDR-SPEC OF RFC 2822'],
+            '550 mailbox unavailable' => ['550 Mailbox unavailable'],
+            '550 with text' => ['SMTP error: 550 No such user'],
+            '551 user not local' => ['551 User not local; please try forwarding'],
+            '552 storage exceeded' => ['552 Exceeded storage allocation'],
+            '553 mailbox name' => ['553 Mailbox name not allowed'],
+            '554 transaction failed' => ['554 Transaction failed'],
+            '501 5.1.3 syntax' => ['501 5.1.3 Bad recipient address syntax'],
+            '501 5.1.3 with spaces' => ['501  5.1.3 extended description'],
+            '5.0.1 bad destination' => ['Permanent error: 5.0.1'],
+            '5.0.3 address syntax' => ['Error code 5.0.3'],
+            '5.1.1 bad mailbox' => ['SMTP 5.1.1 mailbox does not exist'],
+            '5.1.3 bad address syntax' => ['Delivery failed: 5.1.3'],
+            '5.2.1 mailbox disabled' => ['5.2.1 Mailbox disabled, not accepting messages'],
+            'non-ASCII characters lowercase' => ['Address contains non-ASCII characters'],
+            'non-ASCII characters uppercase' => ['NON-ASCII CHARACTERS not allowed'],
+            'Invalid address lowercase' => ['Invalid address: foo@'],
+            'Invalid address mixed case' => ['INVALID ADDRESS detected'],
+            'Bad recipient address syntax lower' => ['Bad recipient address syntax'],
+            'Bad recipient address syntax upper' => ['BAD RECIPIENT ADDRESS SYNTAX in header'],
+            'RFC 2822 compliance' => ['Address does not comply with addr-spec of RFC 2822'],
+            'RFC 2822 uppercase' => ['Email DOES NOT COMPLY WITH ADDR-SPEC OF RFC 2822'],
         ];
     }
 
@@ -66,21 +65,21 @@ class SmtpFailureClassifierTest extends TestCase
     public static function nonPermanentErrorProvider(): array
     {
         return [
-            'empty string'              => [''],
-            'generic message'           => ['Something went wrong'],
-            'connection refused'        => ['Connection refused to mail-host:25'],
-            'timed out'                 => ['Connection to "mail-host:25" timed out'],
-            'service unavailable 421'   => ['421 Service not available'],
-            '5500 is not 550'           => ['5500 is not a match'],
-            '5510 is not 551'           => ['5510 extra digit'],
+            'empty string' => [''],
+            'generic message' => ['Something went wrong'],
+            'connection refused' => ['Connection refused to mail-host:25'],
+            'timed out' => ['Connection to "mail-host:25" timed out'],
+            'service unavailable 421' => ['421 Service not available'],
+            '5500 is not 550' => ['5500 is not a match'],
+            '5510 is not 551' => ['5510 extra digit'],
             // Boundary: 5.2.2 is NOT in permanent patterns (it's not 5.2.1)
-            '5.2.2 not in patterns'     => ['5.2.2 Mailbox full'],
+            '5.2.2 not in patterns' => ['5.2.2 Mailbox full'],
             // 5.1.2 not matching /5\.[01]\.[13]/ because it ends in 2
-            '5.1.2 not matched'         => ['5.1.2 Bad destination system'],
+            '5.1.2 not matched' => ['5.1.2 Bad destination system'],
             // Transient patterns should not be caught by isPermanent
-            'connection reset'          => ['Connection reset by peer'],
-            'closed unexpectedly'       => ['Connection has been closed unexpectedly'],
-            'unable to connect'         => ['stream_socket_client(): Unable to connect'],
+            'connection reset' => ['Connection reset by peer'],
+            'closed unexpectedly' => ['Connection has been closed unexpectedly'],
+            'unable to connect' => ['stream_socket_client(): Unable to connect'],
         ];
     }
 
@@ -151,21 +150,21 @@ class SmtpFailureClassifierTest extends TestCase
     public static function transientErrorProvider(): array
     {
         return [
-            'Connection refused'                       => ['Connection refused'],
-            'connection refused lowercase'             => ['connection refused to server'],
-            'Connection to host timed out'             => ['Connection to "mail-host:25" timed out'],
-            'Connection with host timed out'           => ['Connection with "smtp.example.com:587" timed out'],
-            'Connection could not be established'      => ['Connection could not be established with host'],
-            'connection could not be established low'  => ['connection could not be established'],
-            'stream_socket_client'                     => ['stream_socket_client(): Unable to connect to mail:25'],
-            'stream_socket_client uppercase'           => ['STREAM_SOCKET_CLIENT(): UNABLE TO CONNECT'],
-            'Connection reset by peer'                 => ['Connection reset by peer'],
-            'connection reset by peer lower'           => ['connection reset by peer detected'],
-            'closed unexpectedly'                      => ['Connection has been closed unexpectedly'],
-            'closed unexpectedly mixed case'           => ['Transport HAS BEEN CLOSED UNEXPECTEDLY'],
-            '421 service unavailable'                  => ['421 Service not available, try again later'],
-            '421 alone'                                => ['421'],
-            '421 in context'                           => ['SMTP error: 421 Too many connections'],
+            'Connection refused' => ['Connection refused'],
+            'connection refused lowercase' => ['connection refused to server'],
+            'Connection to host timed out' => ['Connection to "mail-host:25" timed out'],
+            'Connection with host timed out' => ['Connection with "smtp.example.com:587" timed out'],
+            'Connection could not be established' => ['Connection could not be established with host'],
+            'connection could not be established low' => ['connection could not be established'],
+            'stream_socket_client' => ['stream_socket_client(): Unable to connect to mail:25'],
+            'stream_socket_client uppercase' => ['STREAM_SOCKET_CLIENT(): UNABLE TO CONNECT'],
+            'Connection reset by peer' => ['Connection reset by peer'],
+            'connection reset by peer lower' => ['connection reset by peer detected'],
+            'closed unexpectedly' => ['Connection has been closed unexpectedly'],
+            'closed unexpectedly mixed case' => ['Transport HAS BEEN CLOSED UNEXPECTEDLY'],
+            '421 service unavailable' => ['421 Service not available, try again later'],
+            '421 alone' => ['421'],
+            '421 in context' => ['SMTP error: 421 Too many connections'],
         ];
     }
 
@@ -178,17 +177,17 @@ class SmtpFailureClassifierTest extends TestCase
     public static function nonTransientErrorProvider(): array
     {
         return [
-            'empty string'              => [''],
-            'generic error'             => ['An unknown error occurred'],
-            '550 permanent failure'     => ['550 Mailbox unavailable'],
-            '554 transaction failed'    => ['554 Transaction failed'],
-            'non-ASCII characters'      => ['non-ASCII characters'],
-            'Invalid address'           => ['Invalid address'],
-            '5.2.1 mailbox disabled'    => ['5.2.1 Mailbox disabled'],
-            '4210 not 421'              => ['Error code 4210'],
+            'empty string' => [''],
+            'generic error' => ['An unknown error occurred'],
+            '550 permanent failure' => ['550 Mailbox unavailable'],
+            '554 transaction failed' => ['554 Transaction failed'],
+            'non-ASCII characters' => ['non-ASCII characters'],
+            'Invalid address' => ['Invalid address'],
+            '5.2.1 mailbox disabled' => ['5.2.1 Mailbox disabled'],
+            '4210 not 421' => ['Error code 4210'],
             // "timed out" without the quoted-host pattern does not match
-            'timed out without quotes'  => ['Connection timed out'],
-            'Connection with no quote'  => ['Connection to mail-host:25 timed out'],
+            'timed out without quotes' => ['Connection timed out'],
+            'Connection with no quote' => ['Connection to mail-host:25 timed out'],
         ];
     }
 
@@ -257,7 +256,7 @@ class SmtpFailureClassifierTest extends TestCase
     {
         Log::spy();
 
-        $nonExistentEmail = 'no-such-user-' . uniqid() . '@example.com';
+        $nonExistentEmail = 'no-such-user-'.uniqid().'@example.com';
         $this->classifier->recordPermanentBounce($nonExistentEmail, '550 Mailbox unavailable');
 
         Log::shouldHaveReceived('debug')
@@ -271,8 +270,8 @@ class SmtpFailureClassifierTest extends TestCase
     {
         Log::spy();
 
-        $nonExistentEmail = 'no-such-user-' . uniqid() . '@example.com';
-        $traceId = 'trace-' . uniqid();
+        $nonExistentEmail = 'no-such-user-'.uniqid().'@example.com';
+        $traceId = 'trace-'.uniqid();
 
         // Should not throw; should log debug about missing email
         $this->classifier->recordPermanentBounce($nonExistentEmail, '550 Mailbox unavailable', $traceId);
@@ -305,7 +304,7 @@ class SmtpFailureClassifierTest extends TestCase
         // Covers the `if ($traceId !== null) { $bounceService->updateEmailTracking(...) }` branch (line 119).
         $user = $this->createTestUser();
         $email = $user->emails()->first()->email;
-        $traceId = 'trace-' . uniqid();
+        $traceId = 'trace-'.uniqid();
 
         Log::spy();
 
@@ -326,6 +325,7 @@ class SmtpFailureClassifierTest extends TestCase
         $this->app->bind(BounceService::class, function () {
             $mock = \Mockery::mock(BounceService::class);
             $mock->shouldReceive('recordBounce')->andThrow(new \RuntimeException('DB error'));
+
             return $mock;
         });
 

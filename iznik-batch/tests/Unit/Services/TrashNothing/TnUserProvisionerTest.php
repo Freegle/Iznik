@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Mockery;
-use PHPUnit\Framework\Attributes\DataProvider;
 use OpenAPI\Client\Configuration;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\LagsTheReadNode;
 use Tests\TestCase;
 
@@ -55,7 +55,7 @@ class TnUserProvisionerTest extends TestCase
         Http::fake(function (Request $request, array $options) {
             $this->requestOptions[] = $options;
 
-            if (!preg_match('#^' . preg_quote($this->baseUrl, '#') . '/users/(\d+)\?#', $request->url(), $m)) {
+            if (! preg_match('#^'.preg_quote($this->baseUrl, '#').'/users/(\d+)\?#', $request->url(), $m)) {
                 return Http::response('not found', 404);
             }
 
@@ -96,21 +96,21 @@ class TnUserProvisionerTest extends TestCase
 
     private function uniqueUsername(string $prefix): string
     {
-        return $prefix . random_int(100000, 999999);
+        return $prefix.random_int(100000, 999999);
     }
 
     private function tnUser(string $username, array $overrides = []): array
     {
         return array_merge([
-            'user_id'       => '1',
-            'username'      => $username,
-            'country'       => 'GB',
+            'user_id' => '1',
+            'username' => $username,
+            'country' => 'GB',
             'profile_image' => null,
-            'member_since'  => '2020-01-01T00:00:00Z',
-            'firstname'     => null,
-            'lastname'      => null,
-            'reply_time'    => null,
-            'about_me'      => null,
+            'member_since' => '2020-01-01T00:00:00Z',
+            'firstname' => null,
+            'lastname' => null,
+            'reply_time' => null,
+            'about_me' => null,
         ], $overrides);
     }
 
@@ -132,7 +132,7 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_creates_user_from_full_response(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = 'tricia.hayes';
         $this->tnUsers[$tnId] = [200, $this->tnUser($username, ['firstname' => 'Tricia', 'lastname' => 'Hayes'])];
 
@@ -141,7 +141,7 @@ class TnUserProvisionerTest extends TestCase
         ));
 
         $provisioner = $this->provisioner();
-        $user        = $provisioner->resolveOrCreate($tnId);
+        $user = $provisioner->resolveOrCreate($tnId);
 
         $this->assertNotNull($user);
         $this->assertNull($provisioner->lastFailureReason());
@@ -154,8 +154,8 @@ class TnUserProvisionerTest extends TestCase
         $this->assertTrue($user->isTN());
 
         // The key is only accepted as a query parameter: a header gives 401.
-        Http::assertSent(fn (Request $r) => $r->url() === $this->baseUrl . "/users/{$tnId}?api_key=" . self::API_KEY
-            && !$r->hasHeader('Authorization'));
+        Http::assertSent(fn (Request $r) => $r->url() === $this->baseUrl."/users/{$tnId}?api_key=".self::API_KEY
+            && ! $r->hasHeader('Authorization'));
     }
 
     public function test_null_first_and_last_names_are_left_unset(): void
@@ -175,18 +175,18 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_field_parity_with_existing_creation_paths(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('parity_check.');
-        $email    = "{$username}@user.trashnothing.com";
+        $email = "{$username}@user.trashnothing.com";
         $this->tnUsers[$tnId] = [200, $this->tnUser($username, [
-            'firstname'  => 'Pat',
-            'lastname'   => 'Rity',
-            'about_me'   => 'I like giving things away.',
+            'firstname' => 'Pat',
+            'lastname' => 'Rity',
+            'about_me' => 'I like giving things away.',
             'reply_time' => 0,
         ])];
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
-        $row  = DB::table('users')->where('id', $user->id)->first();
+        $row = DB::table('users')->where('id', $user->id)->first();
 
         $this->assertSame(User::tnDisplayName($username), $row->fullname);
         $this->assertSame('Pat', $row->firstname);
@@ -224,9 +224,9 @@ class TnUserProvisionerTest extends TestCase
     /** Only a TN id says who someone is, so an account holding this username proves nothing. */
     public function test_an_account_on_an_alias_of_the_username_is_not_linked(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('nolink');
-        $alias    = "{$username}-g123@user.trashnothing.com";
+        $alias = "{$username}-g123@user.trashnothing.com";
         $existing = $this->createTestUser(['email_preferred' => $alias, 'fullname' => 'Not Linked']);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
@@ -245,12 +245,12 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_the_bare_address_moves_to_the_member_from_an_account_with_no_tn_id(): void
     {
-        $sentry   = $this->recordSentry();
-        $tnId     = $this->tnId();
+        $sentry = $this->recordSentry();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('bare');
-        $bare     = "{$username}@user.trashnothing.com";
+        $bare = "{$username}@user.trashnothing.com";
         $existing = $this->createTestUser(['email_preferred' => $bare]);
-        $spare    = $this->uniqueUsername('spare') . '-g9@user.trashnothing.com';
+        $spare = $this->uniqueUsername('spare').'-g9@user.trashnothing.com';
         UserEmail::create(['userid' => $existing->id, 'email' => $spare, 'preferred' => 0]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
@@ -274,8 +274,8 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_taking_an_address_that_has_gone_adds_it(): void
     {
-        $bare  = $this->uniqueUsername('gone') . '@user.trashnothing.com';
-        $from  = $this->createTestUser();
+        $bare = $this->uniqueUsername('gone').'@user.trashnothing.com';
+        $from = $this->createTestUser();
         $taker = $this->createTestUser();
 
         $taker->takeTnAddress($bare, $from->id);
@@ -292,10 +292,10 @@ class TnUserProvisionerTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $holderTnId = $this->tnId();
-        $bare   = $this->uniqueUsername('moved') . '@user.trashnothing.com';
-        $from   = $this->createTestUser();
+        $bare = $this->uniqueUsername('moved').'@user.trashnothing.com';
+        $from = $this->createTestUser();
         $holder = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $holderTnId]);
-        $taker  = $this->createTestUser(['tnuserid' => $this->tnId()]);
+        $taker = $this->createTestUser(['tnuserid' => $this->tnId()]);
 
         $taker->takeTnAddress($bare, $from->id);
 
@@ -310,10 +310,10 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_the_bare_address_moves_from_an_account_holding_another_tn_id(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('taken');
-        $bare     = "{$username}@user.trashnothing.com";
-        $holder   = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $tnId + 1]);
+        $bare = "{$username}@user.trashnothing.com";
+        $holder = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $tnId + 1]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
         $sentry = $this->recordSentry();
 
@@ -325,7 +325,7 @@ class TnUserProvisionerTest extends TestCase
 
         // The move is right, and it is flagged: the account it left is another TN member's.
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
-        $this->assertStringContainsString('another TN user id (' . ($tnId + 1) . ')', $sentry->calls[0][0]);
+        $this->assertStringContainsString('another TN user id ('.($tnId + 1).')', $sentry->calls[0][0]);
         $this->assertStringContainsString("TN user id {$tnId}", $sentry->calls[0][0]);
     }
 
@@ -336,8 +336,8 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_canon_match_with_a_different_username_is_not_linked(): void
     {
-        $tnId  = $this->tnId();
-        $mary  = $this->uniqueUsername('mary');
+        $tnId = $this->tnId();
+        $mary = $this->uniqueUsername('mary');
         $other = $this->createTestUser(['email_preferred' => "{$mary}-g12@user.trashnothing.com"]);
         $this->tnUsers[$tnId] = [200, $this->tnUser("{$mary}-jane")];
 
@@ -356,16 +356,16 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_stale_canon_row_for_a_different_username_is_not_linked(): void
     {
-        $tnId     = $this->tnId();
-        $username = $this->uniqueUsername('mary') . '-jane';
-        $other    = $this->createTestUser();
+        $tnId = $this->tnId();
+        $username = $this->uniqueUsername('mary').'-jane';
+        $other = $this->createTestUser();
         DB::table('users_emails')->insert([
-            'userid'    => $other->id,
-            'email'     => "{$username}-x@user.trashnothing.com",
-            'canon'     => "{$username}@usertrashnothingcom",
+            'userid' => $other->id,
+            'email' => "{$username}-x@user.trashnothing.com",
+            'canon' => "{$username}@usertrashnothingcom",
             'backwards' => strrev("{$username}@usertrashnothingcom"),
             'preferred' => 0,
-            'added'     => now(),
+            'added' => now(),
         ]);
         $this->assertSame(
             User::canonMail("{$username}@user.trashnothing.com"),
@@ -382,9 +382,9 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_deleted_account_is_not_linked(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('gone');
-        $deleted  = $this->createTestUser(['email_preferred' => "{$username}-g9@user.trashnothing.com", 'deleted' => now()]);
+        $deleted = $this->createTestUser(['email_preferred' => "{$username}-g9@user.trashnothing.com", 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
@@ -399,14 +399,14 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_the_bare_address_moves_from_a_deleted_account(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('goneb');
-        $bare     = "{$username}@user.trashnothing.com";
-        $deleted  = $this->createTestUser(['email_preferred' => $bare, 'deleted' => now()]);
+        $bare = "{$username}@user.trashnothing.com";
+        $deleted = $this->createTestUser(['email_preferred' => $bare, 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $provisioner = $this->provisioner();
-        $user        = $provisioner->resolveOrCreate($tnId);
+        $user = $provisioner->resolveOrCreate($tnId);
 
         $this->assertNull($provisioner->lastFailureReason());
         $this->assertNotSame($deleted->id, $user->id);
@@ -418,10 +418,10 @@ class TnUserProvisionerTest extends TestCase
     /** A live account on an alias is not the member either, whoever holds the bare address. */
     public function test_a_live_alias_account_is_not_linked_when_a_deleted_one_holds_the_bare_address(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('split');
         $this->createTestUser(['email_preferred' => "{$username}@user.trashnothing.com", 'deleted' => now()]);
-        $live     = $this->createTestUser(['email_preferred' => "{$username}-g5@user.trashnothing.com"]);
+        $live = $this->createTestUser(['email_preferred' => "{$username}-g5@user.trashnothing.com"]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
@@ -436,14 +436,14 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_the_same_username_on_an_account_with_another_tn_id_is_another_member(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('shared');
-        $alias    = "{$username}-g5@user.trashnothing.com";
-        $holder   = $this->createTestUser(['email_preferred' => $alias, 'tnuserid' => $tnId + 1]);
+        $alias = "{$username}-g5@user.trashnothing.com";
+        $holder = $this->createTestUser(['email_preferred' => $alias, 'tnuserid' => $tnId + 1]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         $provisioner = $this->provisioner();
-        $user        = $provisioner->resolveOrCreate($tnId);
+        $user = $provisioner->resolveOrCreate($tnId);
 
         $this->assertNull($provisioner->lastFailureReason());
         $this->assertNotSame($holder->id, $user->id);
@@ -529,9 +529,9 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_each_poster_is_remembered_on_their_own(): void
     {
-        $first  = $this->tnId();
+        $first = $this->tnId();
         $second = $this->tnId();
-        $this->tnUsers[$first]  = [404, 'No.'];
+        $this->tnUsers[$first] = [404, 'No.'];
         $this->tnUsers[$second] = [404, 'No.'];
 
         $this->provisioner()->resolveOrCreate($first);
@@ -550,7 +550,7 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_a_remembered_miss_is_asked_again_after_an_hour(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('later');
         $this->tnUsers[$tnId] = [200, $this->tnUser('', ['username' => null])];
 
@@ -576,7 +576,7 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_a_wrong_not_found_answer_stops_hiding_the_poster_after_an_hour(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('newcomer');
         $this->tnUsers[$tnId] = [404, 'Not replicated yet.'];
 
@@ -608,7 +608,7 @@ class TnUserProvisionerTest extends TestCase
     /** Only an answer is remembered. Not getting one says nothing about the poster. */
     public function test_a_failure_to_ask_is_not_remembered(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('back');
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
@@ -642,7 +642,7 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_a_deleted_account_holding_the_tnuserid_gets_no_post(): void
     {
-        $tnId    = $this->tnId();
+        $tnId = $this->tnId();
         $deleted = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($this->uniqueUsername('left'))];
 
@@ -661,9 +661,9 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_a_live_account_on_the_address_is_not_linked_while_a_deleted_account_holds_the_tnuserid(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('twin');
-        $live     = $this->createTestUser(['email_preferred' => "{$username}-g7@user.trashnothing.com"]);
+        $live = $this->createTestUser(['email_preferred' => "{$username}-g7@user.trashnothing.com"]);
         $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
@@ -677,8 +677,8 @@ class TnUserProvisionerTest extends TestCase
     /** What forgetting the account does (User::forget() clears tnuserid): the poster is new again. */
     public function test_once_the_deleted_account_lets_go_of_the_tnuserid_the_poster_gets_a_live_account(): void
     {
-        $tnId     = $this->tnId();
-        $deleted  = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
+        $tnId = $this->tnId();
+        $deleted = $this->createTestUser(['tnuserid' => $tnId, 'deleted' => now()]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($this->uniqueUsername('back'))];
         $this->assertNull($this->provisioner()->resolveOrCreate($tnId));
 
@@ -714,9 +714,9 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_rate_limit_and_challenge_responses_are_failures(): void
     {
-        $limited    = $this->tnId();
+        $limited = $this->tnId();
         $challenged = $this->tnId();
-        $this->tnUsers[$limited]    = fn () => Http::response('Too Many Requests', 429, ['Retry-After' => '30']);
+        $this->tnUsers[$limited] = fn () => Http::response('Too Many Requests', 429, ['Retry-After' => '30']);
         $this->tnUsers[$challenged] = fn () => Http::response('<html>challenge</html>', 200, ['cf-mitigated' => 'challenge']);
 
         $provisioner = $this->provisioner();
@@ -746,14 +746,14 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_an_answer_is_definite_and_a_failure_to_get_one_is_not(): void
     {
-        $notFound   = $this->tnId();
+        $notFound = $this->tnId();
         $noUsername = $this->tnId();
         $serverDown = $this->tnId();
-        $timedOut   = $this->tnId();
-        $this->tnUsers[$notFound]   = [404, 'User does not exist.'];
+        $timedOut = $this->tnId();
+        $this->tnUsers[$notFound] = [404, 'User does not exist.'];
         $this->tnUsers[$noUsername] = [200, $this->tnUser('', ['username' => null])];
         $this->tnUsers[$serverDown] = [503, 'Service Unavailable'];
-        $this->tnUsers[$timedOut]   = fn () => throw new ConnectionException('cURL error 28: timed out');
+        $this->tnUsers[$timedOut] = fn () => throw new ConnectionException('cURL error 28: timed out');
 
         $reasons = [];
         foreach ([$notFound, $noUsername, $serverDown, $timedOut] as $id) {
@@ -790,9 +790,9 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_rejected_key_is_reported_to_sentry_at_most_once_an_hour(): void
     {
         $sentry = $this->recordSentry();
-        $first  = $this->tnId();
+        $first = $this->tnId();
         $second = $this->tnId();
-        $this->tnUsers[$first]  = [401, 'Unauthorized'];
+        $this->tnUsers[$first] = [401, 'Unauthorized'];
         $this->tnUsers[$second] = [403, 'Forbidden'];
 
         $provisioner = $this->provisioner();
@@ -822,7 +822,7 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_a_cloudflare_block_is_not_a_rejected_key(): void
     {
-        $sentry  = $this->recordSentry();
+        $sentry = $this->recordSentry();
         $blocked = $this->tnId();
         $this->tnUsers[$blocked] = fn () => Http::response('<html>blocked</html>', 403, ['cf-mitigated' => 'challenge']);
 
@@ -834,9 +834,9 @@ class TnUserProvisionerTest extends TestCase
     public static function permanentClientErrors(): array
     {
         return [
-            'bad request'              => [400],
-            'gone'                     => [410],
-            'unprocessable'            => [422],
+            'bad request' => [400],
+            'gone' => [410],
+            'unprocessable' => [422],
             'unavailable for legal reasons' => [451],
         ];
     }
@@ -855,7 +855,7 @@ class TnUserProvisionerTest extends TestCase
 
         $provisioner = $this->provisioner();
 
-        $this->assertNull($provisioner->resolveOrCreate($tnId, 'refused-post-' . $status));
+        $this->assertNull($provisioner->resolveOrCreate($tnId, 'refused-post-'.$status));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_REFUSED, $provisioner->lastFailureReason());
         $this->assertSame('tn-user-lookup-refused', TnUserProvisioner::REASON_LOOKUP_REFUSED);
         $this->assertSame(0, User::where('tnuserid', $tnId)->count());
@@ -869,7 +869,7 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame(1, $this->lookupsFor($tnId));
         for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
             $again = $this->provisioner();
-            $again->resolveOrCreate($tnId, 'refused-post-' . $status);
+            $again->resolveOrCreate($tnId, 'refused-post-'.$status);
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_REFUSED, $again->lastFailureReason());
             $this->travel(1)->minutes();
         }
@@ -878,12 +878,12 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_refused_status_is_reported_to_sentry_once_a_day(): void
     {
         $sentry = $this->recordSentry();
-        $gone1  = $this->tnId();
-        $gone2  = $this->tnId();
-        $bad    = $this->tnId();
+        $gone1 = $this->tnId();
+        $gone2 = $this->tnId();
+        $bad = $this->tnId();
         $this->tnUsers[$gone1] = [410, 'Gone'];
         $this->tnUsers[$gone2] = [410, 'Gone'];
-        $this->tnUsers[$bad]   = [400, 'Bad Request'];
+        $this->tnUsers[$bad] = [400, 'Bad Request'];
 
         $this->provisioner()->resolveOrCreate($gone1);
         $this->provisioner()->resolveOrCreate($gone2);
@@ -909,10 +909,10 @@ class TnUserProvisionerTest extends TestCase
     {
         return [
             'request timeout' => [408],
-            'rate limited'    => [429],
-            'server error'    => [500],
-            'bad gateway'     => [502],
-            'unavailable'     => [503],
+            'rate limited' => [429],
+            'server error' => [500],
+            'bad gateway' => [502],
+            'unavailable' => [503],
             'gateway timeout' => [504],
         ];
     }
@@ -930,7 +930,7 @@ class TnUserProvisionerTest extends TestCase
 
         $provisioner = $this->provisioner();
 
-        $this->assertNull($provisioner->resolveOrCreate($tnId, 'transient-post-' . $status));
+        $this->assertNull($provisioner->resolveOrCreate($tnId, 'transient-post-'.$status));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
     }
 
@@ -938,7 +938,7 @@ class TnUserProvisionerTest extends TestCase
     {
         return [
             'unauthorised' => [401],
-            'forbidden'    => [403],
+            'forbidden' => [403],
         ];
     }
 
@@ -951,12 +951,12 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_rejected_key_is_not_counted_against_the_post(int $status): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [$status, 'Unauthorized'];
 
         for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
             $provisioner = $this->provisioner();
-            $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-' . $status));
+            $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-'.$status));
             $this->assertSame(TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED, $provisioner->lastFailureReason(), "minute {$minute}");
             $this->travel(1)->minutes();
         }
@@ -966,7 +966,7 @@ class TnUserProvisionerTest extends TestCase
         // Once the key works, a failure is the post's first.
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
         $provisioner = $this->provisioner();
-        $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-' . $status));
+        $this->assertNull($provisioner->resolveOrCreate($tnId, 'keyed-post-'.$status));
         $this->assertSame(TnUserProvisioner::REASON_LOOKUP_FAILED, $provisioner->lastFailureReason());
         $this->assertCount(1, $sentry->calls, 'nothing about the post');
     }
@@ -974,7 +974,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_failing_lookup_is_reported_once_its_post_has_waited_long_enough(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
         // One failed lookup of the post in each run, a minute apart: a run stops at its first failure.
@@ -1005,7 +1005,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_many_failures_close_together_are_a_short_wait(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
         // 40 runs ten seconds apart: more failures than there are minutes before giving up.
@@ -1017,13 +1017,13 @@ class TnUserProvisionerTest extends TestCase
         }
 
         $this->assertCount(1, $sentry->calls, 'warned once it had waited five minutes, and not given up');
-        $this->assertStringContainsString(TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES . ' minutes', $sentry->calls[0][0]);
+        $this->assertStringContainsString(TnUserProvisioner::LOOKUP_WARN_AFTER_MINUTES.' minutes', $sentry->calls[0][0]);
     }
 
     public function test_a_post_whose_lookups_keep_failing_is_given_up_and_reported_once(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
         for ($minute = 0; $minute < TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES; $minute++) {
@@ -1056,7 +1056,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_post_that_was_given_up_is_resolved_when_tn_answers_later(): void
     {
         $this->recordSentry();
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('recovered');
         $this->tnUsers[$tnId] = [503, 'Service Unavailable'];
 
@@ -1084,7 +1084,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_each_post_is_timed_from_its_own_first_failure(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
         // The same poster behind two posts, the second first failing four minutes after the first.
@@ -1104,7 +1104,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_failure_with_no_post_is_not_counted(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
         for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
@@ -1120,7 +1120,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_a_dry_run_does_not_count_a_failure(): void
     {
         $sentry = $this->recordSentry();
-        $tnId   = $this->tnId();
+        $tnId = $this->tnId();
         $this->tnUsers[$tnId] = [500, 'Internal Server Error'];
 
         for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
@@ -1143,7 +1143,7 @@ class TnUserProvisionerTest extends TestCase
     public function test_an_answered_lookup_is_not_counted(): void
     {
         $sentry = $this->recordSentry();
-        $gone   = $this->tnId();
+        $gone = $this->tnId();
         $this->tnUsers[$gone] = [404, 'User does not exist.'];
 
         for ($minute = 0; $minute <= TnUserProvisioner::LOOKUP_GIVE_UP_AFTER_MINUTES + 1; $minute++) {
@@ -1163,22 +1163,22 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_a_lost_race_with_no_winner_is_counted_like_any_failed_lookup(): void
     {
-        $sentry   = $this->recordSentry();
-        $tnId     = $this->tnId();
+        $sentry = $this->recordSentry();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('nowinner');
-        $email    = "{$username}@user.trashnothing.com";
-        $other    = $this->createTestUser();
+        $email = "{$username}@user.trashnothing.com";
+        $other = $this->createTestUser();
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
         // The address is taken by someone else between the check for it and the write.
         UserEmail::creating(function (UserEmail $row) use ($email, $other) {
-            if ($row->email === $email && !UserEmail::where('email', $email)->exists()) {
+            if ($row->email === $email && ! UserEmail::where('email', $email)->exists()) {
                 DB::table('users_emails')->insert([
-                    'userid'    => $other->id,
-                    'email'     => $email,
+                    'userid' => $other->id,
+                    'email' => $email,
                     'preferred' => 0,
-                    'added'     => now(),
-                    'canon'     => User::canonMail($email),
+                    'added' => now(),
+                    'canon' => User::canonMail($email),
                     'backwards' => strrev(User::canonMail($email)),
                 ]);
             }
@@ -1232,7 +1232,7 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_a_lost_race_takes_the_winner_from_the_primary_when_the_replica_is_behind(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('lagrace');
         $winnerId = null;
 
@@ -1263,13 +1263,13 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_dry_run_writes_nothing(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('dry.run');
-        $email    = "{$username}@user.trashnothing.com";
+        $email = "{$username}@user.trashnothing.com";
         $this->tnUsers[$tnId] = [200, $this->tnUser($username, ['about_me' => 'Hi', 'reply_time' => 60])];
 
         $provisioner = $this->provisioner(dryRun: true);
-        $user        = $provisioner->resolveOrCreate($tnId);
+        $user = $provisioner->resolveOrCreate($tnId);
 
         $this->assertNotNull($user);
         $this->assertFalse($user->exists);
@@ -1283,10 +1283,10 @@ class TnUserProvisionerTest extends TestCase
 
     public function test_dry_run_moving_the_bare_address_writes_nothing(): void
     {
-        $sentry   = $this->recordSentry();
-        $tnId     = $this->tnId();
+        $sentry = $this->recordSentry();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('drymove');
-        $bare     = "{$username}@user.trashnothing.com";
+        $bare = "{$username}@user.trashnothing.com";
         $existing = $this->createTestUser(['email_preferred' => $bare]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
 
@@ -1304,9 +1304,9 @@ class TnUserProvisionerTest extends TestCase
      */
     public function test_duplicate_key_race_returns_existing_user(): void
     {
-        $tnId     = $this->tnId();
+        $tnId = $this->tnId();
         $username = $this->uniqueUsername('race');
-        $winner   = null;
+        $winner = null;
 
         $this->tnUsers[$tnId] = function () use (&$winner, $tnId, $username) {
             $winner = User::create(['fullname' => 'Winner', 'added' => now(), 'tnuserid' => $tnId]);
@@ -1326,8 +1326,8 @@ class TnUserProvisionerTest extends TestCase
     {
         $echoed = $this->tnId();
         $timeout = $this->tnId();
-        $this->tnUsers[$echoed] = fn (Request $r) => Http::response('Bad request for ' . $r->url(), 500);
-        $this->tnUsers[$timeout] = fn (Request $r) => throw new ConnectionException('cURL error 28: timed out for ' . $r->url());
+        $this->tnUsers[$echoed] = fn (Request $r) => Http::response('Bad request for '.$r->url(), 500);
+        $this->tnUsers[$timeout] = fn (Request $r) => throw new ConnectionException('cURL error 28: timed out for '.$r->url());
 
         $provisioner = $this->provisioner();
         $this->assertNull($provisioner->resolveOrCreate($echoed));
@@ -1336,7 +1336,7 @@ class TnUserProvisionerTest extends TestCase
 
         $this->assertNotEmpty($this->logged);
         foreach ($this->logged as $event) {
-            $this->assertStringNotContainsString(self::API_KEY, $event->message . json_encode($event->context));
+            $this->assertStringNotContainsString(self::API_KEY, $event->message.json_encode($event->context));
         }
         $this->assertTrue(
             collect($this->logged)->contains(fn ($e) => str_contains(json_encode($e->context), 'api_key=<redacted>')),

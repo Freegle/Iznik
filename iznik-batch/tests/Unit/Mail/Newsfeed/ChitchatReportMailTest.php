@@ -74,13 +74,13 @@ class ChitchatReportMailTest extends TestCase
         // The mj-preview should name the reporter and show a snippet of the reason
         // so moderators can triage the report from the inbox preview alone.
         $html = view('emails.mjml.newsfeed.chitchat-report', [
-            'reporterName'  => 'Jane Doe',
-            'reporterId'    => 42,
+            'reporterName' => 'Jane Doe',
+            'reporterId' => 42,
             'reporterEmail' => 'jane@example.com',
-            'newsfeedId'    => 123,
-            'reason'        => 'This post contains offensive language',
-            'threadUrl'     => 'https://www.ilovefreegle.org/chitchat/123',
-            'siteName'      => 'Freegle',
+            'newsfeedId' => 123,
+            'reason' => 'This post contains offensive language',
+            'threadUrl' => 'https://www.ilovefreegle.org/chitchat/123',
+            'siteName' => 'Freegle',
         ])->render();
 
         $this->assertStringContainsString('<mj-preview>Reported by Jane Doe: This post contains offensive language</mj-preview>', $html);
@@ -92,17 +92,17 @@ class ChitchatReportMailTest extends TestCase
         // preview tag stays concise enough for inbox display.
         $longReason = 'This is a very long reason that definitely exceeds seventy characters and should be cut';
         $html = view('emails.mjml.newsfeed.chitchat-report', [
-            'reporterName'  => 'Bob Smith',
-            'reporterId'    => 7,
+            'reporterName' => 'Bob Smith',
+            'reporterId' => 7,
             'reporterEmail' => 'bob@example.com',
-            'newsfeedId'    => 99,
-            'reason'        => $longReason,
-            'threadUrl'     => 'https://www.ilovefreegle.org/chitchat/99',
-            'siteName'      => 'Freegle',
+            'newsfeedId' => 99,
+            'reason' => $longReason,
+            'threadUrl' => 'https://www.ilovefreegle.org/chitchat/99',
+            'siteName' => 'Freegle',
         ])->render();
 
         // The full long reason must not appear verbatim in the preview.
-        $this->assertStringNotContainsString('<mj-preview>Reported by Bob Smith: ' . $longReason . '</mj-preview>', $html);
+        $this->assertStringNotContainsString('<mj-preview>Reported by Bob Smith: '.$longReason.'</mj-preview>', $html);
         // The reporter name prefix must still be present.
         $this->assertStringContainsString('Reported by Bob Smith:', $html);
         // Truncation marker must appear in the preview element.

@@ -505,7 +505,8 @@ class EngagementServiceTest extends TestCase
         // Watch the depth at the moment the message is written. Deeper than the
         // level the run started at means an enclosing transaction is open, and
         // that transaction is the one the bookkeeping insert then joins.
-        $spy = new class(app(FreegleUserService::class)) extends PromptService {
+        $spy = new class(app(FreegleUserService::class)) extends PromptService
+        {
             public ?int $levelDuringSend = null;
 
             public function send(

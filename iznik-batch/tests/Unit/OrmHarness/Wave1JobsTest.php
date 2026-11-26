@@ -20,6 +20,7 @@ class Wave1JobsTest extends TestCase
 {
     // Two call sites of the same statement: SELECT keyword, count FROM jobs_keywords
     private const SITE_KEYWORDS_A = 'cd3f21359d36';
+
     private const SITE_KEYWORDS_B = 'fc9b72f253b8';
 
     // DELETE FROM logs_jobs WHERE timestamp < ?

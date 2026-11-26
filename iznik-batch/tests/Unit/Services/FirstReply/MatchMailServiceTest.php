@@ -3,9 +3,8 @@
 namespace Tests\Unit\Services\FirstReply;
 
 use App\Models\Message;
-use App\Services\FirstReply\MaxReachService;
-use App\Services\FreegleApiClient;
 use App\Services\FirstReply\MatchMailService;
+use App\Services\FreegleApiClient;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\FakesRingIndex;
@@ -14,9 +13,8 @@ use Tests\TestCase;
 
 class MatchMailServiceTest extends TestCase
 {
-    use SeedsReachCells;
-
     use FakesRingIndex;
+    use SeedsReachCells;
 
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
@@ -47,7 +45,7 @@ class MatchMailServiceTest extends TestCase
         // re-faking: 'fail' answers 500, an array answers those results.
         $this->arrivalOverride = null;
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (!str_contains($request->url(), 'reach-arrival')) {
+            if (! str_contains($request->url(), 'reach-arrival')) {
                 return null;
             }
             if ($this->arrivalOverride === 'fail') {
@@ -63,7 +61,7 @@ class MatchMailServiceTest extends TestCase
                 $lng = (float) ($pt['lng'] ?? 0);
                 $inTick1 = $lat >= 51.45 && $lat <= 51.55 && $lng >= -0.15 && $lng <= -0.05;
                 $inTick3 = $lat >= 51.0 && $lat <= 52.0 && $lng >= -1.0 && $lng <= 1.0;
-                if (!$inTick3) {
+                if (! $inTick3) {
                     $results[] = ['arrival' => null, 'in' => false];
                 } elseif ($inTick1) {
                     $results[] = ['arrival' => 100, 'in' => true];
@@ -168,7 +166,7 @@ class MatchMailServiceTest extends TestCase
         $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.1]);
         $message = $this->createTestMessage($poster, $group, [
             'type' => $type,
-            'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
+            'subject' => strtoupper($type).': Pine bookcase (TestLocation)',
             'lat' => 51.5,
             'lng' => -0.1,
         ]);
@@ -737,7 +735,7 @@ class MatchMailServiceTest extends TestCase
         $group = $this->createTestGroup();
         $post = $this->createTestMessage($user, $group, [
             'type' => $type,
-            'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
+            'subject' => strtoupper($type).': Pine bookcase (TestLocation)',
         ]);
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
@@ -854,7 +852,6 @@ class MatchMailServiceTest extends TestCase
         ]);
     }
 
-
     private function callCellBand(int $msgid, array $rows): array
     {
         $m = new \ReflectionMethod(MatchMailService::class, 'applyCellBand');
@@ -930,7 +927,6 @@ class MatchMailServiceTest extends TestCase
         // when the ripple arrives. There is no grid to fall back to.
         $this->assertCount(0, $kept);
     }
-
 
     public function test_band_labels_arm_keeps_sparse_candidate_keys_aligned(): void
     {

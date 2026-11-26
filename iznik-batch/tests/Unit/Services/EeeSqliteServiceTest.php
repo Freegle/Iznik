@@ -23,7 +23,7 @@ class EeeSqliteServiceTest extends TestCase
     protected function tearDown(): void
     {
         foreach ($this->tempPaths as $path) {
-            foreach ([$path, $path . '-wal', $path . '-shm', $path . '-journal'] as $file) {
+            foreach ([$path, $path.'-wal', $path.'-shm', $path.'-journal'] as $file) {
                 if (is_file($file)) {
                     @unlink($file);
                 }
@@ -56,10 +56,11 @@ class EeeSqliteServiceTest extends TestCase
 
     private function newService(?string $path = null): EeeSqliteService
     {
-        $path ??= $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path ??= $this->tempDir().'/eee_sqlite_test_'.uniqid().'.sqlite';
         $this->tempPaths[] = $path;
         config(['freegle.eee.sqlite_path' => $path]);
-        return new EeeSqliteService();
+
+        return new EeeSqliteService;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -68,10 +69,10 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_get_pdo_creates_missing_nested_directory_and_file(): void
     {
-        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '/nested/classifications.sqlite';
+        $path = $this->tempDir().'/eee_sqlite_test_'.uniqid().'/nested/classifications.sqlite';
         $this->tempPaths[] = $path;
         config(['freegle.eee.sqlite_path' => $path]);
-        $service = new EeeSqliteService();
+        $service = new EeeSqliteService;
 
         $this->assertFileDoesNotExist($path);
 
@@ -91,7 +92,7 @@ class EeeSqliteServiceTest extends TestCase
     public function test_migrate_creates_all_expected_tables(): void
     {
         $service = $this->newService();
-        $pdo     = $service->getPdo();
+        $pdo = $service->getPdo();
 
         $tables = $pdo->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
 
@@ -109,13 +110,13 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_migrate_upgrades_legacy_schema_missing_classification_mode_column(): void
     {
-        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path = $this->tempDir().'/eee_sqlite_test_'.uniqid().'.sqlite';
         $this->tempPaths[] = $path;
 
         // Simulate a pre-existing v1 database: the full column set the upgrade
         // code expects, but no classification_mode column at all.
-        $legacy = new PDO('sqlite:' . $path);
-        $legacy->exec("
+        $legacy = new PDO('sqlite:'.$path);
+        $legacy->exec('
             CREATE TABLE eee_item_types (
                 item_name                TEXT,
                 item_id                  INTEGER,
@@ -135,7 +136,7 @@ class EeeSqliteServiceTest extends TestCase
                 classified_at            DATETIME,
                 PRIMARY KEY (item_name, model, prompt_version)
             )
-        ");
+        ');
         $legacy->exec("
             INSERT INTO eee_item_types
                 (item_name, item_id, popularity, sample_size, is_eee, model, prompt_version, classified_at)
@@ -144,7 +145,7 @@ class EeeSqliteServiceTest extends TestCase
         $legacy = null;
 
         config(['freegle.eee.sqlite_path' => $path]);
-        $service = new EeeSqliteService();
+        $service = new EeeSqliteService;
 
         $row = $service->getItemType('Toaster', 'gemini', '1.0.0', 'combined');
 
@@ -155,12 +156,12 @@ class EeeSqliteServiceTest extends TestCase
 
     public function test_migrate_upgrades_schema_with_mode_column_but_short_primary_key(): void
     {
-        $path = $this->tempDir() . '/eee_sqlite_test_' . uniqid() . '.sqlite';
+        $path = $this->tempDir().'/eee_sqlite_test_'.uniqid().'.sqlite';
         $this->tempPaths[] = $path;
 
         // v2: classification_mode column already exists, but the PK is still
         // only 3 columns (not the 4-column composite the current schema needs).
-        $legacy = new PDO('sqlite:' . $path);
+        $legacy = new PDO('sqlite:'.$path);
         $legacy->exec("
             CREATE TABLE eee_item_types (
                 item_name                TEXT,
@@ -191,7 +192,7 @@ class EeeSqliteServiceTest extends TestCase
         $legacy = null;
 
         config(['freegle.eee.sqlite_path' => $path]);
-        $service = new EeeSqliteService();
+        $service = new EeeSqliteService;
 
         $row = $service->getItemType('Kettle', 'gemini', '1.0.0', 'per_image');
 
@@ -216,13 +217,13 @@ class EeeSqliteServiceTest extends TestCase
         $service = $this->newService();
 
         $service->upsertItemType([
-            'item_name'            => 'Blender',
-            'item_id'              => 10,
-            'popularity'           => 4,
-            'is_eee'               => 1,
-            'model'                => 'gemini',
-            'prompt_version'       => '1.1.0',
-            'classification_mode'  => 'combined',
+            'item_name' => 'Blender',
+            'item_id' => 10,
+            'popularity' => 4,
+            'is_eee' => 1,
+            'model' => 'gemini',
+            'prompt_version' => '1.1.0',
+            'classification_mode' => 'combined',
         ]);
 
         $row = $service->getItemType('Blender', 'gemini', '1.1.0');
@@ -237,11 +238,11 @@ class EeeSqliteServiceTest extends TestCase
         $service = $this->newService();
 
         $base = [
-            'item_name'           => 'Fan',
-            'model'               => 'gemini',
-            'prompt_version'      => '1.1.0',
+            'item_name' => 'Fan',
+            'model' => 'gemini',
+            'prompt_version' => '1.1.0',
             'classification_mode' => 'combined',
-            'popularity'          => 1,
+            'popularity' => 1,
         ];
         $service->upsertItemType($base);
         $service->upsertItemType([...$base, 'popularity' => 99]);
@@ -256,9 +257,9 @@ class EeeSqliteServiceTest extends TestCase
         $service = $this->newService();
 
         $service->upsertItemType([
-            'item_name'           => 'Toaster',
-            'model'               => 'gemini',
-            'prompt_version'      => '1.0.0',
+            'item_name' => 'Toaster',
+            'model' => 'gemini',
+            'prompt_version' => '1.0.0',
             'classification_mode' => 'combined',
         ]);
 
@@ -281,11 +282,11 @@ class EeeSqliteServiceTest extends TestCase
         $service = $this->newService();
 
         $service->upsertItemType([
-            'item_name'           => 'Toaster',
-            'model'               => 'gemini',
-            'prompt_version'      => '1.0.0',
+            'item_name' => 'Toaster',
+            'model' => 'gemini',
+            'prompt_version' => '1.0.0',
             'classification_mode' => 'combined',
-            'is_eee'              => 1,
+            'is_eee' => 1,
         ]);
 
         $result = $service->getUnclassifiedItemTypeNames(
@@ -304,11 +305,11 @@ class EeeSqliteServiceTest extends TestCase
 
         // Classified under 'combined' only — should still be "unclassified" for 'per_image'.
         $service->upsertItemType([
-            'item_name'           => 'Toaster',
-            'model'               => 'gemini',
-            'prompt_version'      => '1.0.0',
+            'item_name' => 'Toaster',
+            'model' => 'gemini',
+            'prompt_version' => '1.0.0',
             'classification_mode' => 'combined',
-            'is_eee'              => 1,
+            'is_eee' => 1,
         ]);
 
         $result = $service->getUnclassifiedItemTypeNames(['Toaster'], 'gemini', '1.0.0', 'per_image');
@@ -323,12 +324,12 @@ class EeeSqliteServiceTest extends TestCase
     private function classificationRow(array $overrides = []): array
     {
         return array_merge([
-            'messageid'      => 100,
-            'model'          => 'gemini',
+            'messageid' => 100,
+            'model' => 'gemini',
             'prompt_version' => '1.0.0',
-            'run_at'         => '2026-01-01 00:00:00',
-            'data_sources'   => 'text,image',
-            'is_eee'         => 1,
+            'run_at' => '2026-01-01 00:00:00',
+            'data_sources' => 'text,image',
+            'is_eee' => 1,
         ], $overrides);
     }
 
@@ -501,11 +502,11 @@ class EeeSqliteServiceTest extends TestCase
     private function sampleAttachment(array $overrides = []): object
     {
         return (object) array_merge([
-            'messageid'   => 1,
-            'attid'       => 1,
+            'messageid' => 1,
+            'attid' => 1,
             'externaluid' => 'uid-1',
-            'subject'     => 'OFFER: Toaster',
-            'textbody'    => 'Free toaster',
+            'subject' => 'OFFER: Toaster',
+            'textbody' => 'Free toaster',
         ], $overrides);
     }
 
@@ -768,9 +769,9 @@ class EeeSqliteServiceTest extends TestCase
         $embedding = pack('f*', 0.1, 0.2, 0.3);
         $service->upsertComponentType([
             'canonical_name' => 'motor',
-            'category'       => 'primary_eee',
-            'embedding'      => $embedding,
-            'raw_strings'    => 'motor,drum motor',
+            'category' => 'primary_eee',
+            'embedding' => $embedding,
+            'raw_strings' => 'motor,drum motor',
         ]);
 
         $row = $service->getComponentTypeByName('motor');
@@ -868,8 +869,9 @@ class EeeSqliteServiceTest extends TestCase
 
         $observations = $service->getObservations();
 
-        if (!$expectObservation) {
+        if (! $expectObservation) {
             $this->assertSame([], $observations);
+
             return;
         }
 
@@ -908,7 +910,7 @@ class EeeSqliteServiceTest extends TestCase
         $runId = $service->startRun('gemini', '1.0.0', 'compare');
         $service->journalCompareRun($runId, [
             'gemini' => [
-                'brand'     => ['seen' => 20, 'agree' => 18],
+                'brand' => ['seen' => 20, 'agree' => 18],
                 'condition' => ['seen' => 20, 'agree' => 10],
             ],
             'openai' => [

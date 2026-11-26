@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
@@ -26,7 +25,7 @@ class PushNotificationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new PushNotificationService();
+        $this->service = new PushNotificationService;
     }
 
     /**
@@ -349,7 +348,7 @@ class PushNotificationServiceTest extends TestCase
      * notification never appears in the system tray — the bug that made
      * real mod-work pushes invisible while the forceVisible test push worked.
      */
-    public function test_buildAndroidFcmMessage_includes_notification_block_for_modtools(): void
+    public function test_build_android_fcm_message_includes_notification_block_for_modtools(): void
     {
         $payload = [
             'title' => '3 messages pending',
@@ -374,7 +373,7 @@ class PushNotificationServiceTest extends TestCase
      * This protects the user-app chat path (notifyIndividualMessages) which
      * relies on data-only messages with action buttons built by the app.
      */
-    public function test_buildAndroidFcmMessage_omits_notification_block_for_non_modtools(): void
+    public function test_build_android_fcm_message_omits_notification_block_for_non_modtools(): void
     {
         $payload = [
             'title' => 'New chat message',
@@ -392,7 +391,7 @@ class PushNotificationServiceTest extends TestCase
      * forceVisible (used by the test-push command) always adds the block,
      * regardless of channel.
      */
-    public function test_buildAndroidFcmMessage_forceVisible_adds_notification_block(): void
+    public function test_build_android_fcm_message_force_visible_adds_notification_block(): void
     {
         $payload = [
             'title' => 'Test',
@@ -409,7 +408,7 @@ class PushNotificationServiceTest extends TestCase
      * Empty-title payload (e.g. zero-count modtools push to clear the badge)
      * must NOT add a notification block — we don't want an empty tray entry.
      */
-    public function test_buildAndroidFcmMessage_skips_notification_block_when_title_empty(): void
+    public function test_build_android_fcm_message_skips_notification_block_when_title_empty(): void
     {
         $payload = [
             'title' => '',
@@ -435,7 +434,7 @@ class PushNotificationServiceTest extends TestCase
      * volunteering — it never touches users_notifications. Chitchat activity therefore
      * cannot inflate the modtools badge.
      */
-    public function test_getBadgeCount_not_inflated_by_chitchat_notification(): void
+    public function test_get_badge_count_not_inflated_by_chitchat_notification(): void
     {
         $mod = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -466,7 +465,7 @@ class PushNotificationServiceTest extends TestCase
      * This confirms the full V2 chain: chitchat-only activity → badge=0 → title=''
      * → no notification block → no tray entry in ModTools app.
      */
-    public function test_buildModToolsPayload_returns_zero_badge_when_no_modtools_work(): void
+    public function test_build_mod_tools_payload_returns_zero_badge_when_no_modtools_work(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -489,7 +488,7 @@ class PushNotificationServiceTest extends TestCase
      * (no pending messages), the notification must route to /volunteering — not /messages/pending
      * (empty page) and not /modtools (catch-all redirect with 2s delay).
      */
-    public function test_buildModToolsPayload_volunteering_only_routes_to_volunteering(): void
+    public function test_build_mod_tools_payload_volunteering_only_routes_to_volunteering(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -529,7 +528,7 @@ class PushNotificationServiceTest extends TestCase
      * V1 parity: pending → route /messages/pending, title "N pending message(s)".
      * The /modtools/ prefix hits the catch-all redirect page (Discourse #9692/10).
      */
-    public function test_buildModToolsPayload_pending_only_routes_to_messages_pending(): void
+    public function test_build_mod_tools_payload_pending_only_routes_to_messages_pending(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -571,7 +570,7 @@ class PushNotificationServiceTest extends TestCase
      *
      * V1 parity: spam → route /messages/pending, title "N message(s) to review".
      */
-    public function test_buildModToolsPayload_spam_only_routes_to_messages_pending(): void
+    public function test_build_mod_tools_payload_spam_only_routes_to_messages_pending(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -614,7 +613,7 @@ class PushNotificationServiceTest extends TestCase
      * With both pending messages and volunteering ops, route must be /messages/pending
      * and the title must mention both categories (multi-line, "\n"-joined).
      */
-    public function test_buildModToolsPayload_mixed_pending_wins_over_volunteering(): void
+    public function test_build_mod_tools_payload_mixed_pending_wins_over_volunteering(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -673,7 +672,7 @@ class PushNotificationServiceTest extends TestCase
     /**
      * Zero-work payload must route to "/" not "/modtools" (V1 parity).
      */
-    public function test_buildModToolsPayload_zero_routes_to_root(): void
+    public function test_build_mod_tools_payload_zero_routes_to_root(): void
     {
         $mod = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -693,7 +692,7 @@ class PushNotificationServiceTest extends TestCase
      * Visible ModTools push: priority high and notification.tag set so the
      * latest "N pending" entry replaces the previous one in the tray.
      */
-    public function test_buildAndroidConfig_visible_modtools_gets_high_priority_and_tag(): void
+    public function test_build_android_config_visible_modtools_gets_high_priority_and_tag(): void
     {
         $payload = [
             'title' => '3 messages pending',
@@ -714,7 +713,7 @@ class PushNotificationServiceTest extends TestCase
      * notification message on some devices/Capacitor builds and surfaces an
      * empty tray entry — the bug we're fixing.
      */
-    public function test_buildAndroidConfig_zero_count_modtools_is_silent(): void
+    public function test_build_android_config_zero_count_modtools_is_silent(): void
     {
         $payload = [
             'title' => '',
@@ -734,7 +733,7 @@ class PushNotificationServiceTest extends TestCase
      * forceVisible (test-push command) always rides high priority even for
      * non-modtools channels, but never gets the modtools tag.
      */
-    public function test_buildAndroidConfig_forceVisible_high_priority_no_tag_for_non_modtools(): void
+    public function test_build_android_config_force_visible_high_priority_no_tag_for_non_modtools(): void
     {
         $payload = [
             'title' => 'Test',
@@ -843,7 +842,7 @@ class PushNotificationServiceTest extends TestCase
      * Android already does this via notification.tag; iOS needs apns-collapse-id, whose
      * absence is why the fan-out showed up as three banners and beeps at once.
      */
-    public function test_buildApnsConfig_modtools_collapses_to_one_banner(): void
+    public function test_build_apns_config_modtools_collapses_to_one_banner(): void
     {
         $payload = [
             'title' => '2 pending messages',
@@ -864,7 +863,7 @@ class PushNotificationServiceTest extends TestCase
     /**
      * The silent badge-clear push has no banner to collapse onto.
      */
-    public function test_buildApnsConfig_zero_count_modtools_does_not_collapse(): void
+    public function test_build_apns_config_zero_count_modtools_does_not_collapse(): void
     {
         $payload = [
             'title' => '',
@@ -883,7 +882,7 @@ class PushNotificationServiceTest extends TestCase
      * Chat and new-post pushes are about a specific chat or post: collapsing them would
      * replace an unread one with the next and lose it.
      */
-    public function test_buildApnsConfig_non_modtools_pushes_never_collapse(): void
+    public function test_build_apns_config_non_modtools_pushes_never_collapse(): void
     {
         $payload = [
             'title' => 'New chat message',
@@ -902,7 +901,7 @@ class PushNotificationServiceTest extends TestCase
      * The NSE flag the rich daily-posts notification depends on must survive the
      * extraction of this config out of sendFcm().
      */
-    public function test_buildApnsConfig_new_posts_keeps_mutable_content(): void
+    public function test_build_apns_config_new_posts_keeps_mutable_content(): void
     {
         $payload = [
             'title' => '5 new posts near you',
@@ -922,7 +921,8 @@ class PushNotificationServiceTest extends TestCase
      */
     private function fakeMessaging(): object
     {
-        $fake = new class {
+        $fake = new class
+        {
             public array $sent = [];
 
             public function validate($message): void {}
@@ -992,6 +992,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $method = new \ReflectionMethod($this->service, 'buildApnsConfig');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $userId, $payload);
     }
 
@@ -999,6 +1000,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $token, $payload, $forceVisible);
     }
 
@@ -1006,6 +1008,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidConfig');
         $method->setAccessible(true);
+
         return $method->invoke($this->service, $userId, $payload, $forceVisible);
     }
 
@@ -1316,7 +1319,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hello there']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertEquals('chat_messages', $payload['channel_id'],
             'FD chat payload must use the chat_messages Android channel');
@@ -1330,7 +1333,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, TRUE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, true);
 
         $this->assertEquals('modtools', $payload['channel_id']);
         $this->assertEquals('1', (string) $payload['modtools']);
@@ -1351,7 +1354,7 @@ class PushNotificationServiceTest extends TestCase
             'message' => "No worries, I'll delete it for you \\\\u1f642\\\\u",
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringContainsString("\u{1F642}", $payload['message'],
             'the emoji itself must reach the phone');
@@ -1368,10 +1371,10 @@ class PushNotificationServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'message' => "Flag \\\\u1f1ec-1f1e7\\\\u",
+            'message' => 'Flag \\\\u1f1ec-1f1e7\\\\u',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringContainsString("\u{1F1EC}\u{1F1E7}", $payload['message']);
         $this->assertStringNotContainsString('1f1ec', $payload['message']);
@@ -1392,10 +1395,10 @@ class PushNotificationServiceTest extends TestCase
         // ENCODED string but well inside it once decoded.
         $padding = str_repeat('a', 250);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'message' => $padding . "\\\\u1f642\\\\u tail",
+            'message' => $padding.'\\\\u1f642\\\\u tail',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertStringNotContainsString('\\u', $payload['message'],
             'a severed escape must never appear');
@@ -1413,7 +1416,7 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertEquals((string) $room->id, (string) $payload['notId']);
     }
@@ -1425,9 +1428,9 @@ class PushNotificationServiceTest extends TestCase
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => 'Hi']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
-        $this->assertEquals('/chats/' . $room->id, $payload['route']);
+        $this->assertEquals('/chats/'.$room->id, $payload['route']);
         $this->assertEquals((string) $room->id, (string) $payload['chatid']);
         $this->assertEquals((string) $room->id, (string) $payload['chatids']);
     }
@@ -1440,7 +1443,7 @@ class PushNotificationServiceTest extends TestCase
         $long = str_repeat('A', 500);
         $msg = $this->createTestChatMessage($room, $sender, ['message' => $long]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertLessThanOrEqual(260, strlen($payload['message']),
             'Payload message should be truncated for push display (~256 chars)');
@@ -1465,11 +1468,11 @@ class PushNotificationServiceTest extends TestCase
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'type' => \App\Models\ChatMessage::TYPE_DEFAULT,
             'message' => 'Hi, is this still available?',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('richard mackay', $payload['title'],
             'Title must be the sender name');
@@ -1491,11 +1494,11 @@ class PushNotificationServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'type' => \App\Models\ChatMessage::TYPE_DEFAULT,
             'message' => 'Still available?',
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('alice', $payload['title'],
             'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
@@ -1518,11 +1521,11 @@ class PushNotificationServiceTest extends TestCase
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_IMAGE,
+            'type' => \App\Models\ChatMessage::TYPE_IMAGE,
             'message' => null,  // image-only: no text body
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('richard mackay', $payload['title'],
             'Title must still be the sender name');
@@ -1545,11 +1548,11 @@ class PushNotificationServiceTest extends TestCase
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
             'message' => null,
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('Interested', $payload['message'],
             '"Interested" type message body must be "Interested"');
@@ -1570,11 +1573,11 @@ class PushNotificationServiceTest extends TestCase
 
         $room = $this->createTestChatRoom($sender, $recipient);
         $msg = $this->createTestChatMessage($room, $sender, [
-            'type'    => \App\Models\ChatMessage::TYPE_ADDRESS,
+            'type' => \App\Models\ChatMessage::TYPE_ADDRESS,
             'message' => null,
         ]);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, false);
 
         $this->assertSame('Sent an address', $payload['message'],
             '"Address" type message body must be "Sent an address"');
@@ -1601,7 +1604,7 @@ class PushNotificationServiceTest extends TestCase
         ]);
         $msg = $this->createTestChatMessage($room, $mod, ['message' => 'Hello from the team']);
 
-        $payload = $this->service->buildChatMessagePayload($msg->id, $member->id, FALSE);
+        $payload = $this->service->buildChatMessagePayload($msg->id, $member->id, false);
 
         $this->assertStringContainsString('Volunteers', $payload['title'],
             'Mod sender to member in U2M must show "{Group} Volunteers" as title');
@@ -1614,14 +1617,14 @@ class PushNotificationServiceTest extends TestCase
      * The stories exhort is scheduled with a full URL in users_notifications.url,
      * which would otherwise be routed to verbatim and land on a 404.
      */
-    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    public function test_build_user_notification_payload_strips_site_from_absolute_notification_url(): void
     {
         $user = $this->createTestUser();
 
         DB::table('users_notifications')->insert([
             'touser' => $user->id,
             'type' => 'Exhort',
-            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'url' => rtrim(config('freegle.sites.user'), '/').'/stories',
             'title' => 'Tell us your Freegle story!',
             'text' => 'We love to hear why people Freegle.',
             'seen' => 0,
@@ -1634,7 +1637,7 @@ class PushNotificationServiceTest extends TestCase
             'Absolute notification URLs on our own site must become a router path');
     }
 
-    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    public function test_build_user_notification_payload_keeps_relative_notification_url(): void
     {
         $user = $this->createTestUser();
 
@@ -1670,7 +1673,7 @@ class PushNotificationServiceTest extends TestCase
      * Sanity check: a recent, non-spam unseen notification does count, so the
      * exclusion tests below aren't vacuously true.
      */
-    public function test_consumerUnreadCounts_counts_recent_unseen_notification(): void
+    public function test_consumer_unread_counts_counts_recent_unseen_notification(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -1694,7 +1697,7 @@ class PushNotificationServiceTest extends TestCase
      * notification actually rendered in the list), so it must not permanently
      * inflate the app-icon badge.
      */
-    public function test_consumerUnreadCounts_excludes_notification_older_than_bell_window(): void
+    public function test_consumer_unread_counts_excludes_notification_older_than_bell_window(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();
@@ -1719,7 +1722,7 @@ class PushNotificationServiceTest extends TestCase
      * chaseup mailer (NotificationChaseUpService::SPAM_COLLECTIONS) - the
      * push-computed badge must exclude them too.
      */
-    public function test_consumerUnreadCounts_excludes_notification_from_spam_sender(): void
+    public function test_consumer_unread_counts_excludes_notification_from_spam_sender(): void
     {
         $user = $this->createTestUser();
         $spammer = $this->createTestUser();
@@ -1748,7 +1751,7 @@ class PushNotificationServiceTest extends TestCase
      * A Whitelisted spam_users row must not exclude the sender's notifications -
      * only Spammer/PendingAdd hide a notification from the bell.
      */
-    public function test_consumerUnreadCounts_does_not_exclude_whitelisted_sender(): void
+    public function test_consumer_unread_counts_does_not_exclude_whitelisted_sender(): void
     {
         $user = $this->createTestUser();
         $sender = $this->createTestUser();

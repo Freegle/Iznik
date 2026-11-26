@@ -53,7 +53,7 @@ class EmailSpoolerRetryTest extends TestCase
         });
 
         // Nothing should have been written to the pending spool.
-        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/test-spooled-id.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir.'/pending/test-spooled-id.json');
     }
 
     public function test_render_failure_with_autoretry_disabled_rethrows_and_dispatches_nothing(): void
@@ -78,7 +78,7 @@ class EmailSpoolerRetryTest extends TestCase
     {
         Queue::fake();
 
-        $mailable = new ThrowingTestMailable();
+        $mailable = new ThrowingTestMailable;
 
         $this->expectException(\RuntimeException::class);
 
@@ -99,7 +99,7 @@ class EmailSpoolerRetryTest extends TestCase
         $id = $this->spooler->spool($mailable, 'spool@example.com', 'test_type');
 
         $this->assertNotEmpty($id);
-        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir.'/pending/'.$id.'.json');
         Queue::assertNothingPushed();
     }
 }

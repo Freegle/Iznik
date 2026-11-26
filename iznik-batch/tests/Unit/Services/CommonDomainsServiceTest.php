@@ -4,7 +4,6 @@ namespace Tests\Unit\Services;
 
 use App\Services\CommonDomainsService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class CommonDomainsServiceTest extends TestCase
@@ -14,7 +13,7 @@ class CommonDomainsServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new CommonDomainsService();
+        $this->service = new CommonDomainsService;
         DB::table('domains_common')->delete();
     }
 
@@ -33,7 +32,7 @@ class CommonDomainsServiceTest extends TestCase
         for ($i = 0; $i < 1000; $i++) {
             DB::table('users_emails')->insert([
                 'userid' => $user->id,
-                'email'  => "user{$i}@threshold-test-domain.com",
+                'email' => "user{$i}@threshold-test-domain.com",
             ]);
         }
 
@@ -51,7 +50,7 @@ class CommonDomainsServiceTest extends TestCase
         for ($i = 0; $i < 1001; $i++) {
             DB::table('users_emails')->insert([
                 'userid' => $user->id,
-                'email'  => "user{$i}@common-domain-test.com",
+                'email' => "user{$i}@common-domain-test.com",
             ]);
         }
 
@@ -72,7 +71,7 @@ class CommonDomainsServiceTest extends TestCase
         for ($i = 0; $i < 1001; $i++) {
             DB::table('users_emails')->insert([
                 'userid' => $user->id,
-                'email'  => "user{$i}@upsert-domain.com",
+                'email' => "user{$i}@upsert-domain.com",
             ]);
         }
 
@@ -88,7 +87,7 @@ class CommonDomainsServiceTest extends TestCase
         for ($i = 0; $i < 1001; $i++) {
             DB::table('users_emails')->insert([
                 'userid' => $user->id,
-                'email'  => "invalidemail{$i}",
+                'email' => "invalidemail{$i}",
             ]);
         }
 

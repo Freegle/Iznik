@@ -6,7 +6,6 @@ use App\Models\ChatMessage;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
-use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -50,7 +49,7 @@ class FirstReplyPassthroughTest extends TestCase
         $this->maxVerdictOverride = null;
         $this->reachEvalDown = false;
         \Illuminate\Support\Facades\Http::fake(function ($request) {
-            if (!str_contains($request->url(), 'reach-eval')) {
+            if (! str_contains($request->url(), 'reach-eval')) {
                 return null;
             }
             $lat = (float) ($request['lat'] ?? 0);
@@ -91,7 +90,7 @@ class FirstReplyPassthroughTest extends TestCase
 
     private function service(): RippleReplyService
     {
-        return new RippleReplyService(new ReachQueryService(), app(MaxReachService::class));
+        return new RippleReplyService(new ReachQueryService, app(MaxReachService::class));
     }
 
     /** @return array{0:int, 1:\App\Models\User} the post id and its poster */
@@ -136,7 +135,7 @@ class FirstReplyPassthroughTest extends TestCase
         $this->assertFalse(
             $this->service()->shouldHold($msgid, self::REACHED_LATER[0], self::REACHED_LATER[1]),
             'the replier is outside the reach TODAY but inside the reach the post ends up with, '
-            . 'and the post has nothing at all, so holding only makes the poster wait'
+            .'and the post has nothing at all, so holding only makes the poster wait'
         );
     }
 

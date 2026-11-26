@@ -31,7 +31,7 @@ class ChatProcessServiceLockdownTest extends TestCase
         // The cache is a static, process-wide property (section 11.6), so a row cached
         // by an earlier test class in this same PHPUnit process would otherwise leak in.
         LockdownService::flushCache();
-        $this->lockdown = new LockdownService();
+        $this->lockdown = new LockdownService;
         $this->service = new ChatProcessService(null, $this->lockdown);
     }
 
@@ -220,7 +220,8 @@ class ChatProcessServiceLockdownTest extends TestCase
         // Presses as a side effect of the first message's per-item check, standing in for
         // another process pressing while this run is under way. Call 1 is the batch fetch,
         // call 2 the first message's check.
-        $lockdown = new class extends LockdownService {
+        $lockdown = new class extends LockdownService
+        {
             public int $calls = 0;
 
             public function held(string $surface): bool

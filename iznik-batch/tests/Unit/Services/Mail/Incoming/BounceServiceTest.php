@@ -328,8 +328,8 @@ DSN;
     public function test_classifies_yahoo_tss04_deferral_as_ignorable(): void
     {
         $code = 'smtp; 421 4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred due to '
-            . 'unexpected volume or user complaints - 4.16.55.1; see '
-            . 'https://postmaster.yahooinc.com/error-codes';
+            .'unexpected volume or user complaints - 4.16.55.1; see '
+            .'https://postmaster.yahooinc.com/error-codes';
 
         $this->assertTrue($this->service->shouldIgnoreBounce($code));
     }
@@ -342,8 +342,8 @@ DSN;
         // real volume. Matched on its own name rather than relying on the
         // "temporarily deferred" wording that happens to accompany it.
         $code = 'smtp; 421 4.7.0 [TSS05] Messages from 77.72.7.253 temporarily deferred due to '
-            . 'unexpected volume or user complaints - 4.16.55.1; see '
-            . 'https://postmaster.yahooinc.com/error-codes';
+            .'unexpected volume or user complaints - 4.16.55.1; see '
+            .'https://postmaster.yahooinc.com/error-codes';
 
         $this->assertTrue($this->service->shouldIgnoreBounce($code));
     }
@@ -354,7 +354,7 @@ DSN;
         // conversation rather than when the destination is in backoff -
         // note it does NOT contain "delivery temporarily suspended".
         $code = 'X-Postfix; host mta7.am0.yahoodns.net[98.136.96.92] refused to talk to me: '
-            . '421 4.7.0 [TSS04] Messages temporarily deferred';
+            .'421 4.7.0 [TSS04] Messages temporarily deferred';
 
         $this->assertTrue($this->service->shouldIgnoreBounce($code));
     }
@@ -819,7 +819,7 @@ DSN;
 
     public function test_returns_error_for_unknown_recipient(): void
     {
-        $rawBounce = <<<DSN
+        $rawBounce = <<<'DSN'
 Diagnostic-Code: smtp; 550 User unknown
 Original-Recipient: rfc822;unknown@nonexistent.example.com
 DSN;
@@ -1203,7 +1203,7 @@ DSN;
         // Add a second (non-preferred) email
         $nonPreferredEmail = UserEmail::create([
             'userid' => $user->id,
-            'email' => 'secondary_' . $user->id . '@example.com',
+            'email' => 'secondary_'.$user->id.'@example.com',
             'preferred' => 0,
             'validated' => now(),
             'added' => now(),

@@ -13,7 +13,7 @@ class UserLocationRemapServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new UserLocationRemapService();
+        $this->service = new UserLocationRemapService;
     }
 
     public function test_updates_location_name_when_changed(): void

@@ -188,10 +188,10 @@ class UserEmailModelTest extends TestCase
         ]);
 
         // Use a unique prefix but fixed domain for testing getDomain().
-        $uniquePrefix = 'test_' . uniqid('', true);
+        $uniquePrefix = 'test_'.uniqid('', true);
         $email = UserEmail::create([
             'userid' => $user->id,
-            'email' => $uniquePrefix . '@example.com',
+            'email' => $uniquePrefix.'@example.com',
             'preferred' => 1,
             'added' => now(),
         ]);
@@ -211,7 +211,7 @@ class UserEmailModelTest extends TestCase
         // Use unique string without @ to test invalid email.
         $email = UserEmail::create([
             'userid' => $user->id,
-            'email' => 'nodomainemail_' . uniqid('', true),
+            'email' => 'nodomainemail_'.uniqid('', true),
             'preferred' => 1,
             'added' => now(),
         ]);

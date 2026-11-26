@@ -13,13 +13,13 @@ class HousekeeperServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new HousekeeperService();
+        $this->service = new HousekeeperService;
     }
 
     public function test_facebook_deletion_puts_known_users_into_limbo(): void
     {
         $user = $this->createTestUser();
-        $fbId = 'fb_test_' . uniqid();
+        $fbId = 'fb_test_'.uniqid();
 
         DB::table('users_logins')->insert([
             'userid' => $user->id,
@@ -57,7 +57,7 @@ class HousekeeperServiceTest extends TestCase
     public function test_facebook_deletion_skips_already_deleted_users(): void
     {
         $user = $this->createTestUser();
-        $fbId = 'fb_already_del_' . uniqid();
+        $fbId = 'fb_already_del_'.uniqid();
 
         DB::table('users_logins')->insert([
             'userid' => $user->id,
@@ -100,7 +100,7 @@ class HousekeeperServiceTest extends TestCase
 
     public function test_process_upserts_housekeeper_tasks(): void
     {
-        $taskKey = 'test-task-' . uniqid();
+        $taskKey = 'test-task-'.uniqid();
 
         $this->service->process([
             'task' => $taskKey,
@@ -141,7 +141,7 @@ class HousekeeperServiceTest extends TestCase
     public function test_process_stores_log_in_table(): void
     {
         $user = $this->createTestUser();
-        $fbId = 'fb_log_' . uniqid();
+        $fbId = 'fb_log_'.uniqid();
 
         DB::table('users_logins')->insert([
             'userid' => $user->id,
@@ -169,7 +169,7 @@ class HousekeeperServiceTest extends TestCase
     public function test_generates_summary_for_facebook_deletion(): void
     {
         $user = $this->createTestUser();
-        $fbId = 'fb_summary_' . uniqid();
+        $fbId = 'fb_summary_'.uniqid();
 
         DB::table('users_logins')->insert([
             'userid' => $user->id,
@@ -197,7 +197,7 @@ class HousekeeperServiceTest extends TestCase
 
     public function test_failure_summary_includes_error(): void
     {
-        $taskKey = 'test-fail-' . uniqid();
+        $taskKey = 'test-fail-'.uniqid();
 
         $this->service->process([
             'task' => $taskKey,
@@ -219,7 +219,7 @@ class HousekeeperServiceTest extends TestCase
      */
     public function test_record_run_sets_registry_fields_for_a_server_side_task(): void
     {
-        $taskKey = 'test-task-' . uniqid();
+        $taskKey = 'test-task-'.uniqid();
 
         $this->service->recordRun($taskKey, 'failure', 'Banner not live', "line 1\nline 2", [
             'name' => 'Server-side check',
@@ -243,7 +243,7 @@ class HousekeeperServiceTest extends TestCase
 
     public function test_record_run_names_a_new_task_after_its_key(): void
     {
-        $taskKey = 'test-task-' . uniqid();
+        $taskKey = 'test-task-'.uniqid();
 
         $this->service->recordRun($taskKey, 'success', 'ok');
 
@@ -252,7 +252,7 @@ class HousekeeperServiceTest extends TestCase
 
     public function test_record_run_keeps_the_name_the_registry_set(): void
     {
-        $taskKey = 'test-task-' . uniqid();
+        $taskKey = 'test-task-'.uniqid();
         DB::table('housekeeper_tasks')->insert(['task_key' => $taskKey, 'name' => 'Facebook deletions', 'updated_at' => now()]);
 
         $this->service->process(['task' => $taskKey, 'status' => 'success', 'summary' => 'done', 'data' => []]);

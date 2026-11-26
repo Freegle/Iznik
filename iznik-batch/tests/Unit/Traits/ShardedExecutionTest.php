@@ -11,6 +11,7 @@ class ShardedExecutionTest extends TestCase
     use ShardedExecution;
 
     protected array $mockOptions = [];
+
     protected array $infoMessages = [];
 
     /**
@@ -48,8 +49,8 @@ class ShardedExecutionTest extends TestCase
         for ($i = 0; $i < 10; $i++) {
             User::create([
                 'firstname' => 'Test',
-                'lastname' => 'User' . $i,
-                'fullname' => 'Test User' . $i,
+                'lastname' => 'User'.$i,
+                'fullname' => 'Test User'.$i,
                 'added' => now(),
             ]);
         }
@@ -74,8 +75,8 @@ class ShardedExecutionTest extends TestCase
         for ($i = 0; $i < 10; $i++) {
             User::create([
                 'firstname' => 'Test',
-                'lastname' => 'User' . $i,
-                'fullname' => 'Test User' . $i,
+                'lastname' => 'User'.$i,
+                'fullname' => 'Test User'.$i,
                 'added' => now(),
             ]);
         }

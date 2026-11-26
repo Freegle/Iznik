@@ -356,8 +356,8 @@ class FreegleApiClientTest extends TestCase
         $client = new FreegleApiClient('http://example.test');
 
         $authed = $client->authenticate(1, 'k');         // consumes mock[0]
-        $imgId  = $client->createImageAttachment('uid');  // consumes mock[1]
-        $pub    = $client->publishMessage(55, 1);         // consumes mock[2]
+        $imgId = $client->createImageAttachment('uid');  // consumes mock[1]
+        $pub = $client->publishMessage(55, 1);         // consumes mock[2]
 
         $this->assertTrue($authed);
         $this->assertSame(55, $imgId);
@@ -453,7 +453,7 @@ class FreegleApiClientTest extends TestCase
             ['body' => ['ret' => 1]],
         ]);
 
-        $authed  = new FreegleApiClient('http://example.test');
+        $authed = new FreegleApiClient('http://example.test');
         $unauthed = new FreegleApiClient('http://example.test');
 
         $authed->authenticate(1, 'k');    // consumes mock[0] → success

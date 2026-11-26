@@ -18,20 +18,20 @@ class ChaseUpMailCardTest extends TestCase
     private function makeNotification(array $overrides = []): array
     {
         return array_merge([
-            'type'       => 'CommentOnYourPost',
-            'fromname'   => 'Alice',
-            'fromimage'  => 'https://example.com/avatar.png',
-            'newsfeed'   => [
-                'id'      => 1,
-                'type'    => 'Message',
+            'type' => 'CommentOnYourPost',
+            'fromname' => 'Alice',
+            'fromimage' => 'https://example.com/avatar.png',
+            'newsfeed' => [
+                'id' => 1,
+                'type' => 'Message',
                 'message' => 'Hello there',
                 'replyto' => null,
             ],
-            'title'      => null,
-            'text'       => null,
-            'url'        => null,
-            'id'         => 1,
-            'timestamp'  => 'Mon, 1st September 9:15am',
+            'title' => null,
+            'text' => null,
+            'url' => null,
+            'id' => 1,
+            'timestamp' => 'Mon, 1st September 9:15am',
             'trackedUrl' => 'https://www.ilovefreegle.org/chitchat/1',
         ], $overrides);
     }
@@ -43,13 +43,13 @@ class ChaseUpMailCardTest extends TestCase
     private function renderCards(array $notifications, ?int $count = null): string
     {
         $html = view('emails.mjml.notification.chaseup', [
-            'notifications'  => $notifications,
-            'count'          => $count ?? count($notifications),
-            'userSite'       => 'https://www.ilovefreegle.org',
-            'chitchatUrl'    => 'https://www.ilovefreegle.org/chitchat',
-            'settingsUrl'    => 'https://www.ilovefreegle.org/settings',
+            'notifications' => $notifications,
+            'count' => $count ?? count($notifications),
+            'userSite' => 'https://www.ilovefreegle.org',
+            'chitchatUrl' => 'https://www.ilovefreegle.org/chitchat',
+            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
             'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',
-            'email'          => 'test@example.com',
+            'email' => 'test@example.com',
         ])->render();
 
         return preg_replace('#<mj-preview>.*?</mj-preview>#s', '', $html);
@@ -84,11 +84,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_comment_on_your_post_card_names_the_commenter_and_quotes_them(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'CommentOnYourPost',
+            'type' => 'CommentOnYourPost',
             'fromname' => 'Alice',
             'newsfeed' => [
-                'id'      => 7,
-                'type'    => 'Message',
+                'id' => 7,
+                'type' => 'Message',
                 'message' => 'This is a wonderful post!',
                 'replyto' => null,
             ],
@@ -103,11 +103,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_comment_on_commented_card_names_the_thread_it_replied_on(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'CommentOnCommented',
+            'type' => 'CommentOnCommented',
             'fromname' => 'Bob',
             'newsfeed' => [
-                'id'      => 8,
-                'type'    => 'Message',
+                'id' => 8,
+                'type' => 'Message',
                 'message' => 'Agreed, great item!',
                 'replyto' => ['id' => 3, 'message' => 'Anyone got a spare kettle?'],
             ],
@@ -122,11 +122,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_comment_on_commented_card_copes_with_a_missing_parent_message(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'CommentOnCommented',
+            'type' => 'CommentOnCommented',
             'fromname' => 'Bob',
             'newsfeed' => [
-                'id'      => 8,
-                'type'    => 'Message',
+                'id' => 8,
+                'type' => 'Message',
                 'message' => 'Agreed!',
                 'replyto' => null,
             ],
@@ -139,11 +139,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_loved_post_card_quotes_the_post(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'LovedPost',
+            'type' => 'LovedPost',
             'fromname' => 'Carol',
             'newsfeed' => [
-                'id'      => 9,
-                'type'    => 'Message',
+                'id' => 9,
+                'type' => 'Message',
                 'message' => 'OFFER: Vintage table (London)',
                 'replyto' => null,
             ],
@@ -157,11 +157,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_loved_noticeboard_post_card_has_no_quote(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'LovedPost',
+            'type' => 'LovedPost',
             'fromname' => 'Carol',
             'newsfeed' => [
-                'id'      => 10,
-                'type'    => 'Noticeboard',
+                'id' => 10,
+                'type' => 'Noticeboard',
                 'message' => 'ignored for noticeboards',
                 'replyto' => null,
             ],
@@ -175,11 +175,11 @@ class ChaseUpMailCardTest extends TestCase
     public function test_loved_comment_card_quotes_the_comment(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'LovedComment',
+            'type' => 'LovedComment',
             'fromname' => 'Dave',
             'newsfeed' => [
-                'id'      => 11,
-                'type'    => 'Message',
+                'id' => 11,
+                'type' => 'Message',
                 'message' => 'That is so kind, thank you!',
                 'replyto' => null,
             ],
@@ -193,12 +193,12 @@ class ChaseUpMailCardTest extends TestCase
     public function test_exhort_card_leads_with_its_own_title_and_its_own_call_to_action(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'Exhort',
+            'type' => 'Exhort',
             'fromname' => 'Freegle',
-            'title'    => 'Tell us your story!',
-            'text'     => 'We love hearing how it went.',
+            'title' => 'Tell us your story!',
+            'text' => 'We love hearing how it went.',
             'newsfeed' => null,
-            'url'      => '/stories',
+            'url' => '/stories',
         ])]);
 
         $this->assertStringContainsString('<strong>Tell us your story!</strong>', $html);
@@ -210,10 +210,10 @@ class ChaseUpMailCardTest extends TestCase
     public function test_membership_pending_card_says_it_is_waiting(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'MembershipPending',
+            'type' => 'MembershipPending',
             'fromname' => 'Freegle',
             'newsfeed' => null,
-            'url'      => 'Edinburgh Freegle',
+            'url' => 'Edinburgh Freegle',
         ])]);
 
         $this->assertStringContainsString('Your application to Edinburgh Freegle needs approval', $html);
@@ -223,10 +223,10 @@ class ChaseUpMailCardTest extends TestCase
     public function test_membership_approved_card_says_they_are_in(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'MembershipApproved',
+            'type' => 'MembershipApproved',
             'fromname' => 'Freegle',
             'newsfeed' => null,
-            'url'      => 'Edinburgh Freegle',
+            'url' => 'Edinburgh Freegle',
         ])]);
 
         $this->assertStringContainsString('has been approved', $html);
@@ -237,10 +237,10 @@ class ChaseUpMailCardTest extends TestCase
     public function test_membership_rejected_card_says_so_plainly(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'MembershipRejected',
+            'type' => 'MembershipRejected',
             'fromname' => 'Freegle',
             'newsfeed' => null,
-            'url'      => 'Edinburgh Freegle',
+            'url' => 'Edinburgh Freegle',
         ])]);
 
         $this->assertStringContainsString('Sorry, your application to Edinburgh Freegle', $html);
@@ -250,7 +250,7 @@ class ChaseUpMailCardTest extends TestCase
     public function test_unknown_type_still_gets_a_usable_card(): void
     {
         $html = $this->renderCards([$this->makeNotification([
-            'type'     => 'SomethingWeHaveNotWrittenYet',
+            'type' => 'SomethingWeHaveNotWrittenYet',
             'fromname' => 'Zed',
             'newsfeed' => null,
         ])]);
@@ -349,8 +349,8 @@ class ChaseUpMailCardTest extends TestCase
     {
         $html = $this->renderCards([$this->makeNotification([
             'newsfeed' => [
-                'id'      => 12,
-                'type'    => 'Message',
+                'id' => 12,
+                'type' => 'Message',
                 'message' => '<script>alert(1)</script>',
                 'replyto' => null,
             ],

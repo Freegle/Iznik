@@ -24,7 +24,7 @@ class ContentEmbeddingServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ContentEmbeddingService();
+        $this->service = new ContentEmbeddingService;
         $this->originalSidecarUrl = [
             'server' => $_SERVER['EMBEDDING_SIDECAR_URL'] ?? null,
             'env' => $_ENV['EMBEDDING_SIDECAR_URL'] ?? null,
@@ -122,10 +122,10 @@ class ContentEmbeddingServiceTest extends TestCase
         // Craft embeddings where innocent cluster is clearly more similar.
         // The text embedding is [1, 0, ...] — same direction as innocent prototypes.
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[0]   = 1.0; // points along dimension 0
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[0] = 1.0; // points along dimension 0
 
-        $innocentVec  = array_fill(0, $dim, 0.0);
+        $innocentVec = array_fill(0, $dim, 0.0);
         $innocentVec[0] = 1.0; // same direction as text → cosine = 1.0
 
         $concerningVec = array_fill(0, $dim, 0.0);
@@ -136,8 +136,8 @@ class ContentEmbeddingServiceTest extends TestCase
         // Second call (text): just the text embedding.
         // We return a uniform vector for all prototypes, then vary per cluster.
         $concerningCount = 5;
-        $innocentCount   = 6;
-        $protoResponse   = array_merge(
+        $innocentCount = 6;
+        $protoResponse = array_merge(
             array_fill(0, $concerningCount, $concerningVec),
             array_fill(0, $innocentCount, $innocentVec),
         );
@@ -163,8 +163,8 @@ class ContentEmbeddingServiceTest extends TestCase
     public function test_does_not_suppress_when_concerning_similarity_dominates(): void
     {
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[1]   = 1.0; // same direction as concerning prototypes
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[1] = 1.0; // same direction as concerning prototypes
 
         $concerningVec = array_fill(0, $dim, 0.0);
         $concerningVec[1] = 1.0; // cosine(text, concerning) = 1.0
@@ -173,8 +173,8 @@ class ContentEmbeddingServiceTest extends TestCase
         $innocentVec[0] = 1.0; // cosine(text, innocent) = 0.0
 
         $concerningCount = 5;
-        $innocentCount   = 6;
-        $protoResponse   = array_merge(
+        $innocentCount = 6;
+        $protoResponse = array_merge(
             array_fill(0, $concerningCount, $concerningVec),
             array_fill(0, $innocentCount, $innocentVec),
         );
@@ -200,10 +200,10 @@ class ContentEmbeddingServiceTest extends TestCase
     {
         // substance_medicine: 4 concerning + 6 innocent prototypes = 10 total.
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[0]   = 1.0; // points along dimension 0 (innocent direction)
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[0] = 1.0; // points along dimension 0 (innocent direction)
 
-        $innocentVec  = array_fill(0, $dim, 0.0);
+        $innocentVec = array_fill(0, $dim, 0.0);
         $innocentVec[0] = 1.0; // cosine(text, innocent) = 1.0
 
         $concerningVec = array_fill(0, $dim, 0.0);
@@ -234,8 +234,8 @@ class ContentEmbeddingServiceTest extends TestCase
     public function test_substance_medicine_does_not_suppress_concerning_context(): void
     {
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[1]   = 1.0; // points along dimension 1 (concerning direction)
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[1] = 1.0; // points along dimension 1 (concerning direction)
 
         $concerningVec = array_fill(0, $dim, 0.0);
         $concerningVec[1] = 1.0; // cosine(text, concerning) = 1.0
@@ -269,10 +269,10 @@ class ContentEmbeddingServiceTest extends TestCase
     {
         // scam: 5 concerning + 5 innocent prototypes = 10 total.
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[0]   = 1.0;
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[0] = 1.0;
 
-        $innocentVec  = array_fill(0, $dim, 0.0);
+        $innocentVec = array_fill(0, $dim, 0.0);
         $innocentVec[0] = 1.0;
 
         $concerningVec = array_fill(0, $dim, 0.0);
@@ -303,8 +303,8 @@ class ContentEmbeddingServiceTest extends TestCase
     public function test_scam_does_not_suppress_concerning_context(): void
     {
         $dim = 256;
-        $textVec      = array_fill(0, $dim, 0.0);
-        $textVec[1]   = 1.0;
+        $textVec = array_fill(0, $dim, 0.0);
+        $textVec[1] = 1.0;
 
         $concerningVec = array_fill(0, $dim, 0.0);
         $concerningVec[1] = 1.0;

@@ -2,11 +2,11 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\Membership;
 use App\Mail\Chat\ChatNotification;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\ChatRoom;
+use App\Models\Membership;
 use App\Models\User;
 use App\Services\BirthdayService;
 use App\Services\DonationService;
@@ -26,7 +26,7 @@ class DonationAskOptOutTest extends TestCase
     private function optedOutUser(): User
     {
         $user = $this->createTestUser();
-        $user->settings = ['nodonationasks' => TRUE];
+        $user->settings = ['nodonationasks' => true];
         $user->save();
 
         return $user->fresh();
@@ -44,7 +44,7 @@ class DonationAskOptOutTest extends TestCase
     public function test_null_settings_means_we_may_ask(): void
     {
         $user = $this->createTestUser();
-        $user->settings = NULL;
+        $user->settings = null;
         $user->save();
 
         $this->assertTrue($user->fresh()->wantsDonationAsks());
@@ -53,7 +53,7 @@ class DonationAskOptOutTest extends TestCase
     public function test_setting_false_means_we_may_ask(): void
     {
         $user = $this->createTestUser();
-        $user->settings = ['nodonationasks' => FALSE];
+        $user->settings = ['nodonationasks' => false];
         $user->save();
 
         $this->assertTrue($user->fresh()->wantsDonationAsks());
@@ -69,7 +69,7 @@ class DonationAskOptOutTest extends TestCase
         $this->assertFalse(User::settingsAllowDonationAsks('{"nodonationasks":true}'));
         $this->assertTrue(User::settingsAllowDonationAsks('{"nodonationasks":false}'));
         $this->assertTrue(User::settingsAllowDonationAsks('{}'));
-        $this->assertTrue(User::settingsAllowDonationAsks(NULL));
+        $this->assertTrue(User::settingsAllowDonationAsks(null));
     }
 
     public function test_opt_out_holds_until_its_date_then_lapses(): void
@@ -77,12 +77,12 @@ class DonationAskOptOutTest extends TestCase
         $future = now()->utc()->addMonth()->format('Y-m-d\TH:i:s\Z');
         $past = now()->utc()->subDay()->format('Y-m-d\TH:i:s\Z');
 
-        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => $future]));
-        $this->assertTrue(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => $past]),
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => true, 'nodonationasksuntil' => $future]));
+        $this->assertTrue(User::settingsAllowDonationAsks(['nodonationasks' => true, 'nodonationasksuntil' => $past]),
             'a lapsed opt-out no longer holds asks back');
-        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => NULL]),
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => true, 'nodonationasksuntil' => null]),
             'an undated opt-out runs until donations:lapse-optouts dates it');
-        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => TRUE, 'nodonationasksuntil' => 'junk']),
+        $this->assertFalse(User::settingsAllowDonationAsks(['nodonationasks' => true, 'nodonationasksuntil' => 'junk']),
             'an unreadable date errs on not asking');
     }
 
@@ -119,7 +119,7 @@ class DonationAskOptOutTest extends TestCase
         ]);
 
         $asked = $this->makeBirthdayRecipient([]);
-        $optedOut = $this->makeBirthdayRecipient(['nodonationasks' => TRUE]);
+        $optedOut = $this->makeBirthdayRecipient(['nodonationasks' => true]);
 
         foreach ([$asked, $optedOut] as $user) {
             DB::table('memberships')->insert([
@@ -128,7 +128,7 @@ class DonationAskOptOutTest extends TestCase
             ]);
         }
 
-        $count = (new BirthdayService())->sendBirthdayEmails(NULL, [$group->id], dryRun: TRUE);
+        $count = (new BirthdayService)->sendBirthdayEmails(null, [$group->id], dryRun: true);
 
         $this->assertSame(1, $count, 'only the member who has not opted out gets the birthday appeal');
     }
@@ -162,12 +162,12 @@ class DonationAskOptOutTest extends TestCase
             'image_url' => 'https://example.com/job1.png',
         ];
 
-        $withJobs = $this->renderJobsPartial([$job], NULL);
+        $withJobs = $this->renderJobsPartial([$job], null);
         $this->assertStringContainsString('More jobs', $withJobs);
         $this->assertStringNotContainsString('Donate', $withJobs);
 
         // With no jobs the block is just the donate ask, so nothing is left.
-        $this->assertStringNotContainsString('Donat', $this->renderJobsPartial([], NULL));
+        $this->assertStringNotContainsString('Donat', $this->renderJobsPartial([], null));
 
         // And the ask is still there for everyone else.
         $this->assertStringContainsString('Donate', $this->renderJobsPartial([$job], 'https://example.com/donate'));
@@ -187,11 +187,11 @@ class DonationAskOptOutTest extends TestCase
             'posts' => collect(),
             'postCount' => 0,
             'mode' => UnifiedDigestService::MODE_DAILY,
-            'isSingle' => FALSE,
+            'isSingle' => false,
             'sponsors' => collect(),
             'jobAds' => collect([$job]),
             'jobsUrl' => 'https://example.com/jobs?t=1',
-            'donateUrl' => NULL,
+            'donateUrl' => null,
             'browseUrl' => 'https://example.com/browse?t=1',
             'settingsUrl' => 'https://example.com/settings?t=1',
             'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
@@ -219,7 +219,7 @@ class DonationAskOptOutTest extends TestCase
     private function mjmlData(object $mail): array
     {
         $ref = new \ReflectionProperty($mail, 'mjmlData');
-        $ref->setAccessible(TRUE);
+        $ref->setAccessible(true);
 
         return $ref->getValue($mail);
     }
@@ -263,13 +263,13 @@ class DonationAskOptOutTest extends TestCase
                 'location' => 'Town Hall',
                 'description' => 'We need helpers every Saturday.',
                 'timecommitment' => '3 hours per week',
-                'online' => FALSE,
-                'contactname' => NULL,
-                'contactphone' => NULL,
-                'contactemail' => NULL,
-                'contacturl' => NULL,
-                'photo_thumb' => NULL,
-                'applyby' => NULL,
+                'online' => false,
+                'contactname' => null,
+                'contactphone' => null,
+                'contactemail' => null,
+                'contacturl' => null,
+                'photo_thumb' => null,
+                'applyby' => null,
                 'url' => "{$userSite}/volunteering/1",
             ]],
             unsubscribeUrl: "{$userSite}/unsubscribe",
@@ -277,7 +277,7 @@ class DonationAskOptOutTest extends TestCase
                 'id' => 99,
                 'title' => 'Warehouse Operative',
                 'location' => 'Edinburgh',
-                'image_url' => NULL,
+                'image_url' => null,
             ]]),
             userId: $user->id,
         );
@@ -293,10 +293,10 @@ class DonationAskOptOutTest extends TestCase
         DB::table('users')->where('id', $user->id)->update([
             'marketingconsent' => 1,
             'bouncing' => 0,
-            'deleted' => NULL,
-            'onholidaytill' => NULL,
+            'deleted' => null,
+            'onholidaytill' => null,
             'lastaccess' => now(),
-            'settings' => json_encode(array_merge(['notifications' => ['email' => TRUE]], $extraSettings)),
+            'settings' => json_encode(array_merge(['notifications' => ['email' => true]], $extraSettings)),
         ]);
 
         return $user;

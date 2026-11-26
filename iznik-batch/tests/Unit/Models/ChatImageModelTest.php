@@ -102,5 +102,4 @@ class ChatImageModelTest extends TestCase
         // Access chat room via the message.
         $this->assertEquals($room->id, $image->chatMessage->chatRoom->id);
     }
-
 }

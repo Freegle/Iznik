@@ -37,9 +37,10 @@ class WhatJobsGeocodingTest extends TestCase
      */
     private function makeService(array $geocodeLookup, array $dbCache = []): WhatJobsService
     {
-        $bbox = fn(string $q) => $geocodeLookup[$q] ?? null;
+        $bbox = fn (string $q) => $geocodeLookup[$q] ?? null;
 
-        return new class($bbox, $dbCache) extends WhatJobsService {
+        return new class($bbox, $dbCache) extends WhatJobsService
+        {
             public function __construct(private \Closure $geocodeLookup, private array $seedCache) {}
 
             protected function geocodeAddress(
@@ -57,6 +58,7 @@ class WhatJobsGeocodingTest extends TestCase
                     return null;
                 }
                 [$swlat, $swlng, $nelat, $nelng] = $bbox;
+
                 return [$swlat, $swlng, $nelat, $nelng, WhatJobsService::boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
@@ -66,6 +68,7 @@ class WhatJobsGeocodingTest extends TestCase
                 foreach ($this->seedCache as $key => $val) {
                     $cache[$key] = $val;
                 }
+
                 return parent::geocodeCityState($city, $state, $country, $cache, $zip);
             }
         };
@@ -78,7 +81,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_state_abbreviation_eng_is_treated_as_bad_state(): void
     {
         // 'eng' should be ignored (same as 'england'), so we fall back to city-only
-        $svc   = $this->makeService(['London' => [51.3, -0.5, 51.7, 0.3]]);
+        $svc = $this->makeService(['London' => [51.3, -0.5, 51.7, 0.3]]);
         $cache = [];
         $result = $svc->geocodeCityState('London', 'eng', 'United Kingdom', $cache);
         $this->assertNotNull($result, 'Should geocode London even with bad state abbreviation');
@@ -86,7 +89,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_state_abbreviation_wls_is_treated_as_bad_state(): void
     {
-        $svc   = $this->makeService(['Cardiff' => [51.4, -3.2, 51.5, -3.1]]);
+        $svc = $this->makeService(['Cardiff' => [51.4, -3.2, 51.5, -3.1]]);
         $cache = [];
         $result = $svc->geocodeCityState('Cardiff', 'wls', 'United Kingdom', $cache);
         $this->assertNotNull($result);
@@ -94,7 +97,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_state_abbreviation_sct_is_treated_as_bad_state(): void
     {
-        $svc   = $this->makeService(['Edinburgh' => [55.9, -3.3, 56.0, -3.1]]);
+        $svc = $this->makeService(['Edinburgh' => [55.9, -3.3, 56.0, -3.1]]);
         $cache = [];
         $result = $svc->geocodeCityState('Edinburgh', 'sct', 'United Kingdom', $cache);
         $this->assertNotNull($result);
@@ -102,7 +105,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_state_abbreviation_nir_is_treated_as_bad_state(): void
     {
-        $svc   = $this->makeService(['Belfast' => [54.5, -5.9, 54.6, -5.9]]);
+        $svc = $this->makeService(['Belfast' => [54.5, -5.9, 54.6, -5.9]]);
         $cache = [];
         $result = $svc->geocodeCityState('Belfast', 'nir', 'United Kingdom', $cache);
         $this->assertNotNull($result);
@@ -116,7 +119,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_title_cased_city_geocodes_when_lowercase_fails(): void
     {
         // Geocoder returns result for 'Sudbury' but not 'sudbury'
-        $svc   = $this->makeService(['Sudbury' => [52.0, 0.72, 52.1, 0.74]]);
+        $svc = $this->makeService(['Sudbury' => [52.0, 0.72, 52.1, 0.74]]);
         $cache = [];
         $result = $svc->geocodeCityState('sudbury', '', 'United Kingdom', $cache);
         $this->assertNotNull($result, 'Should try title-cased city when lowercase fails');
@@ -125,7 +128,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_lowercase_city_still_works_when_geocoder_accepts_lowercase(): void
     {
         // Geocoder accepts both cases
-        $svc   = $this->makeService([
+        $svc = $this->makeService([
             'sudbury' => [52.0, 0.72, 52.1, 0.74],
             'Sudbury' => [52.0, 0.72, 52.1, 0.74],
         ]);
@@ -142,7 +145,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_combined_city_county_query_used_as_fallback(): void
     {
         // City alone fails, but "Kenwyn, Cornwall" works
-        $svc   = $this->makeService(['Kenwyn, Cornwall' => [50.27, -5.12, 50.28, -5.11]]);
+        $svc = $this->makeService(['Kenwyn, Cornwall' => [50.27, -5.12, 50.28, -5.11]]);
         $cache = [];
         $result = $svc->geocodeCityState('Kenwyn', 'Cornwall', 'United Kingdom', $cache);
         $this->assertNotNull($result, 'Should try "city, county" combined query');
@@ -152,8 +155,10 @@ class WhatJobsGeocodingTest extends TestCase
     {
         // City alone succeeds — combined query should NOT be called
         $called = [];
-        $svc = new class($called) extends WhatJobsService {
+        $svc = new class($called) extends WhatJobsService
+        {
             public function __construct(private array &$log) {}
+
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -166,6 +171,7 @@ class WhatJobsGeocodingTest extends TestCase
                 if ($addr === 'Leeds') {
                     return [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
                 }
+
                 return null;
             }
         };
@@ -184,7 +190,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_slash_city_first_part_geocodes(): void
     {
         // "Idless" succeeds
-        $svc   = $this->makeService(['Idless' => [50.28, -5.06, 50.29, -5.05]]);
+        $svc = $this->makeService(['Idless' => [50.28, -5.06, 50.29, -5.05]]);
         $cache = [];
         $result = $svc->geocodeCityState(
             'Idless / Malpas / Kea / Gloweth',
@@ -198,7 +204,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_slash_city_second_part_geocodes_when_first_fails(): void
     {
         // "Idless" fails, "Malpas" succeeds
-        $svc   = $this->makeService(['Malpas' => [50.27, -5.07, 50.28, -5.06]]);
+        $svc = $this->makeService(['Malpas' => [50.27, -5.07, 50.28, -5.06]]);
         $cache = [];
         $result = $svc->geocodeCityState(
             'Idless / Malpas / Kea',
@@ -211,7 +217,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_single_city_without_slash_not_split(): void
     {
-        $svc   = $this->makeService(['Truro' => [50.26, -5.06, 50.27, -5.05]]);
+        $svc = $this->makeService(['Truro' => [50.26, -5.06, 50.27, -5.05]]);
         $cache = [];
         $result = $svc->geocodeCityState('Truro', '', 'United Kingdom', $cache);
         $this->assertNotNull($result);
@@ -227,7 +233,8 @@ class WhatJobsGeocodingTest extends TestCase
     {
         // State 'Cornwall' geocodes to a bbox, city 'Kenwyn' is within it
         // Previously this failed because exact-match with same name returned null
-        $svc = new class extends WhatJobsService {
+        $svc = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -244,11 +251,12 @@ class WhatJobsGeocodingTest extends TestCase
                     // City within Cornwall bbox
                     return [50.27, -5.12, 50.28, -5.11, WhatJobsService::boxPoly(50.27, -5.12, 50.28, -5.11)];
                 }
+
                 return null;
             }
         };
 
-        $cache  = [];
+        $cache = [];
         $result = $svc->geocodeCityState('Kenwyn', 'Cornwall', 'United Kingdom', $cache);
         $this->assertNotNull($result, 'State bbox should be used even when state name exactly matches geocoder name');
     }
@@ -264,7 +272,8 @@ class WhatJobsGeocodingTest extends TestCase
         $svc = $this->makeService([]); // no Photon results at all
 
         // Override geocodeByPostcode to return a real result for TR1
-        $svc2 = new class extends WhatJobsService {
+        $svc2 = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -281,11 +290,12 @@ class WhatJobsGeocodingTest extends TestCase
                 if ($outward === 'TR1') {
                     return [50.25, -5.08, 50.27, -5.05, WhatJobsService::boxPoly(50.25, -5.08, 50.27, -5.05)];
                 }
+
                 return null;
             }
         };
 
-        $cache  = [];
+        $cache = [];
         $result = $svc2->geocodeCityState('kenwyn', 'South West', 'United Kingdom', $cache, 'TR1');
         $this->assertNotNull($result, 'Should geocode via outward postcode when Photon fails');
     }
@@ -295,7 +305,8 @@ class WhatJobsGeocodingTest extends TestCase
         // POSTCODE-FIRST: a usable outward code is authoritative, so its result
         // is returned even when the city would also geocode. The returned bbox
         // must be the POSTCODE one, not the city one.
-        $svc = new class extends WhatJobsService {
+        $svc = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -307,18 +318,21 @@ class WhatJobsGeocodingTest extends TestCase
                 if ($addr === 'Leeds') {
                     return [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
                 }
+
                 return null;
             }
+
             protected function geocodePostcode(string $outward): ?array
             {
                 if ($outward === 'LS1') {
                     return [53.79, -1.55, 53.81, -1.53, WhatJobsService::boxPoly(53.79, -1.55, 53.81, -1.53)];
                 }
+
                 return null;
             }
         };
 
-        $cache  = [];
+        $cache = [];
         $result = $svc->geocodeCityState('Leeds', 'West Yorkshire', 'United Kingdom', $cache, 'LS1 1AA');
         $this->assertNotNull($result);
         // Centre must be the postcode bbox centre (~53.80), not the city bbox centre (~53.85).
@@ -336,7 +350,8 @@ class WhatJobsGeocodingTest extends TestCase
         // "Conington" is a Cambridgeshire village (state "East of England") but
         // the ambiguous city/state lookup geocoded it to ~POINT(-0.090, 51.515)
         // = East London. With postcode-first, PE29 3TN resolves to Cambridgeshire.
-        $svc = new class extends WhatJobsService {
+        $svc = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -350,9 +365,11 @@ class WhatJobsGeocodingTest extends TestCase
                     return [51.510, -0.095, 51.520, -0.085,
                         WhatJobsService::boxPoly(51.510, -0.095, 51.520, -0.085)];
                 }
+
                 // "East of England" does not resolve to a usable bbox.
                 return null;
             }
+
             protected function geocodePostcode(string $outward): ?array
             {
                 // PE29 = Huntingdon, Cambridgeshire.
@@ -360,11 +377,12 @@ class WhatJobsGeocodingTest extends TestCase
                     return [52.30, -0.20, 52.34, -0.16,
                         WhatJobsService::boxPoly(52.30, -0.20, 52.34, -0.16)];
                 }
+
                 return null;
             }
         };
 
-        $cache  = [];
+        $cache = [];
         $result = $svc->geocodeCityState('Conington', 'East of England', 'United Kingdom', $cache, 'PE29 3TN');
         $this->assertNotNull($result, 'Conington with PE29 3TN should geocode');
 
@@ -389,7 +407,8 @@ class WhatJobsGeocodingTest extends TestCase
         // job with the same city/state/country but a real postcode must NOT get
         // that cached value — the postcode keys a distinct cache entry and is
         // resolved first.
-        $svc = new class extends WhatJobsService {
+        $svc = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -402,14 +421,17 @@ class WhatJobsGeocodingTest extends TestCase
                     return [51.510, -0.095, 51.520, -0.085,
                         WhatJobsService::boxPoly(51.510, -0.095, 51.520, -0.085)];
                 }
+
                 return null;
             }
+
             protected function geocodePostcode(string $outward): ?array
             {
                 if ($outward === 'PE29') {
                     return [52.30, -0.20, 52.34, -0.16,
                         WhatJobsService::boxPoly(52.30, -0.20, 52.34, -0.16)];
                 }
+
                 return null;
             }
         };
@@ -432,7 +454,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_geocode_city_state_accepts_zip_parameter(): void
     {
-        $svc   = $this->makeService(['Manchester' => [53.4, -2.3, 53.5, -2.2]]);
+        $svc = $this->makeService(['Manchester' => [53.4, -2.3, 53.5, -2.2]]);
         $cache = [];
         // Should not throw even with zip parameter
         $result = $svc->geocodeCityState('Manchester', 'North West', 'United Kingdom', $cache, 'M1 1AA');
@@ -445,7 +467,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_guernsey_country_returns_null(): void
     {
-        $svc   = $this->makeService(['St Peter Port' => [49.4, -2.5, 49.5, -2.4]]);
+        $svc = $this->makeService(['St Peter Port' => [49.4, -2.5, 49.5, -2.4]]);
         $cache = [];
         $result = $svc->geocodeCityState('St Peter Port', '', 'Guernsey', $cache);
         $this->assertNull($result);
@@ -453,7 +475,7 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_bad_city_returns_null(): void
     {
-        $svc   = $this->makeService([]);
+        $svc = $this->makeService([]);
         $cache = [];
         $result = $svc->geocodeCityState('home based', '', 'United Kingdom', $cache);
         $this->assertNull($result);
@@ -462,7 +484,7 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_bad_state_england_skipped(): void
     {
         // 'england' is a bad state; should not be geocoded, falls back to city
-        $svc   = $this->makeService(['London' => [51.3, -0.5, 51.7, 0.3]]);
+        $svc = $this->makeService(['London' => [51.3, -0.5, 51.7, 0.3]]);
         $cache = [];
         $result = $svc->geocodeCityState('London', 'england', 'United Kingdom', $cache);
         $this->assertNotNull($result, 'Should still geocode city when state is England');
@@ -470,9 +492,9 @@ class WhatJobsGeocodingTest extends TestCase
 
     public function test_cache_hit_returns_immediately(): void
     {
-        $svc   = $this->makeService([]); // geocoder returns nothing
+        $svc = $this->makeService([]); // geocoder returns nothing
         $cache = [];
-        $bbox  = [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
+        $bbox = [53.8, -1.6, 53.9, -1.5, WhatJobsService::boxPoly(53.8, -1.6, 53.9, -1.5)];
 
         // Pre-populate cache
         $svc->geocodeCityState('Leeds', 'West Yorkshire', 'United Kingdom', $cache);
@@ -486,7 +508,8 @@ class WhatJobsGeocodingTest extends TestCase
     public function test_city_too_coarse_returns_null(): void
     {
         // Geocoder returns a huge bbox (area > 50) for the city
-        $svc = new class extends WhatJobsService {
+        $svc = new class extends WhatJobsService
+        {
             protected function geocodeAddress(
                 string $addr, bool $allowPoint, bool $exact,
                 float $bbswlat = WhatJobsService::UK_SWLAT,
@@ -499,7 +522,7 @@ class WhatJobsGeocodingTest extends TestCase
                 return [-7.5, 49.9, 1.7, 58.6, WhatJobsService::boxPoly(-7.5, 49.9, 1.7, 58.6)];
             }
         };
-        $cache  = [];
+        $cache = [];
         $result = $svc->geocodeCityState('England', '', 'United Kingdom', $cache);
         $this->assertNull($result, 'City bbox too coarse (area > 50) should be rejected');
     }

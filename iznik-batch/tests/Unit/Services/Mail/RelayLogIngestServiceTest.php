@@ -24,8 +24,7 @@ class RelayLogIngestServiceTest extends TestCase
             public function __construct(
                 private readonly ?string $output,
                 private $spy,
-            ) {
-            }
+            ) {}
 
             public function run(string $target, string $script): ?string
             {

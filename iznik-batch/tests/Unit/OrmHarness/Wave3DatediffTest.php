@@ -31,7 +31,9 @@ use Tests\TestCase;
 class Wave3DatediffTest extends TestCase
 {
     private const SITE_RECENT_NEWSFEED = 'ea03606b98f1';
+
     private const SITE_CACHED_PREVIEW_DRYRUN = 'd3579da9736a';
+
     private const SITE_CACHED_PREVIEW = '33219aae3e9a';
 
     private const TODAY = '2026-01-08';
