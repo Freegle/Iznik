@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-15
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -73,6 +73,12 @@ variables like every other Freegle setting.
 | `backup.database.target_dir` | `BACKUP_DB_TARGET_DIR` | `/backup` | xtrabackup's scratch directory on the node. Streaming writes nothing of size there. |
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
+| `servers.katapult_token` | `KATAPULT_API_TOKEN` | empty | A Katapult API token, used read-only by `servers:rightsize-report` to list the servers we rent, the packages on offer and their prices. Empty: no report. See [server-right-sizing.md](../../ops/runbooks/server-right-sizing.md). |
+| `servers.report_to` | `SERVERS_REPORT_TO` | empty | Who gets the weekly server sizing report. Empty: no report. |
+| `servers.price_discount` | `SERVERS_PRICE_DISCOUNT` | `0` | The share taken off Katapult's prices in the sizing report, 0 to 1. Set it to the discount on the account. |
+| `servers.min_history_days` | `SERVERS_MIN_HISTORY_DAYS` | `14` | Days of readings needed before the sizing report suggests a change of package. |
+| `servers.sample_retention_days` | `SERVERS_SAMPLE_RETENTION_DAYS` | `400` | How long `servers:sample` keeps its readings. |
+| `servers.model` | `SERVERS_REPORT_MODEL` | `opus` | The Claude model that writes the review at the top of the sizing report. It runs on the same setup token as Community News. |
 | `ux.report_to` | `UX_REPORT_TO` | falls back to `FREEGLE_GEEKS_ADDR` | Where `ux:weekly-report` sends the Monday summary of the biggest week-on-week UX changes. See [ux-telemetry.md](ux-telemetry.md). |
 | `ux.experiments.max_concurrent` | `UX_EXPERIMENTS_MAX_CONCURRENT` | `5` | Most UX experiments running at once. `ux:experiment start` refuses one more. The Go API reads the same variable from its own environment to report the cap, and `docker-compose.yml` does not pass it to `apiv2`: set it on both sides or on neither, or the experiment routes report a cap that the batch does not use. The whole loop is in [ux-experiments.md](ux-experiments.md). |
 | `ux.experiments.max_hours` | `UX_EXPERIMENTS_MAX_HOURS` | `24` | How long a UX experiment may run before `ux:experiments-tick` must decide it. |

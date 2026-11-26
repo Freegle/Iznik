@@ -90,6 +90,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Session\VerifyEmailMail::class => null,
         \App\Mail\Stories\AskMail::class => UnsubscribeService::TYPE_ENGAGEMENT,
         \App\Mail\Stories\StoriesNewsletterMail::class => UnsubscribeService::TYPE_NEWSLETTER,
+        \App\Mail\Servers\ServerSizingReportMail::class => null,
         \App\Mail\Stories\StoriesToCentralMail::class => null,
         \App\Mail\Tryst\TrystCalendarInviteMail::class => null,
         \App\Mail\Volunteering\VolunteeringDigestMail::class => UnsubscribeService::TYPE_VOLUNTEERING,

@@ -1604,6 +1604,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Server sizing
+    |--------------------------------------------------------------------------
+    |
+    | servers:sample records load, processor time, memory and disk for each host
+    | in FREEGLE_MONITORING_HOSTS every fifteen minutes. servers:rightsize-report
+    | mails a weekly report on whether each rented server is the right size. See
+    | docs/ops/runbooks/server-right-sizing.md.
+    |
+    */
+
+    'servers' => [
+        // Read-only access to what we rent and what is on offer. Empty: no report.
+        'katapult_token' => EnvSetting::env('KATAPULT_API_TOKEN', ''),
+        'katapult_api' => EnvSetting::env('KATAPULT_API_URL', 'https://api.katapult.io/core/v1'),
+        // Who the weekly report goes to. Empty: no report.
+        'report_to' => EnvSetting::env('SERVERS_REPORT_TO', ''),
+        // The share taken off Katapult's prices for our account, 0 to 1 (0.5 is half price).
+        'price_discount' => (float) EnvSetting::env('SERVERS_PRICE_DISCOUNT', 0),
+        // Days of readings needed before a size change is suggested, so a normal fortnight has been seen.
+        'min_history_days' => (int) EnvSetting::env('SERVERS_MIN_HISTORY_DAYS', 14),
+        // How long readings are kept. Over a year, so this month can be set against the same month last year.
+        'sample_retention_days' => (int) EnvSetting::env('SERVERS_SAMPLE_RETENTION_DAYS', 400),
+        // The review at the top of the report is written by Claude on the subscription, through the
+        // claude CLI and a setup token, as the Community News research is. Empty token: no review.
+        'oauth_token' => EnvSetting::env('COMMUNITY_NEWS_OAUTH_TOKEN', EnvSetting::env('CLAUDE_CODE_OAUTH_TOKEN', '')),
+        'model' => EnvSetting::env('SERVERS_REPORT_MODEL', 'opus'),
+        'claude_bin' => EnvSetting::env('COMMUNITY_NEWS_CLAUDE_BIN', 'claude'),
+        'claude_config_dir' => EnvSetting::env('SERVERS_CLAUDE_CONFIG_DIR', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Scheduled-task Outcome Monitoring
     |--------------------------------------------------------------------------
     |

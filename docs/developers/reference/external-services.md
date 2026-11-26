@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - .env.example
@@ -58,6 +58,7 @@ Visible, annoying, not fatal.
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
 | **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
+| **Katapult API** | Read weekly by `servers:rightsize-report` for the servers we rent, the packages on offer and their prices (`KATAPULT_API_TOKEN`). If it fails, that week's sizing report is not sent ([runbook](../../ops/runbooks/server-right-sizing.md)) |
 | **Google Search Console and Ads** | Checked weekly by `google:search-console-check` and `google:ads-check` ([google-housekeeping.md](google-housekeeping.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |

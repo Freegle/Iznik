@@ -2228,6 +2228,26 @@ Schedule::command('chat:scam-wave-detect')
     ->runInBackground();
 
 // =============================================================================
+// SERVER SIZING (docs/ops/runbooks/server-right-sizing.md)
+// =============================================================================
+
+// A reading of load, processor time, memory and disk from each monitored host. The hosts keep no
+// history of their own, so these rows are the only record the weekly report has to work from.
+Schedule::command('servers:sample')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('servers:sample'))
+    ->runInBackground();
+
+// Monday morning: whether each rented server is the right size, mailed to SERVERS_REPORT_TO.
+// 07:50 is clear of the backup drain window and of the Tuesday data-node maintenance hold.
+Schedule::command('servers:rightsize-report')
+    ->weeklyOn(1, '07:50')
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('servers:rightsize-report'))
+    ->runInBackground();
+
+// =============================================================================
 // BACKUP DRAIN (see App\Console\BackupDrain)
 // =============================================================================
 // Last, so it covers every command defined above and a new job cannot be forgotten.

@@ -153,6 +153,13 @@ saying the same ordinary thing.
 
 - How to read it and what to do: **[chat-scam-wave.md](chat-scam-wave.md)**.
 
+## The weekly "Server sizing" mail
+
+`servers:rightsize-report` mails it every Monday. It says whether each rented server is the
+right size and which disks are filling. It only reads; a resize is yours to do.
+
+- How to read it and what to check before acting: **[server-right-sizing.md](server-right-sizing.md)**.
+
 ## Claude broker on the docker host
 
 The AI support helper and Community News reach Freegle's Claude accounts through a broker
