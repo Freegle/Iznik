@@ -137,8 +137,11 @@ class EmailSpoolerService
         // mailable carries its own recipient). This lets every send call in
         // the codebase be converted to spool() mechanically without each
         // caller having to know whether the mailable self-addresses.
+        // A mailable that names its recipient only in build() is built to find
+        // it, and that built message is reused below rather than built again.
+        $prebuilt = null;
         if ($to === null || $to === [] || $to === '') {
-            $to = $this->deriveRecipientsFromMailable($mailable);
+            [$to, $prebuilt] = $this->deriveRecipientsFromMailable($mailable);
         }
 
         // Normalize $to to array format with address/name structure.
@@ -180,7 +183,7 @@ class EmailSpoolerService
         // failure marks the recipient bouncing and is skipped; anything else
         // (e.g. MJML/infra build failures) re-throws unchanged.
         try {
-            $email = $this->captureBuiltMessage($mailable);
+            $email = $prebuilt ?? $this->captureBuiltMessage($mailable);
         } catch (\Throwable $e) {
             if ($this->isPermanentSmtpFailure($e->getMessage())) {
                 $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
@@ -378,38 +381,59 @@ class EmailSpoolerService
      * Derive a recipient list from a self-addressing mailable.
      *
      * Looks first at the mailable's public ->to array (set via Mail::to() or
-     * MyMailable::to()), then falls back to running the mailable through a
-     * lightweight capturing transport to pick up envelope()-declared
-     * recipients. Used when spool() is called without an explicit $to so
-     * direct-send call sites (Mail::send($mailable) pattern) can be converted
-     * mechanically.
+     * MyMailable::to()), then at envelope()-declared recipients. Only if
+     * neither names anyone does it build the mailable through the capturing
+     * transport, and then it hands the built message back so spool() does not
+     * build it a second time. Used when spool() is called without an explicit
+     * $to so direct-send call sites (Mail::send($mailable) pattern) can be
+     * converted mechanically.
      *
-     * @return list<string>
+     * A mailable must be built once: one that creates its email_tracking row in
+     * build() (CommunityNewsMail, MatchedPosts) got two rows per mail when it
+     * was built twice, one an orphan the sent mail never points at, which
+     * halved its open and click rates. A second build also renders the MJML
+     * again.
+     *
+     * @return array{0: list<string>, 1: ?Email}  recipients, and the message if one was built
      */
     protected function deriveRecipientsFromMailable(Mailable $mailable): array
     {
         if (!empty($mailable->to)) {
-            return array_values(array_filter(array_map(
+            return [array_values(array_filter(array_map(
                 fn ($entry) => is_array($entry) ? ($entry['address'] ?? null) : (string) $entry,
                 $mailable->to,
-            )));
+            ))), null];
         }
 
-        // Fall back to envelope() recipients. We run the mailable through the
-        // capturing transport (same one spool() uses to materialise the
-        // Symfony Email) and read getTo() off the captured message. We DON'T
-        // cache the captured email here — spool() captures it again right
-        // after — because doing so would require restructuring the method to
-        // pass the cached value through, for one rarely-hit code path.
+        // Read envelope() recipients without building the mailable. If
+        // envelope() throws, fall through: the build below calls it again, and
+        // spool()'s own handler then deals with the failure (including the
+        // retry for a RetryableMailable).
+        if (method_exists($mailable, 'envelope')) {
+            try {
+                $addrs = array_values(array_filter(array_map(
+                    fn ($a) => $a instanceof \Illuminate\Mail\Mailables\Address ? $a->address : null,
+                    $mailable->envelope()->to,
+                )));
+
+                if ($addrs !== []) {
+                    return [$addrs, null];
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        // The mailable sets its recipient only inside build(): build it and
+        // read getTo() off the built message.
         try {
             $email = $this->captureBuiltMessage($mailable);
             $addrs = $email->getTo() ?? [];
-            return array_values(array_map(fn ($a) => $a->getAddress(), $addrs));
+            return [array_values(array_map(fn ($a) => $a->getAddress(), $addrs)), $email];
         } catch (\Throwable $e) {
             // captureBuiltMessage failing here will fail again inside spool()
             // and be handled by the existing isPermanentSmtpFailure branch,
-            // so just return [] and let that path do its job.
-            return [];
+            // so just return no recipients and let that path do its job.
+            return [[], null];
         }
     }
 
