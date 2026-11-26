@@ -37,24 +37,32 @@ that the monitoring key cannot reach is shown as "Not measured"; add it to
 
 The rules are fixed and are in `ServerSizingAnalyser`. The foot of every report repeats them.
 
-- A server is judged on its **busy end**: the level it stayed under for 95% of the week.
-- **Move down** is suggested only if the busy end would still leave headroom on the smaller
-  package: load at most 70% of the processors, processor time at most 60% in use, memory at
-  most 80% used. It picks the cheapest package that does, counting the disk the smaller
-  package no longer includes.
-- **Move up** is suggested when load is above the number of processors, processor time is
-  above 85% in use, or memory is above 92% used.
+- A server is judged on its **busy end**: the level it stayed under for 95% of a week.
+- **Move down** is suggested only if the busiest week in the window (up to eight weeks)
+  would still leave headroom on the smaller package: load at most 70% of the processors,
+  processor time at most 60% in use, memory at most 80% used. It picks the cheapest smaller
+  package of the same kind that does, counting the disk the smaller package no longer
+  includes. One quiet week is not enough.
+- **Move up** is suggested when, in the last week, load is above the number of processors,
+  processor time is above 85% in use, or memory is above 92% used.
 - Between those two marks the verdict is **keep**, so a server near a line does not flip
   from week to week.
-- Nothing is suggested until there are **14 days** of readings. Before that the report says
-  "Too early to say" and what the readings point to so far.
+- A move down needs readings on **14 days**, and on at least five days of the last week. A
+  move up needs readings on three days of the last week. Until then the report says "Too
+  early to say" and what the readings point to so far.
+- Readings from **before a resize** are left out, so a resized server starts its count again.
+- A server that has used swap above a tenth of its memory is **not offered less memory**.
 - A **disk** is flagged at 85% full, or when its growth over the last eight weeks would take
   it to 90% within eight weeks.
 
+A host is matched to its Katapult machine by short name, whatever the case or domain. A
+host that is sampled but matches no machine is listed at the foot of the report.
+
 The review at the top is written by Claude from those figures and verdicts. It is told to add
 no numbers of its own. It is there for what the rules cannot see: a database server's memory
-is full on purpose, because its cache is sized to fill it, and the report says so. If the
-call fails the report goes out without the review.
+is full on purpose, because its cache is sized to fill it, and the report says so. It runs in an empty directory, so it has
+nothing of ours to read but the figures. If the call fails the report goes out without the
+review.
 
 ## Before you act on it
 

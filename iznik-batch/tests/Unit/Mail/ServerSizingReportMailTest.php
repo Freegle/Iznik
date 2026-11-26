@@ -91,10 +91,12 @@ class ServerSizingReportMailTest extends TestCase
         $cases = [
             'Keep as it is' => ['verdict' => 'keep', 'candidate' => null],
             'Move down to C-12: saves £22.50 a month' => ['verdict' => 'step_down', 'candidate' => $down],
-            'Needs a bigger package, but none on offer fits' => ['verdict' => 'step_up', 'candidate' => null],
+            'Too small, and no bigger package of this kind fits' => ['verdict' => 'step_up', 'candidate' => null],
+            'Move up to C-36: costs no more' => ['verdict' => 'step_up', 'candidate' => ['name' => 'C-36', 'saving_paid' => 3.0]],
             'Too early to say. So far: the size looks right' => ['verdict' => 'wait', 'indication' => 'keep', 'candidate' => null],
-            'Too early to say. So far: could move down to C-12: saves £22.50 a month' => ['verdict' => 'wait', 'indication' => 'step_down', 'candidate' => $down],
-            'Too early to say. So far: may need to move up to C-36: costs £16.87 more a month' => ['verdict' => 'wait', 'indication' => 'step_up'],
+            'Too early to say. So far: could move down to C-12, saving £22.50 a month' => ['verdict' => 'wait', 'indication' => 'step_down', 'candidate' => $down],
+            'Too early to say. So far: looks too small; C-36 costs £16.87 more a month' => ['verdict' => 'wait', 'indication' => 'step_up'],
+            'Too early to say. So far: looks too small' => ['verdict' => 'wait', 'indication' => 'step_up', 'candidate' => null],
             'Stopped' => ['verdict' => 'stopped', 'candidate' => null],
             'Not measured' => ['verdict' => 'unmeasured', 'candidate' => null],
         ];
@@ -157,7 +159,8 @@ class ServerSizingReportMailTest extends TestCase
     {
         $review = ['changes' => ['Move Alpha up to C-36.'], 'watch' => [], 'caveats' => ['Database memory is cache.']];
         $mail = $this->mail([$this->server()], $review, [
-            'fleet' => ['monthly_list' => 720.0, 'monthly_paid' => 360.0, 'possible_saving_paid' => 12.5],
+            'fleet' => ['monthly_list' => 720.0, 'monthly_paid' => 360.0, 'possible_saving_paid' => 12.5, 'possible_cost_paid' => 16.87],
+            'unmatched_hosts' => ['stray'],
             'unattached_disks' => [
                 ['name' => 'old-cache', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null],
                 ['name' => 'spare', 'size_gb' => 75, 'state' => 'not_built', 'machine_id' => 'vm_a'],
@@ -171,6 +174,8 @@ class ServerSizingReportMailTest extends TestCase
         $this->assertStringContainsString('Alpha', $html);
         $this->assertStringContainsString('£360.00 a month', $html);
         $this->assertStringContainsString('would save', $html);
+        $this->assertStringContainsString('would cost', $html);
+        $this->assertStringContainsString('stray. Its readings are stored', $html);
         $this->assertStringContainsString('£12.50 a month', $html);
         $this->assertStringContainsString('Database memory is cache.', $html);
         $this->assertStringContainsString('old-cache, 200 GB, not attached to any server', $html);
@@ -190,6 +195,8 @@ class ServerSizingReportMailTest extends TestCase
             'monthlyPaid' => '£360.00',
             'monthlyList' => '£720.00',
             'possibleSaving' => null,
+            'possibleCost' => null,
+            'unmatchedHosts' => [],
             'discountPct' => 50,
             'historyDays' => 21,
             'minHistoryDays' => 14,
@@ -202,14 +209,18 @@ class ServerSizingReportMailTest extends TestCase
     {
         $review = ['changes' => ['Move Alpha up to C-36.'], 'watch' => ['The <root> disk.'], 'caveats' => []];
         $mail = $this->mail([$this->server()], $review);
-        $data = $this->viewData($mail, ['possibleSaving' => '£22.50', 'unattached' => ['old-cache, 200 GB, not attached to any server']]);
+        $data = $this->viewData($mail, ['possibleSaving' => '£22.50', 'possibleCost' => '£16.87', 'unmatchedHosts' => ['stray', 'other'],
+            'unattached' => ['old-cache, 200 GB, not attached to any server']]);
 
         foreach (['emails.mjml.servers.sizing-report', 'emails.text.servers.sizing-report'] as $view) {
             $out = view($view, $data)->render();
 
             $this->assertStringContainsString('We pay about', $out);
             $this->assertStringContainsString('£360.00 a month', $out);
-            $this->assertStringContainsString('would save', $out);
+            $this->assertStringContainsString('The moves down suggested below would save', $out);
+            $this->assertStringContainsString('The moves up suggested below would cost', $out);
+            $this->assertStringContainsString('£16.87 a month', $out);
+            $this->assertStringContainsString('stray, other. Its readings are stored', $out);
             $this->assertStringContainsString('Changes worth making', $out);
             $this->assertStringContainsString('Move Alpha up to C-36.', $out);
             $this->assertStringNotContainsString('What the rules cannot see', $out);
@@ -241,6 +252,8 @@ class ServerSizingReportMailTest extends TestCase
             $this->assertStringContainsString('readings so far', $out);
             $this->assertStringNotContainsString('discount', $out);
             $this->assertStringNotContainsString('Disks to look at', $out);
+            $this->assertStringNotContainsString('would cost', $out);
+            $this->assertStringNotContainsString('not a server Katapult lists', $out);
         }
     }
 }

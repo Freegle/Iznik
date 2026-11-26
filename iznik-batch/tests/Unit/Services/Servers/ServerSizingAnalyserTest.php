@@ -192,7 +192,7 @@ class ServerSizingAnalyserTest extends TestCase
 
         $this->assertSame('step_up', $server['verdict']);
         $this->assertNull($server['candidate']);
-        $this->assertStringContainsString('No package on offer is big enough', implode(' ', $server['reasons']));
+        $this->assertStringContainsString('No bigger package of this kind is big enough', implode(' ', $server['reasons']));
     }
 
     public function test_nothing_is_suggested_before_enough_days_of_readings(): void
@@ -207,10 +207,11 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame('wait', $server['verdict']);
         $this->assertSame('step_down', $server['indication']);
         $this->assertSame('C-12', $server['candidate']['name']);
-        $this->assertStringContainsString('Only 3 day(s) of readings; 14 are needed', $server['reasons'][0]);
+        // Three days back from eight in the morning touches four calendar days.
+        $this->assertSame('Readings on only 4 day(s); 14 are needed before a change is suggested.', $server['reasons'][0]);
         // A change that is not yet suggested is not counted as a saving.
         $this->assertSame(0.0, $analysis['fleet']['possible_saving_paid']);
-        $this->assertSame(3, $analysis['history_days']);
+        $this->assertSame(4, $analysis['history_days']);
     }
 
     public function test_the_smallest_package_says_it_is_the_smallest(): void
@@ -269,6 +270,121 @@ class ServerSizingAnalyserTest extends TestCase
         ), 'odd');
 
         $this->assertSame(['down' => null, 'up' => null], $server['steps']);
+    }
+
+    /**
+     * Move a run of readings back in time by whole days.
+     */
+    private function aged(array $samples, int $days): array
+    {
+        return array_map(function (array $sample) use ($days) {
+            $sample['sampled_at'] = Carbon::parse($sample['sampled_at'])->subDays($days)->toDateTimeString();
+
+            return $sample;
+        }, $samples);
+    }
+
+    public function test_one_reading_after_an_outage_is_not_enough_for_a_move_down(): void
+    {
+        // Twenty quiet days, a ten-day gap in sampling, then a single reading this morning.
+        $old = $this->aged($this->samples(20, 12, 1.0, 0.05, 36000, 6144), 10);
+        $today = $this->samples(0, 12, 1.0, 0.05, 36000, 6144);
+        $server = $this->server($this->analyse(
+            [$this->machine('gap', 'p36')], [$this->disk('gap', 300)], ['gap' => array_merge($old, $today)],
+        ), 'gap');
+
+        $this->assertSame(1, $server['week']['samples']);
+        $this->assertSame('wait', $server['verdict']);
+        $this->assertSame('step_down', $server['indication']);
+        $this->assertSame('Readings on only 1 day(s) of the last week; 5 are needed before a move down is suggested.', $server['reasons'][0]);
+    }
+
+    public function test_a_quiet_week_does_not_hide_a_busy_one_earlier_in_the_window(): void
+    {
+        // Load 9 on 12 processors three weeks ago, load 1 since. Anything smaller would not have coped.
+        $busy = $this->aged($this->samples(7, 12, 9.0, 0.6, 36000, 20000), 14);
+        $quiet = $this->samples(14, 12, 1.0, 0.05, 36000, 6144);
+        $server = $this->server($this->analyse(
+            [$this->machine('peaky', 'p36')], [$this->disk('peaky', 300)], ['peaky' => array_merge($busy, $quiet)],
+        ), 'peaky');
+
+        $this->assertSame('keep', $server['verdict']);
+        $this->assertSame(9.0, $server['peak']['load_p95']);
+        $this->assertSame(13, $server['needs']['cpus']);
+        $this->assertSame(0.08, $server['week']['load_per_cpu_p95']);
+    }
+
+    public function test_readings_from_before_a_resize_are_left_out(): void
+    {
+        // Three busy weeks as a 12-processor machine, then five days as a 4-processor one.
+        $before = $this->aged($this->samples(20, 12, 9.0, 0.6, 36000, 20000), 6);
+        $after = $this->samples(5, 4, 1.0, 0.1, 12000, 4000);
+        $server = $this->server($this->analyse(
+            [$this->machine('shrunk', 'p12')], [$this->disk('shrunk', 150)], ['shrunk' => array_merge($before, $after)],
+        ), 'shrunk');
+
+        // Nothing from the bigger machine is counted: not its load, and not its days.
+        $this->assertSame(1.0, $server['peak']['load_p95']);
+        $this->assertSame(6, $server['history_days']);
+        $this->assertSame('wait', $server['verdict']);
+        $this->assertCount(1, $server['trend']);
+    }
+
+    public function test_a_server_using_swap_is_not_offered_less_memory(): void
+    {
+        $server = $this->server($this->analyse(
+            [$this->machine('swappy', 'p36')], [$this->disk('swappy', 300)],
+            ['swappy' => $this->samples(21, 12, 1.0, 0.05, 36000, 6144, ['swap_used_mb' => 5120])],
+        ), 'swappy');
+
+        $this->assertSame('keep', $server['verdict']);
+        $this->assertNull($server['candidate']);
+        $this->assertSame(['It has used up to 5.0 GB of swap, so it is not offered less memory.'], $server['reasons']);
+    }
+
+    public function test_a_move_up_needs_three_days_of_the_week_but_not_a_fortnight(): void
+    {
+        $twoDays = $this->server($this->analyse(
+            [$this->machine('hot', 'p24')], [$this->disk('hot', 300)],
+            ['hot' => $this->samples(1, 8, 8.4, 0.6, 24000, 12000)],
+        ), 'hot');
+        $this->assertSame('wait', $twoDays['verdict']);
+        $this->assertSame('step_up', $twoDays['indication']);
+        $this->assertSame('C-36', $twoDays['candidate']['name']);
+        $this->assertSame('Readings on only 2 day(s) of the last week; 3 are needed before a move up is suggested.', $twoDays['reasons'][0]);
+
+        $analysis = $this->analyse(
+            [$this->machine('hot', 'p24')], [$this->disk('hot', 300)],
+            ['hot' => $this->samples(4, 8, 8.4, 0.6, 24000, 12000)],
+        );
+        $this->assertSame('step_up', $this->server($analysis, 'hot')['verdict']);
+        $this->assertSame(15.5, $analysis['fleet']['possible_cost_paid']);
+        $this->assertSame(0.0, $analysis['fleet']['possible_saving_paid']);
+    }
+
+    public function test_readings_are_matched_to_a_server_whatever_the_case_or_domain_of_its_name(): void
+    {
+        $analysis = $this->analyse(
+            [$this->machine('big', 'p36')], [$this->disk('big', 300)],
+            [
+                'BIG.internal.example' => $this->samples(21, 12, 1.0, 0.05, 36000, 6144),
+                'stray' => $this->samples(1, 1, 0.1, 0.02, 1000, 300),
+            ],
+        );
+
+        $this->assertSame('step_down', $this->server($analysis, 'big')['verdict']);
+        $this->assertSame(['stray'], $analysis['unmatched_hosts']);
+    }
+
+    public function test_a_server_whose_readings_stopped_says_when(): void
+    {
+        $server = $this->server($this->analyse(
+            [$this->machine('quiet', 'p12')], [$this->disk('quiet', 150)],
+            ['quiet' => $this->aged($this->samples(5, 4, 1.0, 0.1, 12000, 4000), 10)],
+        ), 'quiet');
+
+        $this->assertSame('unmeasured', $server['verdict']);
+        $this->assertSame(['No readings in the last week; the last was on 20 Nov.'], $server['reasons']);
     }
 
     public function test_a_stopped_server_costs_its_disk_only_and_gets_no_size_verdict(): void

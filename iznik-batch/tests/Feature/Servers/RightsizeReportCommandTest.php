@@ -70,7 +70,7 @@ class RightsizeReportCommandTest extends TestCase
             $alpha = collect($mail->cards())->firstWhere('name', 'Alpha');
 
             return $mail->envelope()->subject === 'Server sizing: no size changes suggested'
-                && $alpha['verdict'] === 'Too early to say. So far: could move down to C-12: saves £31.00 a month'
+                && $alpha['verdict'] === 'Too early to say. So far: could move down to C-12, saving £31.00 a month'
                 && $alpha['tone'] === 'info';
         });
     }

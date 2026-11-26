@@ -72,7 +72,9 @@ TXT;
         ];
 
         try {
+            // Run in the empty config directory, so the CLI's file tools have nothing of ours to read.
             $result = Process::timeout(300)
+                ->path($configDir)
                 ->env([
                     'CLAUDE_CODE_OAUTH_TOKEN' => $token,
                     'CLAUDE_CONFIG_DIR' => $configDir,
@@ -117,7 +119,8 @@ TXT;
 
         foreach (preg_split('/\R/', $text) ?: [] as $line) {
             $line = trim($line);
-            $heading = strtolower(rtrim($line, ':'));
+            // "CHANGES", "Changes:", "**WATCH**" and "## Caveats" are all the same heading.
+            $heading = strtolower(trim($line, " \t:*#_-"));
 
             if (array_key_exists($heading, $sections)) {
                 $current = $heading;
@@ -126,8 +129,15 @@ TXT;
                 continue;
             }
 
-            if ($current !== null && preg_match('/^[-*•]\s*(.+)$/u', $line, $m)) {
+            if ($current === null || $line === '') {
+                continue;
+            }
+
+            if (preg_match('/^(?:[-*•]|\d+[.)])\s*(.+)$/u', $line, $m)) {
                 $sections[$current][] = trim($m[1]);
+            } elseif ($sections[$current] !== []) {
+                // A wrapped line belongs to the item above it.
+                $sections[$current][count($sections[$current]) - 1] .= ' '.$line;
             }
         }
 

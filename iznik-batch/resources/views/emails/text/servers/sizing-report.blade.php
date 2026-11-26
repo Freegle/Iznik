@@ -3,13 +3,16 @@ Server sizing
 
 We pay about {{ $monthlyPaid }} a month for servers and disk.
 @if ($possibleSaving)
-The changes below would save {{ $possibleSaving }} a month.
+The moves down suggested below would save {{ $possibleSaving }} a month.
 @else
 No change that saves money is suggested this week.
 @endif
+@if ($possibleCost)
+The moves up suggested below would cost {{ $possibleCost }} a month more.
+@endif
 @if ($historyDays < $minHistoryDays)
 
-There are {{ $historyDays }} day(s) of readings so far. A size change is only suggested after {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
+There are {{ $historyDays }} day(s) of readings so far. A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
 @endif
 
 @if ($review)
@@ -46,6 +49,11 @@ The AI review was not available this week. The figures and verdicts below are co
 @endif
 
 @endforeach
+@if (!empty($unmatchedHosts))
+Sampled, but not a server Katapult lists
+{!! implode(', ', $unmatchedHosts) !!}. Its readings are stored but it is not in this report. Check the name it gives itself against its name on Katapult.
+
+@endif
 @if (!empty($unattached))
 Disks to look at
 @foreach ($unattached as $line)
@@ -53,7 +61,7 @@ Disks to look at
 @endforeach
 
 @endif
-How to read this. "Busy end" is the level a server stayed under for 95% of the week. A smaller package is suggested only if that level would leave headroom on it: load at most 70% of the processors, processor time at most 60% in use, memory at most 80% used. A bigger one is suggested when load is above the number of processors, processor time is above 85% in use, or memory is above 92% used. A disk is flagged at 85% full, or when its growth would take it to 90% within eight weeks.
+How to read this. "Busy end" is the level a server stayed under for 95% of the week. A smaller package is suggested only if the busiest week in up to eight would leave headroom on it: load at most 70% of the processors, processor time at most 60% in use, memory at most 80% used. Only packages of the same kind are compared. A bigger one is suggested when load is above the number of processors, processor time is above 85% in use, or memory is above 92% used. A disk is flagged at 85% full, or when its growth would take it to 90% within eight weeks.
 
 Costs are Katapult's monthly prices for our account ({{ $monthlyList }} in all){{ $discountPct > 0 ? ", less our {$discountPct}% discount" : "" }}. They leave out VAT, data transfer and backups, so check a figure against an invoice before relying on it. Taking processors or memory away needs the server shut down; adding them does not. Disks can grow but never shrink.
 

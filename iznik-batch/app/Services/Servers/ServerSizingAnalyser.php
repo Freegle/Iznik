@@ -11,12 +11,18 @@ use Carbon\CarbonInterface;
  *
  * The rules, in one place:
  *  - A server is judged on its busy end, not its average: the level it stays under 95% of the time.
- *  - A smaller package is suggested only if that level would still leave headroom on it (load at
- *    most 70% of the processors, processor time at most 60% busy, memory at most 80% used).
- *  - A bigger package is suggested only when the server is past a higher mark (load above the
- *    number of processors, processor time above 85% busy, or memory above 92% used). Between the
- *    two marks the answer is "keep", so a server near a line does not flip from week to week.
- *  - Nothing is suggested until there are enough days of readings to have seen a normal fortnight.
+ *  - A smaller package is suggested only if the busiest week in the whole window (up to eight
+ *    weeks) would still leave headroom on it: load at most 70% of the processors, processor time
+ *    at most 60% busy, memory at most 80% used. One quiet week is not enough.
+ *  - A bigger package is suggested when the last week is past a higher mark (load above the number
+ *    of processors, processor time above 85% busy, or memory above 92% used). Between the two
+ *    marks the answer is "keep", so a server near a line does not flip from week to week.
+ *  - A move down needs enough days of readings to have seen a normal fortnight, and readings on
+ *    most days of the last week. A move up needs only a few days: an overloaded server should not
+ *    wait a fortnight to be mentioned.
+ *  - Only packages of the same family are compared, so "smaller" and "bigger" mean what they say.
+ *  - Readings from before a resize are left out: they describe a different machine.
+ *  - A server that is using swap is not offered less memory.
  *  - A disk is flagged when it is 85% full or its growth would take it to 90% within eight weeks.
  *    Katapult disks can grow but never shrink.
  */
@@ -34,6 +40,9 @@ class ServerSizingAnalyser
 
     public const MEMORY_TOO_HIGH = 0.92;
 
+    /** Swap in use above this share of memory means the server is short of memory already. */
+    public const SWAP_IN_USE = 0.1;
+
     public const DISK_FULL = 0.85;
 
     public const DISK_TARGET = 0.9;
@@ -41,6 +50,12 @@ class ServerSizingAnalyser
     public const DISK_WEEKS_AHEAD = 8;
 
     public const TREND_WEEKS = 8;
+
+    /** Days of the last week that must have readings before a move down is suggested. */
+    public const WEEK_DAYS_FOR_DOWN = 5;
+
+    /** Days of the last week that must have readings before a move up is suggested. */
+    public const WEEK_DAYS_FOR_UP = 3;
 
     /** A gap longer than this between two readings is not used to work out processor time. */
     private const MAX_INTERVAL_SECONDS = 3600;
@@ -50,7 +65,7 @@ class ServerSizingAnalyser
      * @param  list<array{id: string, name: string, cpus: int, memory_gb: int, disk_gb: int, dedicated: bool}>  $packages
      * @param  list<array{name: string, size_gb: int, state: string, machine_id: ?string}>  $disks
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
-     * @param  array<string, list<array<string, mixed>>>  $samplesByHost  readings per hostname, oldest first
+     * @param  array<string, list<array<string, mixed>>>  $samplesByHost  readings per host name, oldest first
      * @return array<string, mixed>
      */
     public function analyse(
@@ -69,24 +84,42 @@ class ServerSizingAnalyser
             $packagesById[$package['id']] = $package;
         }
 
+        // A host may call itself "db-2" or "db-2.example.org", in any case; Katapult has its own
+        // spelling. Match on the short lower-case name so a difference of that kind is not read
+        // as "this server is not being sampled".
+        $samplesByKey = [];
+        foreach ($samplesByHost as $host => $samples) {
+            $key = $this->hostKey((string) $host);
+            $samplesByKey[$key] = array_merge($samplesByKey[$key] ?? [], array_map($this->normalise(...), $samples));
+        }
+        foreach ($samplesByKey as &$merged) {
+            usort($merged, fn (array $a, array $b) => $a['t'] <=> $b['t']);
+        }
+        unset($merged);
+
         $servers = [];
         $fleetList = 0.0;
         $fleetSaving = 0.0;
+        $fleetCost = 0.0;
+        $matched = [];
 
         foreach ($machines as $machine) {
-            $server = $this->analyseMachine(
-                $machine,
-                $packagesById,
-                $disks,
-                $prices,
-                $samplesByHost[$machine['hostname']] ?? [],
-                $now,
-                $discount,
-                $minHistoryDays,
-            );
+            $samples = [];
+            foreach (array_unique([$this->hostKey($machine['hostname']), $this->hostKey($machine['name'])]) as $key) {
+                if ($key !== '' && isset($samplesByKey[$key])) {
+                    $samples = $samplesByKey[$key];
+                    $matched[$key] = true;
+                    break;
+                }
+            }
+
+            $server = $this->analyseMachine($machine, $packagesById, $disks, $prices, $samples, $now, $discount, $minHistoryDays);
             $fleetList += $server['cost']['list'];
-            if (in_array($server['verdict'], ['step_down'], true) && $server['candidate'] !== null) {
+            if ($server['candidate'] !== null && $server['verdict'] === 'step_down') {
                 $fleetSaving += $server['candidate']['saving_paid'];
+            }
+            if ($server['candidate'] !== null && $server['verdict'] === 'step_up') {
+                $fleetCost += max(0.0, -$server['candidate']['saving_paid']);
             }
             $servers[] = $server;
         }
@@ -94,16 +127,14 @@ class ServerSizingAnalyser
         usort($servers, fn (array $a, array $b) => $b['cost']['list'] <=> $a['cost']['list']);
 
         $unattached = [];
-        $unattachedList = 0.0;
         foreach ($disks as $disk) {
             if ($disk['machine_id'] === null || $disk['state'] !== 'built') {
                 $unattached[] = $disk;
                 if ($disk['machine_id'] === null) {
-                    $unattachedList += $disk['size_gb'] * $prices['disk_gb'];
+                    $fleetList += $disk['size_gb'] * $prices['disk_gb'];
                 }
             }
         }
-        $fleetList += $unattachedList;
 
         $historyDays = 0;
         foreach ($servers as $server) {
@@ -119,9 +150,12 @@ class ServerSizingAnalyser
                 'monthly_list' => round($fleetList, 2),
                 'monthly_paid' => round($fleetList * (1 - $discount), 2),
                 'possible_saving_paid' => round($fleetSaving, 2),
+                'possible_cost_paid' => round($fleetCost, 2),
             ],
             'servers' => $servers,
             'unattached_disks' => $unattached,
+            // Sampled, but no rented machine has that name: a host renamed or not on Katapult.
+            'unmatched_hosts' => array_values(array_diff(array_keys($samplesByKey), array_keys($matched))),
         ];
     }
 
@@ -130,7 +164,7 @@ class ServerSizingAnalyser
      * @param  array<string, array{id: string, name: string, cpus: int, memory_gb: int, disk_gb: int, dedicated: bool}>  $packagesById
      * @param  list<array{name: string, size_gb: int, state: string, machine_id: ?string}>  $disks
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
-     * @param  list<array<string, mixed>>  $samples
+     * @param  list<array<string, mixed>>  $samples  normalised, oldest first
      * @return array<string, mixed>
      */
     private function analyseMachine(
@@ -154,15 +188,20 @@ class ServerSizingAnalyser
 
         $running = $machine['state'] === 'started';
         $list = $this->monthlyCost($package, $diskTotal, $machine['ipv4'], $prices, $running);
-
-        $weekAgo = $now->getTimestamp() - 7 * 86400;
-        $weekSamples = array_values(array_filter($samples, fn (array $s) => $this->time($s) >= $weekAgo));
-        $historyDays = $samples === []
-            ? 0
-            : (int) floor(($this->time($samples[count($samples) - 1]) - $this->time($samples[0])) / 86400);
-
-        $week = $this->summarise($weekSamples);
+        $end = $now->getTimestamp();
         $latest = $samples === [] ? null : $samples[count($samples) - 1];
+
+        // Only readings taken at the size the server is now say anything about that size.
+        $sized = $latest === null ? [] : array_values(array_filter(
+            $samples,
+            fn (array $s) => $s['cpus'] === $latest['cpus']
+                && abs($s['mem_total_mb'] - $latest['mem_total_mb']) <= 0.05 * $latest['mem_total_mb']
+        ));
+
+        $weekSamples = array_values(array_filter($sized, fn (array $s) => $s['t'] > $end - 7 * 86400));
+        $week = $this->summarise($weekSamples);
+        $historyDays = $this->daysWithReadings($sized);
+        $weekDays = $this->daysWithReadings($weekSamples);
 
         $server = [
             'name' => $machine['name'],
@@ -181,8 +220,10 @@ class ServerSizingAnalyser
             'cost' => ['list' => round($list, 2), 'paid' => round($list * (1 - $discount), 2)],
             'measured' => $week !== null,
             'history_days' => $historyDays,
+            'week_days' => $weekDays,
             'week' => $week,
-            'trend' => $this->trend($samples, $now),
+            'peak' => null,
+            'trend' => $this->trend($sized, $end),
             'disks' => $this->diskFacts($samples, $latest),
             'needs' => null,
             'steps' => ['down' => null, 'up' => null],
@@ -205,22 +246,38 @@ class ServerSizingAnalyser
 
         if ($week === null || $package === null) {
             $server['verdict'] = 'unmeasured';
-            $server['reasons'][] = 'No readings: the sampler cannot reach this server.';
+            $server['reasons'][] = $latest === null
+                ? 'No readings: the sampler does not reach this server.'
+                : 'No readings in the last week; the last was on '.date('j M', $latest['t']).'.';
 
             return $server;
         }
 
+        // The busiest week seen at this size. A move down has to fit this, not just the last week.
+        $peak = ['weeks' => 0, 'load_p95' => 0.0, 'cpu_busy_p95' => null, 'mem_used_gb_p95' => 0.0, 'swap_used_mb_max' => 0];
+        foreach ($this->weeks($sized, $end) as $summary) {
+            $peak['weeks']++;
+            $peak['load_p95'] = max($peak['load_p95'], $summary['load_p95']);
+            $peak['mem_used_gb_p95'] = max($peak['mem_used_gb_p95'], $summary['mem_used_gb_p95']);
+            $peak['swap_used_mb_max'] = max($peak['swap_used_mb_max'], $summary['swap_used_mb_max']);
+            if ($summary['cpu_busy_p95'] !== null) {
+                $peak['cpu_busy_p95'] = max($peak['cpu_busy_p95'] ?? 0.0, $summary['cpu_busy_p95']);
+            }
+        }
+        $server['peak'] = $peak;
+
         $server['needs'] = [
             'cpus' => max(1, (int) ceil(max(
-                $week['load_p95'] / self::LOAD_HEADROOM,
-                ($week['cpu_busy_p95'] ?? 0.0) * $week['cpus'] / self::BUSY_HEADROOM,
+                $peak['load_p95'] / self::LOAD_HEADROOM,
+                ($peak['cpu_busy_p95'] ?? 0.0) * $week['cpus'] / self::BUSY_HEADROOM,
             ) - 1e-9)),
-            'memory_gb' => round($week['mem_used_gb_p95'] / self::MEMORY_HEADROOM, 1),
+            'memory_gb' => round($peak['mem_used_gb_p95'] / self::MEMORY_HEADROOM, 1),
         ];
 
         [$verdict, $candidate, $reasons] = $this->sizeVerdict(
             $package,
             $week,
+            $peak,
             $server['needs'],
             $packagesById,
             $diskTotal,
@@ -232,14 +289,20 @@ class ServerSizingAnalyser
         $server['reasons'] = $reasons;
         $server['candidate'] = $candidate;
 
-        if ($historyDays < $minHistoryDays) {
-            // Too early to act. Say what the readings point to so far, without recommending it.
+        // Is there enough to go on? Say what the readings point to either way, without recommending it.
+        $short = null;
+        if ($verdict === 'step_up' && $weekDays < self::WEEK_DAYS_FOR_UP) {
+            $short = sprintf('Readings on only %d day(s) of the last week; %d are needed before a move up is suggested.', $weekDays, self::WEEK_DAYS_FOR_UP);
+        } elseif ($verdict !== 'step_up' && $historyDays < $minHistoryDays) {
+            $short = "Readings on only {$historyDays} day(s); {$minHistoryDays} are needed before a change is suggested.";
+        } elseif ($verdict === 'step_down' && $weekDays < self::WEEK_DAYS_FOR_DOWN) {
+            $short = sprintf('Readings on only %d day(s) of the last week; %d are needed before a move down is suggested.', $weekDays, self::WEEK_DAYS_FOR_DOWN);
+        }
+
+        if ($short !== null) {
             $server['verdict'] = 'wait';
             $server['indication'] = $verdict;
-            array_unshift(
-                $server['reasons'],
-                "Only {$historyDays} day(s) of readings; {$minHistoryDays} are needed before a change is suggested."
-            );
+            array_unshift($server['reasons'], $short);
         } else {
             $server['verdict'] = $verdict;
         }
@@ -250,6 +313,7 @@ class ServerSizingAnalyser
     /**
      * @param  array{id: string, name: string, cpus: int, memory_gb: int, disk_gb: int, dedicated: bool}  $package
      * @param  array<string, float|int|null>  $week
+     * @param  array<string, float|int|null>  $peak
      * @param  array{cpus: int, memory_gb: float}  $needs
      * @param  array<string, array{id: string, name: string, cpus: int, memory_gb: int, disk_gb: int, dedicated: bool}>  $packagesById
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
@@ -258,6 +322,7 @@ class ServerSizingAnalyser
     private function sizeVerdict(
         array $package,
         array $week,
+        array $peak,
         array $needs,
         array $packagesById,
         int $diskTotal,
@@ -285,41 +350,47 @@ class ServerSizingAnalyser
             $reasons[] = sprintf('Memory is %d%% used at the busy end of the week.', round($memory * 100));
         }
 
-        $best = null;
-        foreach ($packagesById as $option) {
-            if ($option['dedicated'] || ! isset($prices['packages'][$option['id']]) || $option['id'] === $package['id']) {
-                continue;
-            }
-            if ($option['cpus'] < $needs['cpus'] || $option['memory_gb'] < $needs['memory_gb']) {
-                continue;
-            }
-            // Bigger means no smaller in either measure; smaller means no bigger in either.
-            $fits = $tooSmall
-                ? ($option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb'])
-                : ($option['cpus'] <= $package['cpus'] && $option['memory_gb'] <= $package['memory_gb']);
-            if (! $fits) {
-                continue;
-            }
+        $ladder = $this->ladder($package, $packagesById, $prices);
+        $position = array_search($package['id'], array_column($ladder, 'id'), true);
+        $fits = fn (array $option): bool => $option['cpus'] >= $needs['cpus'] && $option['memory_gb'] >= $needs['memory_gb'];
 
+        if ($tooSmall) {
+            // The first step up the ladder that fits, and is no smaller in either measure.
+            foreach ($position === false ? [] : array_slice($ladder, $position + 1) as $option) {
+                if ($fits($option) && $option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']) {
+                    $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices, true);
+
+                    return ['step_up', $this->candidate(['package' => $option, 'list' => $cost], $currentList, $discount), $reasons];
+                }
+            }
+            $reasons[] = 'No bigger package of this kind is big enough by these rules.';
+
+            return ['step_up', null, $reasons];
+        }
+
+        $swapShare = $peak['swap_used_mb_max'] / max(1.0, $week['mem_total_gb'] * 1024);
+        if ($swapShare > self::SWAP_IN_USE) {
+            $reasons[] = sprintf('It has used up to %.1f GB of swap, so it is not offered less memory.', $peak['swap_used_mb_max'] / 1024);
+
+            return ['keep', null, $reasons];
+        }
+
+        // The cheapest step down the ladder that fits, once the disk it no longer includes is paid for.
+        $best = null;
+        foreach ($position === false ? [] : array_slice($ladder, 0, $position) as $option) {
+            if (! $fits($option) || $option['cpus'] > $package['cpus'] || $option['memory_gb'] > $package['memory_gb']) {
+                continue;
+            }
             $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices, true);
             if ($best === null || $cost < $best['list']) {
                 $best = ['package' => $option, 'list' => $cost];
             }
         }
 
-        if ($tooSmall) {
-            if ($best === null) {
-                $reasons[] = 'No package on offer is big enough by these rules.';
-
-                return ['step_up', null, $reasons];
-            }
-
-            return ['step_up', $this->candidate($best, $currentList, $discount), $reasons];
-        }
-
         if ($best !== null && $best['list'] < $currentList - 1.0) {
             $reasons[] = sprintf(
-                'It needs about %d processor(s) and %s GB of memory with headroom; %s has %d and %d GB.',
+                'In its busiest of %d week(s) it needed about %d processor(s) and %s GB of memory with headroom; %s has %d and %d GB.',
+                $peak['weeks'],
                 $needs['cpus'],
                 rtrim(rtrim(number_format($needs['memory_gb'], 1), '0'), '.'),
                 $best['package']['name'],
@@ -330,9 +401,9 @@ class ServerSizingAnalyser
             return ['step_down', $this->candidate($best, $currentList, $discount), $reasons];
         }
 
-        $nextDown = $this->nextDown($package, $packagesById, $prices);
+        $nextDown = $position === false || $position === 0 ? null : $ladder[$position - 1];
         if ($nextDown === null) {
-            $reasons[] = 'It is already on the smallest package.';
+            $reasons[] = $position === 0 ? 'It is already on the smallest package.' : 'Its package has no price, so no other size can be compared.';
         } else {
             $short = array_keys(array_filter([
                 'processors' => $nextDown['cpus'] < $needs['cpus'],
@@ -362,22 +433,6 @@ class ServerSizingAnalyser
             'cost_paid' => round($best['list'] * (1 - $discount), 2),
             'saving_paid' => round(($currentList - $best['list']) * (1 - $discount), 2),
         ];
-    }
-
-    /**
-     * The next cheaper package in the same family, or null when there is none.
-     *
-     * @param  array<string, mixed>  $package
-     * @param  array<string, array<string, mixed>>  $packagesById
-     * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
-     * @return array<string, mixed>|null
-     */
-    private function nextDown(array $package, array $packagesById, array $prices): ?array
-    {
-        $ladder = $this->ladder($package, $packagesById, $prices);
-        $position = array_search($package['id'], array_column($ladder, 'id'), true);
-
-        return $position === false || $position === 0 ? null : $ladder[$position - 1];
     }
 
     /**
@@ -475,12 +530,12 @@ class ServerSizingAnalyser
         $swap = 0;
 
         foreach ($samples as $sample) {
-            $load[] = (float) $sample['load5'];
-            $total = max(1, (int) $sample['mem_total_mb']);
-            $used = max(0, $total - (int) $sample['mem_available_mb']);
+            $load[] = $sample['load5'];
+            $total = max(1, $sample['mem_total_mb']);
+            $used = max(0, $total - $sample['mem_available_mb']);
             $memoryShare[] = $used / $total;
             $memoryGb[] = $used / 1024;
-            $swap = max($swap, (int) $sample['swap_used_mb']);
+            $swap = max($swap, $sample['swap_used_mb']);
         }
 
         $busy = $this->busyShares($samples);
@@ -488,11 +543,11 @@ class ServerSizingAnalyser
 
         return [
             'samples' => count($samples),
-            'cpus' => (int) $last['cpus'],
-            'mem_total_gb' => round((int) $last['mem_total_mb'] / 1024, 1),
+            'cpus' => $last['cpus'],
+            'mem_total_gb' => round($last['mem_total_mb'] / 1024, 1),
             'load_avg' => round(array_sum($load) / count($load), 2),
             'load_p95' => round($this->percentile($load, 0.95), 2),
-            'load_per_cpu_p95' => round($this->percentile($load, 0.95) / max(1, (int) $last['cpus']), 2),
+            'load_per_cpu_p95' => round($this->percentile($load, 0.95) / max(1, $last['cpus']), 2),
             'cpu_busy_avg' => $busy === [] ? null : round(array_sum($busy) / count($busy), 3),
             'cpu_busy_p95' => $busy === [] ? null : round($this->percentile($busy, 0.95), 3),
             'mem_used_pct_p95' => round($this->percentile($memoryShare, 0.95), 3),
@@ -513,9 +568,9 @@ class ServerSizingAnalyser
         $shares = [];
 
         for ($i = 1; $i < count($samples); $i++) {
-            $total = (int) $samples[$i]['cpu_total'] - (int) $samples[$i - 1]['cpu_total'];
-            $idle = (int) $samples[$i]['cpu_idle'] - (int) $samples[$i - 1]['cpu_idle'];
-            $seconds = $this->time($samples[$i]) - $this->time($samples[$i - 1]);
+            $total = $samples[$i]['cpu_total'] - $samples[$i - 1]['cpu_total'];
+            $idle = $samples[$i]['cpu_idle'] - $samples[$i - 1]['cpu_idle'];
+            $seconds = $samples[$i]['t'] - $samples[$i - 1]['t'];
 
             if ($total > 0 && $idle >= 0 && $idle <= $total && $seconds <= self::MAX_INTERVAL_SECONDS) {
                 $shares[] = 1 - $idle / $total;
@@ -526,29 +581,50 @@ class ServerSizingAnalyser
     }
 
     /**
+     * A summary of each of the last eight weeks that has readings, oldest first, keyed by the
+     * time the week ends.
+     *
+     * @param  list<array<string, mixed>>  $samples
+     * @return array<int, array<string, float|int|null>>
+     */
+    private function weeks(array $samples, int $end): array
+    {
+        $buckets = [];
+        foreach ($samples as $sample) {
+            $age = $end - $sample['t'];
+            if ($age >= 0 && $age < self::TREND_WEEKS * 7 * 86400) {
+                $buckets[intdiv($age, 7 * 86400)][] = $sample;
+            }
+        }
+
+        $weeks = [];
+        for ($week = self::TREND_WEEKS - 1; $week >= 0; $week--) {
+            if (isset($buckets[$week])) {
+                $weeks[$end - $week * 7 * 86400] = $this->summarise($buckets[$week]) + ['last' => $buckets[$week][count($buckets[$week]) - 1]];
+            }
+        }
+
+        return $weeks;
+    }
+
+    /**
      * One line per week for the last eight, oldest first, so a drift shows.
      *
      * @param  list<array<string, mixed>>  $samples
      * @return list<array<string, mixed>>
      */
-    private function trend(array $samples, CarbonInterface $now): array
+    private function trend(array $samples, int $end): array
     {
         $rows = [];
-        $end = $now->getTimestamp();
 
-        for ($week = self::TREND_WEEKS - 1; $week >= 0; $week--) {
-            $to = $end - $week * 7 * 86400;
-            $from = $to - 7 * 86400;
-            $inWeek = array_values(array_filter(
-                $samples,
-                fn (array $s) => $this->time($s) > $from && $this->time($s) <= $to
-            ));
-            $summary = $this->summarise($inWeek);
-            if ($summary === null) {
-                continue;
+        foreach ($this->weeks($samples, $end) as $to => $summary) {
+            $largest = null;
+            foreach ($summary['last']['disks'] as $disk) {
+                if ($largest === null || $disk['size_gb'] > $largest['size_gb']) {
+                    $largest = $disk;
+                }
             }
 
-            $largest = $this->largestDisk($inWeek[count($inWeek) - 1]);
             $rows[] = [
                 'week_ending' => date('j M', $to),
                 'load_per_cpu_p95' => $summary['load_per_cpu_p95'],
@@ -572,19 +648,19 @@ class ServerSizingAnalyser
     {
         $facts = [];
 
-        foreach ($this->disksOf($latest) as $disk) {
+        foreach ($latest['disks'] ?? [] as $disk) {
             $points = [];
             foreach ($samples as $sample) {
-                foreach ($this->disksOf($sample) as $earlier) {
+                foreach ($sample['disks'] as $earlier) {
                     if ($earlier['mount'] === $disk['mount']) {
-                        $points[] = [$this->time($sample) / 86400, (float) $earlier['used_gb']];
+                        $points[] = [$sample['t'] / 86400, $earlier['used_gb']];
                     }
                 }
             }
 
             $growth = $this->weeklyGrowth($points);
-            $size = max(0.1, (float) $disk['size_gb']);
-            $used = (float) $disk['used_gb'];
+            $size = max(0.1, $disk['size_gb']);
+            $used = $disk['used_gb'];
             $share = $used / $size;
             $weeks = ($growth !== null && $growth > 0.05)
                 ? max(0.0, round((self::DISK_TARGET * $size - $used) / $growth, 1))
@@ -629,33 +705,61 @@ class ServerSizingAnalyser
     }
 
     /**
-     * @param  array<string, mixed>|null  $sample
-     * @return list<array{mount: string, size_gb: float, used_gb: float}>
+     * How many different days have at least one reading.
+     *
+     * @param  list<array<string, mixed>>  $samples
      */
-    private function disksOf(?array $sample): array
+    private function daysWithReadings(array $samples): int
     {
+        $days = [];
+        foreach ($samples as $sample) {
+            $days[intdiv($sample['t'], 86400)] = true;
+        }
+
+        return count($days);
+    }
+
+    /**
+     * One reading with its time as a number and its disks as a list, so neither is worked out again
+     * on every pass.
+     *
+     * @param  array<string, mixed>  $sample
+     * @return array<string, mixed>
+     */
+    private function normalise(array $sample): array
+    {
+        $at = $sample['sampled_at'];
         $disks = $sample['disks'] ?? [];
         if (is_string($disks)) {
             $disks = json_decode($disks, true);
         }
 
-        return is_array($disks) ? array_values($disks) : [];
-    }
-
-    /**
-     * @param  array<string, mixed>  $sample
-     * @return array{mount: string, size_gb: float, used_gb: float}|null
-     */
-    private function largestDisk(array $sample): ?array
-    {
-        $largest = null;
-        foreach ($this->disksOf($sample) as $disk) {
-            if ($largest === null || $disk['size_gb'] > $largest['size_gb']) {
-                $largest = $disk;
+        $list = [];
+        foreach (is_array($disks) ? $disks : [] as $disk) {
+            if (isset($disk['mount'], $disk['size_gb'], $disk['used_gb'])) {
+                $list[] = ['mount' => (string) $disk['mount'], 'size_gb' => (float) $disk['size_gb'], 'used_gb' => (float) $disk['used_gb']];
             }
         }
 
-        return $largest;
+        return [
+            't' => $at instanceof \DateTimeInterface ? $at->getTimestamp() : (int) strtotime((string) $at),
+            'cpus' => (int) $sample['cpus'],
+            'load5' => (float) $sample['load5'],
+            'cpu_total' => (int) $sample['cpu_total'],
+            'cpu_idle' => (int) $sample['cpu_idle'],
+            'mem_total_mb' => (int) $sample['mem_total_mb'],
+            'mem_available_mb' => (int) $sample['mem_available_mb'],
+            'swap_used_mb' => (int) $sample['swap_used_mb'],
+            'disks' => $list,
+        ];
+    }
+
+    /**
+     * The short lower-case form of a host name: "DB-2.example.org" and "db-2" are the same host.
+     */
+    private function hostKey(string $name): string
+    {
+        return strtolower((string) strtok(trim($name), '.'));
     }
 
     /**
@@ -667,15 +771,5 @@ class ServerSizingAnalyser
         $index = (int) ceil($p * count($values)) - 1;
 
         return (float) $values[max(0, min(count($values) - 1, $index))];
-    }
-
-    /**
-     * @param  array<string, mixed>  $sample
-     */
-    private function time(array $sample): int
-    {
-        $at = $sample['sampled_at'];
-
-        return $at instanceof \DateTimeInterface ? $at->getTimestamp() : (int) strtotime((string) $at);
     }
 }

@@ -10,14 +10,17 @@
         <mj-text font-size="15px" line-height="1.5" padding="5px 25px">
           We pay about <strong>{{ $monthlyPaid }} a month</strong> for servers and disk.
           @if ($possibleSaving)
-            The changes below would save <strong>{{ $possibleSaving }} a month</strong>.
+            The moves down suggested below would save <strong>{{ $possibleSaving }} a month</strong>.
           @else
             No change that saves money is suggested this week.
+          @endif
+          @if ($possibleCost)
+            The moves up suggested below would cost <strong>{{ $possibleCost }} a month</strong> more.
           @endif
         </mj-text>
         @if ($historyDays < $minHistoryDays)
         <mj-text font-size="14px" line-height="1.5" padding="5px 25px" color="#8a5a00">
-          There are {{ $historyDays }} day{{ $historyDays === 1 ? '' : 's' }} of readings so far. A size change is only suggested after {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
+          There are {{ $historyDays }} day{{ $historyDays === 1 ? '' : 's' }} of readings so far. A move down is only suggested after readings on {{ $minHistoryDays }} days, so this report shows where things stand and what the readings point to.
         </mj-text>
         @endif
       </mj-column>
@@ -93,6 +96,17 @@
     </mj-section>
     @endforeach
 
+    @if (!empty($unmatchedHosts))
+    <mj-section background-color="#ffffff" padding="10px 0" border-top="6px solid #f4f4f4">
+      <mj-column>
+        <mj-text font-size="14px" line-height="1.5" padding="8px 25px">
+          <strong>Sampled, but not a server Katapult lists</strong><br />
+          {{ implode(', ', $unmatchedHosts) }}. Its readings are stored but it is not in this report. Check the name it gives itself against its name on Katapult.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    @endif
+
     @if (!empty($unattached))
     <mj-section background-color="#ffffff" padding="10px 0" border-top="6px solid #f4f4f4">
       <mj-column>
@@ -111,7 +125,7 @@
     <mj-section background-color="#f5f5f5" padding="15px 0">
       <mj-column>
         <mj-text font-size="11px" color="#666666" line-height="1.5" padding="5px 25px">
-          How to read this. "Busy end" is the level a server stayed under for 95% of the week. A smaller package is suggested only if that level would leave headroom on it: load at most 70% of the processors, processor time at most 60% in use, memory at most 80% used. A bigger one is suggested when load is above the number of processors, processor time is above 85% in use, or memory is above 92% used. A disk is flagged at 85% full, or when its growth would take it to 90% within eight weeks.
+          How to read this. "Busy end" is the level a server stayed under for 95% of the week. A smaller package is suggested only if the busiest week in up to eight would leave headroom on it: load at most 70% of the processors, processor time at most 60% in use, memory at most 80% used. Only packages of the same kind are compared. A bigger one is suggested when load is above the number of processors, processor time is above 85% in use, or memory is above 92% used. A disk is flagged at 85% full, or when its growth would take it to 90% within eight weeks.
         </mj-text>
         <mj-text font-size="11px" color="#666666" line-height="1.5" padding="5px 25px">
           Costs are Katapult's monthly prices for our account ({{ $monthlyList }} in all){{ $discountPct > 0 ? ", less our {$discountPct}% discount" : "" }}. They leave out VAT, data transfer and backups, so check a figure against an invoice before relying on it. Taking processors or memory away needs the server shut down; adding them does not. Disks can grow but never shrink.

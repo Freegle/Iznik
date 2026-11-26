@@ -46,8 +46,9 @@ class ServerProbeTest extends TestCase
     {
         $gb = 1024 ** 3;
         $reading = (new ServerProbe)->parse($this->probeOutput(['DISK' => implode("\n", [
-            'DISK:/dev/vda1 '.(100 * $gb).' '.(40 * $gb).' /',
+            // The longer mount point is listed first; the disk is still known as "/".
             'DISK:/dev/vda1 '.(100 * $gb).' '.(40 * $gb).' /var/lib/docker/bind',
+            'DISK:/dev/vda1 '.(100 * $gb).' '.(40 * $gb).' /',
             'DISK:/dev/vda15 '.(100 * 1024 ** 2).' '.(6 * 1024 ** 2).' /boot/efi',
             'DISK:/dev/vdb '.(75 * $gb).' '.(30 * $gb).' /mnt/cache data',
         ])]));

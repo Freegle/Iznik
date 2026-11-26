@@ -91,6 +91,46 @@ class KatapultClientTest extends TestCase
         (new KatapultClient)->packages();
     }
 
+    public function test_a_refusal_is_not_tried_again(): void
+    {
+        config(['freegle.servers.katapult_token' => 'kp-token', 'freegle.servers.katapult_api' => 'https://katapult.test/core/v1']);
+        Http::fake(['*' => Http::response([], 404)]);
+
+        try {
+            (new KatapultClient)->packages();
+            $this->fail('expected an exception');
+        } catch (\RuntimeException) {
+            Http::assertSentCount(1);
+        }
+    }
+
+    public function test_a_failing_service_is_tried_again(): void
+    {
+        config(['freegle.servers.katapult_token' => 'kp-token', 'freegle.servers.katapult_api' => 'https://katapult.test/core/v1']);
+        Http::fake(['*' => Http::sequence()
+            ->push([], 503)
+            ->push(['pagination' => ['total_pages' => 1], 'virtual_machine_packages' => []])]);
+
+        $this->assertSame([], (new KatapultClient)->packages());
+        Http::assertSentCount(2);
+    }
+
+    public function test_a_price_list_without_package_or_disk_prices_is_an_error(): void
+    {
+        config(['freegle.servers.katapult_token' => 'kp-token', 'freegle.servers.katapult_api' => 'https://katapult.test/core/v1']);
+        Http::fake([
+            'katapult.test/core/v1/organizations' => Http::response(['organizations' => [['id' => 'org_1']]]),
+            'katapult.test/core/v1/organizations/org_1/prices' => Http::response(['prices' => [
+                ['resource' => 'virtual_machine_package.p1', 'price' => 8],
+                ['resource' => 'ip_address.ipv4', 'price' => 2],
+            ]]),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('the price list has no package or disk prices');
+        (new KatapultClient)->prices();
+    }
+
     public function test_a_token_that_sees_no_organisation_is_an_error(): void
     {
         config(['freegle.servers.katapult_token' => 'kp-token', 'freegle.servers.katapult_api' => 'https://katapult.test/core/v1']);

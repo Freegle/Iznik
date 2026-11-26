@@ -121,6 +121,11 @@ class KatapultClient
             }
         }
 
+        // Without these every cost in the report would be quietly wrong, so say so instead.
+        if ($prices['packages'] === [] || $prices['disk_gb'] <= 0) {
+            throw new \RuntimeException('Katapult: the price list has no package or disk prices');
+        }
+
         return $prices;
     }
 
@@ -167,7 +172,8 @@ class KatapultClient
         $response = Http::withToken($this->token())
             ->acceptJson()
             ->timeout(30)
-            ->retry(2, 500, throw: false)
+            // Try again when the service is unreachable or failing, not when it has refused us.
+            ->retry(2, 500, fn (\Throwable $e) => ! $e instanceof \Illuminate\Http\Client\RequestException || $e->response->serverError(), throw: false)
             ->get(rtrim((string) config('freegle.servers.katapult_api'), '/').'/'.$path, $query);
 
         if (! $response->successful()) {

@@ -83,6 +83,8 @@ class ServerSizingReportMail extends MjmlMailable
             'monthlyPaid' => self::money($fleet['monthly_paid']),
             'monthlyList' => self::money($fleet['monthly_list']),
             'possibleSaving' => $fleet['possible_saving_paid'] > 0 ? self::money($fleet['possible_saving_paid']) : null,
+            'possibleCost' => ($fleet['possible_cost_paid'] ?? 0) > 0 ? self::money($fleet['possible_cost_paid']) : null,
+            'unmatchedHosts' => $this->analysis['unmatched_hosts'] ?? [],
             'discountPct' => (int) round($discount * 100),
             'historyDays' => (int) $this->analysis['history_days'],
             'minHistoryDays' => (int) $this->analysis['min_history_days'],
@@ -223,19 +225,22 @@ class ServerSizingReportMail extends MjmlMailable
     private function verdict(array $server): array
     {
         $candidate = $server['candidate'];
-        $move = fn (string $direction): string => $candidate === null
-            ? 'Needs a bigger package, but none on offer fits'
-            : ($direction === 'step_down'
-                ? sprintf('Move down to %s: saves %s a month', $candidate['name'], self::money($candidate['saving_paid']))
-                : sprintf('Move up to %s: costs %s more a month', $candidate['name'], self::money(-$candidate['saving_paid'])));
+        $saving = $candidate === null ? 0.0 : (float) $candidate['saving_paid'];
+        $extra = $saving < 0 ? 'costs '.self::money(-$saving).' more a month' : 'costs no more';
 
         return match ($server['verdict']) {
-            'step_down', 'step_up' => [$move($server['verdict']), 'act'],
-            'wait' => [match ($server['indication']) {
-                'step_down' => 'Too early to say. So far: could '.lcfirst($move('step_down')),
-                'step_up' => 'Too early to say. So far: may need to '.lcfirst($move('step_up')),
-                default => 'Too early to say. So far: the size looks right',
-            }, 'info'],
+            'step_down' => [sprintf('Move down to %s: saves %s a month', $candidate['name'], self::money($saving)), 'act'],
+            'step_up' => [$candidate === null
+                ? 'Too small, and no bigger package of this kind fits'
+                : sprintf('Move up to %s: %s', $candidate['name'], $extra), 'act'],
+            'wait' => match ($server['indication']) {
+                'step_down' => [sprintf('Too early to say. So far: could move down to %s, saving %s a month', $candidate['name'], self::money($saving)), 'info'],
+                // An overloaded server is worth a look now, even before a move is suggested.
+                'step_up' => [$candidate === null
+                    ? 'Too early to say. So far: looks too small'
+                    : sprintf('Too early to say. So far: looks too small; %s %s', $candidate['name'], $extra), 'act'],
+                default => ['Too early to say. So far: the size looks right', 'info'],
+            },
             'stopped' => ['Stopped', 'info'],
             'unmeasured' => ['Not measured', 'info'],
             default => ['Keep as it is', 'ok'],

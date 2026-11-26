@@ -100,6 +100,37 @@ class ServerSizingCommentaryTest extends TestCase
         $this->assertNull((new ServerSizingCommentary)->write([]));
     }
 
+    public function test_headings_and_items_in_other_common_forms_are_still_read(): void
+    {
+        $review = (new ServerSizingCommentary)->parse(implode("\n", [
+            'Here is the review.',
+            '**Changes**',
+            '1. Move db-9 down to C-24,',
+            '   saving £22.50 a month.',
+            '',
+            '## Watch:',
+            '2) The docker disk.',
+            'Caveats -',
+            '• Database memory is cache.',
+        ]));
+
+        $this->assertSame(['Move db-9 down to C-24, saving £22.50 a month.'], $review['changes']);
+        $this->assertSame(['The docker disk.'], $review['watch']);
+        $this->assertSame(['Database memory is cache.'], $review['caveats']);
+    }
+
+    public function test_it_runs_in_the_empty_config_directory(): void
+    {
+        $dir = sys_get_temp_dir().'/servers-claude-cwd-'.getmypid();
+        config(['freegle.servers.claude_config_dir' => $dir]);
+        $this->fakeCli(['type' => 'result', 'result' => self::REPLY]);
+
+        (new ServerSizingCommentary)->write([]);
+
+        Process::assertRan(fn ($process) => $process->path === $dir);
+        @rmdir($dir);
+    }
+
     public function test_a_configured_config_directory_is_used(): void
     {
         $dir = sys_get_temp_dir().'/servers-claude-test-'.getmypid();

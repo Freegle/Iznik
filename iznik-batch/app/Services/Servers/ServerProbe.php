@@ -7,7 +7,8 @@ namespace App\Services\Servers;
  *
  * Every line carries a marker, as HostHealthCheck's probe does, so shell noise before or after
  * cannot be mistaken for a reading. Only real disks are listed: memory, container and network
- * filesystems are left out because they are not Katapult disk we pay for.
+ * filesystems are left out because they are not Katapult disk we pay for. df is given fifteen
+ * seconds, so a hung mount costs the disk lines and not the whole reading.
  */
 class ServerProbe
 {
@@ -17,7 +18,7 @@ echo "CPUS:$(nproc)"
 echo "LOAD:$(cat /proc/loadavg)"
 echo "STAT:$(head -1 /proc/stat)"
 grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo | sed 's/^/MEM:/'
-df -B1 -x tmpfs -x devtmpfs -x overlay -x squashfs -x nfs -x nfs4 -x efivarfs --output=source,size,used,target 2>/dev/null | tail -n +2 | sed 's/^/DISK:/'
+timeout 15 df -B1 -x tmpfs -x devtmpfs -x overlay -x squashfs -x nfs -x nfs4 -x efivarfs --output=source,size,used,target 2>/dev/null | tail -n +2 | sed 's/^/DISK:/'
 SH;
 
     /** Filesystems smaller than this are boot and firmware partitions, not somewhere data grows. */
@@ -37,7 +38,6 @@ SH;
         $stat = null;
         $mem = [];
         $disks = [];
-        $seenSources = [];
 
         foreach (preg_split('/\R/', $output) ?: [] as $line) {
             if (! preg_match('/^(HOST|CPUS|LOAD|STAT|MEM|DISK):(.*)$/', $line, $m)) {
@@ -69,14 +69,12 @@ SH;
                 case 'DISK':
                     // source, size, used, target. A mount point may hold spaces, so it is the rest.
                     if (preg_match('/^(\S+)\s+(\d+)\s+(\d+)\s+(.+)$/', $value, $dm)) {
-                        // One device mounted in several places is one disk.
-                        if (isset($seenSources[$dm[1]])) {
-                            break;
-                        }
-                        $seenSources[$dm[1]] = true;
+                        // One device mounted in several places is one disk. It is known by its
+                        // shortest mount point, so the name does not change with the order df lists them.
                         $sizeGb = (int) $dm[2] / 1024 ** 3;
-                        if ($sizeGb >= self::MIN_DISK_GB) {
-                            $disks[] = [
+                        if ($sizeGb >= self::MIN_DISK_GB
+                            && (! isset($disks[$dm[1]]) || strlen($dm[4]) < strlen($disks[$dm[1]]['mount']))) {
+                            $disks[$dm[1]] = [
                                 'mount' => $dm[4],
                                 'size_gb' => round($sizeGb, 1),
                                 'used_gb' => round((int) $dm[3] / 1024 ** 3, 1),
@@ -107,7 +105,7 @@ SH;
             'mem_available_mb' => intdiv($mem['MemAvailable'], 1024),
             'swap_total_mb' => intdiv($swapTotal, 1024),
             'swap_used_mb' => intdiv(max(0, $swapTotal - $swapFree), 1024),
-            'disks' => $disks,
+            'disks' => array_values($disks),
         ];
     }
 
