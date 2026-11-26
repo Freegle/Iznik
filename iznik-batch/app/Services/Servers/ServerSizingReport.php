@@ -3,6 +3,7 @@
 namespace App\Services\Servers;
 
 use App\Mail\Servers\ServerSizingReportMail;
+use App\Models\ServerJobAlert;
 use App\Models\ServerSample;
 use Illuminate\Support\Carbon;
 
@@ -34,12 +35,54 @@ class ServerSizingReport
             $now,
             (float) config('freegle.servers.price_discount', 0),
             (int) config('freegle.servers.min_history_days', 14),
+            self::parseHostNotes((string) config('freegle.servers.host_notes', '')),
+            $this->lateJobs($now),
+            (float) config('freegle.servers.other_monthly_cost', 0),
+            (float) config('freegle.servers.vat_rate', 0.2),
         );
 
         return [
             'analysis' => $analysis,
             'review' => $withReview ? $this->commentary->write(ServerSizingReportMail::factsFor($analysis)) : null,
         ];
+    }
+
+    /**
+     * "db-9=bulk|Background work;spare=keep|Kept so work can be resumed" as name => role and note.
+     * An entry with a role nobody knows is left out, so a typing slip does not change a verdict.
+     *
+     * @return array<string, array{role: string, note: string}>
+     */
+    public static function parseHostNotes(string $setting): array
+    {
+        $notes = [];
+
+        foreach (explode(';', $setting) as $entry) {
+            if (! preg_match('/^\s*([^=\s]+)\s*=\s*(bulk|keep)\s*(?:\|\s*(.*?))?\s*$/s', $entry, $m)) {
+                continue;
+            }
+            $notes[strtolower($m[1])] = ['role' => $m[2], 'note' => trim($m[3] ?? '')];
+        }
+
+        return $notes;
+    }
+
+    /**
+     * How long each late-job alert showed in the last week, longest first. Each stored row is one
+     * fifteen-minute look, so four rows are an hour.
+     *
+     * @return list<array{slug: string, hours: float}>
+     */
+    private function lateJobs(Carbon $now): array
+    {
+        $late = [];
+
+        foreach (ServerJobAlert::where('sampled_at', '>=', $now->copy()->subDays(7))->pluck('slug')->countBy() as $slug => $looks) {
+            $late[] = ['slug' => (string) $slug, 'hours' => round($looks / 4, 1)];
+        }
+        usort($late, fn (array $a, array $b) => $b['hours'] <=> $a['hours']);
+
+        return $late;
     }
 
     /**

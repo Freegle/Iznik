@@ -41,7 +41,7 @@ class ServerSizingReportMail extends MjmlMailable
         $changes = 0;
         $flagged = 0;
         foreach ($this->analysis['servers'] as $server) {
-            if (in_array($server['verdict'], ['step_down', 'step_up'], true)) {
+            if (in_array($server['verdict'], ['step_down', 'step_up', 'bulk_late'], true)) {
                 $changes++;
             }
             foreach ($server['disks'] as $disk) {
@@ -81,6 +81,10 @@ class ServerSizingReportMail extends MjmlMailable
             'cards' => $this->cards(),
             'review' => $this->review,
             'monthlyPaid' => self::money($fleet['monthly_paid']),
+            'invoiceExpected' => self::money($fleet['invoice_expected'] ?? $fleet['monthly_paid']),
+            'invoiceBeforeVat' => self::money($fleet['invoice_before_vat'] ?? $fleet['monthly_paid']),
+            'otherPaid' => ($fleet['other_list'] ?? 0) > 0 ? self::money($fleet['other_list'] * (1 - $discount)) : null,
+            'vatPct' => (int) round(($fleet['vat_rate'] ?? 0) * 100),
             'monthlyList' => self::money($fleet['monthly_list']),
             'possibleSaving' => $fleet['possible_saving_paid'] > 0 ? self::money($fleet['possible_saving_paid']) : null,
             'possibleCost' => ($fleet['possible_cost_paid'] ?? 0) > 0 ? self::money($fleet['possible_cost_paid']) : null,
@@ -114,7 +118,9 @@ class ServerSizingReportMail extends MjmlMailable
         $fleet = $analysis['fleet'];
 
         return [
-            'we_pay_a_month' => self::money($fleet['monthly_paid']),
+            'expected_monthly_invoice_with_vat' => self::money($fleet['invoice_expected'] ?? $fleet['monthly_paid']),
+            'expected_monthly_invoice_before_vat' => self::money($fleet['invoice_before_vat'] ?? $fleet['monthly_paid']),
+            'servers_and_disk_a_month_before_vat' => self::money($fleet['monthly_paid']),
             'moves_down_would_save_a_month' => self::money($fleet['possible_saving_paid']),
             'moves_up_would_cost_a_month_more' => self::money($fleet['possible_cost_paid'] ?? 0),
             'days_of_readings' => (int) $analysis['history_days'],
@@ -292,6 +298,11 @@ class ServerSizingReportMail extends MjmlMailable
                     : sprintf('Too early to say. So far: looks too small; %s %s', $candidate['name'], $extra), 'act'],
                 default => ['Too early to say. So far: the size looks right', 'info'],
             },
+            'kept' => ['Kept on purpose', 'info'],
+            'bulk' => ['Keep as it is: meant to run flat out, and the jobs are keeping up', 'ok'],
+            'bulk_late' => [$candidate === null
+                ? 'Not keeping up, and there is no bigger package of this kind'
+                : sprintf('Not keeping up: %s %s', $candidate['name'], $extra), 'act'],
             'stopped' => ['Stopped', 'info'],
             'unmeasured' => ['Not measured', 'info'],
             default => ['Keep as it is', 'ok'],

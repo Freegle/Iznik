@@ -24,6 +24,9 @@ use Carbon\CarbonInterface;
  *  - Only packages of the same family are compared, so "smaller" and "bigger" mean what they say.
  *  - Readings from before a resize are left out: they describe a different machine.
  *  - A server that is using swap is not offered less memory.
+ *  - A server marked "bulk" does background work and is meant to run flat out. It is not judged
+ *    on load or processor time at all, only on whether late-job alerts showed in the week, and on
+ *    memory. A server marked "keep" is kept on purpose and is not judged.
  *  - A disk is flagged when it is 85% full or its growth would take it to 90% within eight weeks.
  *    Katapult disks can grow but never shrink.
  */
@@ -70,6 +73,9 @@ class ServerSizingAnalyser
      * @param  list<array{name: string, size_gb: int, state: string, machine_id: ?string}>  $disks
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
      * @param  array<string, list<array<string, mixed>>>  $samplesByHost  readings per host name, oldest first
+     * @param  array<string, array{role: string, note: string}>  $hostNotes  by lower-case short name
+     * @param  list<array{slug: string, hours: float}>  $lateJobs  late-job alerts in the last week
+     * @param  float  $otherList  monthly charges the API does not show, before discount
      * @return array<string, mixed>
      */
     public function analyse(
@@ -81,6 +87,10 @@ class ServerSizingAnalyser
         CarbonInterface $now,
         float $discount,
         int $minHistoryDays,
+        array $hostNotes = [],
+        array $lateJobs = [],
+        float $otherList = 0.0,
+        float $vatRate = 0.0,
     ): array {
         $discount = min(1.0, max(0.0, $discount));
         $packagesById = [];
@@ -128,12 +138,13 @@ class ServerSizingAnalyser
                 }
             }
 
-            $server = $this->analyseMachine($machine, $packagesById, $disks, $prices, $samples, $now, $discount, $minHistoryDays);
+            $note = $hostNotes[$this->hostKey($machine['hostname'])] ?? $hostNotes[$this->hostKey($machine['name'])] ?? null;
+            $server = $this->analyseMachine($machine, $packagesById, $disks, $prices, $samples, $now, $discount, $minHistoryDays, $note, $lateJobs);
             $fleetList += $server['cost']['list'];
             if ($server['candidate'] !== null && $server['verdict'] === 'step_down') {
                 $fleetSaving += $server['candidate']['saving_paid'];
             }
-            if ($server['candidate'] !== null && $server['verdict'] === 'step_up') {
+            if ($server['candidate'] !== null && in_array($server['verdict'], ['step_up', 'bulk_late'], true)) {
                 $fleetCost += max(0.0, -$server['candidate']['saving_paid']);
             }
             $servers[] = $server;
@@ -167,6 +178,12 @@ class ServerSizingAnalyser
                 'monthly_paid' => round($fleetList * (1 - $discount), 2),
                 'possible_saving_paid' => round($fleetSaving, 2),
                 'possible_cost_paid' => round($fleetCost, 2),
+                // What the next invoice should come to: everything above, what the API does not show,
+                // the discount, then VAT.
+                'other_list' => round(max(0.0, $otherList), 2),
+                'invoice_before_vat' => round(($fleetList + max(0.0, $otherList)) * (1 - $discount), 2),
+                'invoice_expected' => round(($fleetList + max(0.0, $otherList)) * (1 - $discount) * (1 + max(0.0, $vatRate)), 2),
+                'vat_rate' => max(0.0, $vatRate),
             ],
             'servers' => $servers,
             'unattached_disks' => $unattached,
@@ -181,6 +198,8 @@ class ServerSizingAnalyser
      * @param  list<array{name: string, size_gb: int, state: string, machine_id: ?string}>  $disks
      * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
      * @param  list<array<string, mixed>>  $samples  normalised, oldest first
+     * @param  array{role: string, note: string}|null  $note
+     * @param  list<array{slug: string, hours: float}>  $lateJobs
      * @return array<string, mixed>
      */
     private function analyseMachine(
@@ -192,6 +211,8 @@ class ServerSizingAnalyser
         CarbonInterface $now,
         float $discount,
         int $minHistoryDays,
+        ?array $note = null,
+        array $lateJobs = [],
     ): array {
         $package = $machine['package_id'] !== null ? ($packagesById[$machine['package_id']] ?? null) : null;
 
@@ -226,6 +247,7 @@ class ServerSizingAnalyser
             'name' => $machine['name'],
             'hostname' => $machine['hostname'],
             'state' => $machine['state'],
+            'role' => $note['role'] ?? 'normal',
             'package' => $package === null ? null : [
                 'name' => $package['name'],
                 'cpus' => $package['cpus'],
@@ -254,6 +276,21 @@ class ServerSizingAnalyser
 
         if ($package !== null) {
             $server['steps'] = $this->neighbours($package, $packagesById, $diskTotal, $machine['ipv4'], $prices, $discount);
+        }
+
+        $explanation = trim($note['note'] ?? '');
+
+        if (($note['role'] ?? null) === 'keep') {
+            // Somebody has decided to keep this one as it is. Say why, and judge nothing.
+            $server['verdict'] = 'kept';
+            if ($explanation !== '') {
+                $server['reasons'][] = $explanation;
+            }
+            if (! $running) {
+                $server['reasons'][] = 'Stopped, but still charged for its package and its disk.';
+            }
+
+            return $server;
         }
 
         if (! $running) {
@@ -292,6 +329,10 @@ class ServerSizingAnalyser
             ) - 1e-9)),
             'memory_gb' => round($peak['mem_used_gb_p95'] / self::MEMORY_HEADROOM, 1),
         ];
+
+        if (($note['role'] ?? null) === 'bulk') {
+            return $this->bulkVerdict($server, $explanation, $lateJobs, $package, $week, $packagesById, $diskTotal, $machine['ipv4'], $prices, $discount, $list);
+        }
 
         [$verdict, $candidate, $reasons] = $this->sizeVerdict(
             $package,
@@ -377,19 +418,14 @@ class ServerSizingAnalyser
         $fits = fn (array $option): bool => $option['cpus'] >= $needs['cpus'] && $option['memory_gb'] >= $needs['memory_gb'];
 
         if ($shortOfProcessors || $shortOfMemory) {
-            // One step at a time: the next package up that is bigger in what the server is short of
-            // and no smaller in the other. Next week's report shows whether that was enough.
-            foreach ($position === false ? [] : array_slice($ladder, $position + 1) as $option) {
-                if ($option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']
-                    && (! $shortOfProcessors || $option['cpus'] > $package['cpus'])
-                    && (! $shortOfMemory || $option['memory_gb'] > $package['memory_gb'])) {
-                    $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices);
-                    if (! $fits($option)) {
-                        $reasons[] = 'The next size up may still be short of headroom; this report looks again next week.';
-                    }
-
-                    return ['step_up', $this->candidate(['package' => $option, 'list' => $cost], $currentList, $discount), $reasons];
+            $option = $this->nextUp($package, $ladder, $shortOfProcessors, $shortOfMemory);
+            if ($option !== null) {
+                $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices);
+                if (! $fits($option)) {
+                    $reasons[] = 'The next size up may still be short of headroom; this report looks again next week.';
                 }
+
+                return ['step_up', $this->candidate(['package' => $option, 'list' => $cost], $currentList, $discount), $reasons];
             }
             $reasons[] = $position === false
                 ? 'Its package has no price, so no other size can be compared.'
@@ -446,6 +482,90 @@ class ServerSizingAnalyser
         }
 
         return ['keep', null, $reasons];
+    }
+
+    /**
+     * One step at a time: the next package up the ladder that is bigger in what the server is short
+     * of and no smaller in the other. The following report shows whether that was enough.
+     *
+     * @param  array<string, mixed>  $package
+     * @param  list<array<string, mixed>>  $ladder
+     * @return array<string, mixed>|null
+     */
+    private function nextUp(array $package, array $ladder, bool $moreProcessors, bool $moreMemory): ?array
+    {
+        $position = array_search($package['id'], array_column($ladder, 'id'), true);
+
+        foreach ($position === false ? [] : array_slice($ladder, $position + 1) as $option) {
+            if ($option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']
+                && (! $moreProcessors || $option['cpus'] > $package['cpus'])
+                && (! $moreMemory || $option['memory_gb'] > $package['memory_gb'])) {
+                return $option;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A server that does background work is meant to run flat out, so its load says nothing about
+     * its size. What does: whether late-job alerts showed in the week, and whether it is out of
+     * memory. If either, the next size up is offered; otherwise it is right as it is.
+     *
+     * @param  array<string, mixed>  $server
+     * @param  list<array{slug: string, hours: float}>  $lateJobs
+     * @param  array<string, mixed>  $package
+     * @param  array<string, float|int|null>  $week
+     * @param  array<string, array<string, mixed>>  $packagesById
+     * @param  array{packages: array<string, float>, disk_gb: float, ipv4: float}  $prices
+     * @return array<string, mixed>
+     */
+    private function bulkVerdict(
+        array $server,
+        string $explanation,
+        array $lateJobs,
+        array $package,
+        array $week,
+        array $packagesById,
+        int $diskTotal,
+        int $ipv4,
+        array $prices,
+        float $discount,
+        float $currentList,
+    ): array {
+        $server['reasons'] = $explanation === '' ? [] : [$explanation];
+        $server['needs'] = null;
+        $shortOfMemory = $week['mem_used_pct_p95'] > self::MEMORY_TOO_HIGH;
+
+        if ($lateJobs === []) {
+            $server['reasons'][] = 'No late-job alerts showed in the last week.';
+        } else {
+            $server['reasons'][] = 'Late-job alerts in the last week: '.implode(', ', array_map(
+                fn (array $job) => sprintf('%s (about %s hour%s)', $job['slug'], rtrim(rtrim(number_format($job['hours'], 1), '0'), '.'), $job['hours'] == 1.0 ? '' : 's'),
+                array_slice($lateJobs, 0, 5)
+            )).'.';
+        }
+        if ($shortOfMemory) {
+            $server['reasons'][] = sprintf('Memory is %d%% used at the busy end of the week.', round($week['mem_used_pct_p95'] * 100));
+        }
+
+        if ($lateJobs === [] && ! $shortOfMemory) {
+            $server['verdict'] = 'bulk';
+
+            return $server;
+        }
+
+        $server['verdict'] = 'bulk_late';
+        $option = $this->nextUp($package, $this->ladder($package, $packagesById, $prices), $lateJobs !== [], $shortOfMemory);
+        if ($option !== null) {
+            $server['candidate'] = $this->candidate(
+                ['package' => $option, 'list' => $this->monthlyCost($option, $diskTotal, $ipv4, $prices)],
+                $currentList,
+                $discount
+            );
+        }
+
+        return $server;
     }
 
     /**

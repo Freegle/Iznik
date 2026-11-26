@@ -8,6 +8,7 @@ covers:
   - iznik-batch/resources/views/emails/mjml/servers/**
   - iznik-batch/resources/views/emails/text/servers/**
   - iznik-batch/database/migrations/2026_11_26_000001_create_server_samples.php
+  - iznik-batch/database/migrations/2026_11_26_000002_create_server_job_alerts.php
 ---
 
 # Server right-sizing: the weekly report
@@ -28,6 +29,9 @@ Two scheduled commands in the batch container:
 |---|---|---|
 | `servers:sample` | every 15 minutes | Asks each host in `FREEGLE_MONITORING_HOSTS` and `SERVERS_EXTRA_HOSTS` for its load, processor counters, memory and disks over ssh, and stores one row per host in `server_samples`. |
 | `servers:rightsize-report` | Monday 07:50 | Reads the last eight weeks of rows, asks the Katapult API what we rent and what it offers, works out a verdict per server, asks Claude to review it, and mails the result. |
+
+`servers:sample` also copies the late-job alerts showing at that moment into
+`server_job_alerts`, because `monitor:scheduled-outcomes` keeps only the current ones.
 
 The hosts keep no history of their own load, so `server_samples` is the only record. A host
 that is not sampled is shown as "Not measured". To sample one, put the monitoring key's
@@ -60,6 +64,21 @@ The rules are fixed and are in `ServerSizingAnalyser`. The foot of every report 
 - A **disk** is flagged at 85% full, or when its growth over the last eight weeks would take
   it to 90% within eight weeks.
 
+## Servers the rules need telling about
+
+No reading can tell the rules what a server is for. `SERVERS_HOST_NOTES` does, as
+`name=role|explanation` entries separated by semicolons:
+
+- **`bulk`**: a server that does background work and is meant to run flat out. High load
+  is the point, so it is not judged on load or processor time. It is judged on whether jobs
+  keep up: if late-job alerts showed in the last week, or its memory is above 92% used, the
+  report says "Not keeping up" and names the next size up. Otherwise it says the size is
+  right. The alerts are the ones `monitor:scheduled-outcomes` raises, less the host checks.
+- **`keep`**: a server kept on purpose, such as one stopped so its work can be resumed. It
+  is shown with its cost and the explanation, and is not judged or flagged.
+
+The explanation is printed on the server's card. The review is told not to argue with it.
+
 A host is matched to its Katapult machine by short name, whatever the case or domain. A
 host that is sampled but matches no machine is listed at the foot of the report.
 
@@ -68,6 +87,15 @@ no numbers of its own. It is there for what the rules cannot see: a database ser
 is full on purpose, because its cache is sized to fill it, and the report says so. It runs in an empty directory, so it has
 nothing of ours to read but the figures. If the call fails the report goes out without the
 review.
+
+## The expected invoice
+
+The first line of the report is what the next monthly invoice should come to, with VAT,
+so it can be set against the last one. It is the servers and disk we rent now, plus
+`SERVERS_OTHER_MONTHLY_COST` for charges the API does not show (object storage), less the
+discount, plus VAT. An earlier invoice can differ: it covers the month before, and a disk
+or package changed since then is charged at the old size up to the day it changed. The
+cost on each server's card is before VAT.
 
 ## Before you act on it
 
@@ -106,6 +134,9 @@ All in `.env.background` on the batch host. The names are in
 - `SERVERS_REPORT_TO`: who gets the report. Without it there is no report.
 - `SERVERS_PRICE_DISCOUNT`: the share taken off Katapult's prices, for example `0.5`.
 - `SERVERS_EXTRA_HOSTS`: ssh targets to sample beside the monitored hosts.
+- `SERVERS_HOST_NOTES`: which servers are `bulk` or `keep`, and why.
+- `SERVERS_OTHER_MONTHLY_COST`: monthly charges the API does not show, before the discount.
+  Read it off an invoice (object storage).
 
 The Claude review uses the same setup token as Community News, so it needs no setting of
 its own.

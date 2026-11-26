@@ -568,6 +568,108 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame([$trashed], $analysis['unattached_disks']);
     }
 
+    /**
+     * analyse() with what the rules are told about particular servers.
+     */
+    private function analyseWithNotes(array $machines, array $disks, array $samples, array $notes, array $lateJobs = []): array
+    {
+        return (new ServerSizingAnalyser)->analyse(
+            $machines, self::PACKAGES, $disks, self::PRICES, $samples, $this->now, 0.5, 14, $notes, $lateJobs
+        );
+    }
+
+    public function test_a_bulk_server_running_flat_out_with_jobs_keeping_up_is_right_as_it_is(): void
+    {
+        // Load well over its processors and 95% busy: for anything else, a move up. Here it is the point.
+        $analysis = $this->analyseWithNotes(
+            [$this->machine('work', 'p24')], [$this->disk('work', 300)],
+            ['work' => $this->samples(2, 8, 12.0, 0.95, 24000, 12000)],
+            ['work' => ['role' => 'bulk', 'note' => 'Background bulk work, meant to run flat out.']],
+        );
+        $server = $this->server($analysis, 'work');
+
+        $this->assertSame('bulk', $server['verdict']);
+        $this->assertSame('bulk', $server['role']);
+        $this->assertNull($server['candidate']);
+        $this->assertSame(['Background bulk work, meant to run flat out.', 'No late-job alerts showed in the last week.'], $server['reasons']);
+        $this->assertSame(0.0, $analysis['fleet']['possible_cost_paid']);
+    }
+
+    public function test_a_bulk_server_with_late_jobs_is_offered_the_next_size_up(): void
+    {
+        $analysis = $this->analyseWithNotes(
+            [$this->machine('work', 'p24')], [$this->disk('work', 300)],
+            ['work' => $this->samples(2, 8, 12.0, 0.95, 24000, 12000)],
+            ['work' => ['role' => 'bulk', 'note' => '']],
+            [['slug' => 'digest backlog', 'hours' => 6.5], ['slug' => 'stats:generate-daily coverage', 'hours' => 1.0]],
+        );
+        $server = $this->server($analysis, 'work');
+
+        $this->assertSame('bulk_late', $server['verdict']);
+        $this->assertSame('C-36', $server['candidate']['name']);
+        $this->assertSame(['Late-job alerts in the last week: digest backlog (about 6.5 hours), stats:generate-daily coverage (about 1 hour).'], $server['reasons']);
+        // 46 more at list, half price, counted as a cost of acting.
+        $this->assertSame(23.0, $analysis['fleet']['possible_cost_paid']);
+    }
+
+    public function test_a_bulk_server_out_of_memory_is_offered_more_memory_and_the_biggest_has_nothing_to_offer(): void
+    {
+        $short = $this->server($this->analyseWithNotes(
+            [$this->machine('work', 'p12')], [$this->disk('work', 150)],
+            ['work' => $this->samples(2, 4, 1.0, 0.1, 12000, 11500)],
+            ['work' => ['role' => 'bulk', 'note' => '']],
+        ), 'work');
+        $this->assertSame('bulk_late', $short['verdict']);
+        $this->assertSame('C-24', $short['candidate']['name']);
+        $this->assertSame(['No late-job alerts showed in the last week.', 'Memory is 96% used at the busy end of the week.'], $short['reasons']);
+
+        $top = $this->server($this->analyseWithNotes(
+            [$this->machine('work', 'p36')], [$this->disk('work', 300)],
+            ['work' => $this->samples(2, 12, 30.0, 0.95, 36000, 20000)],
+            ['work' => ['role' => 'bulk', 'note' => '']],
+            [['slug' => 'digest backlog', 'hours' => 2.0]],
+        ), 'work');
+        $this->assertSame('bulk_late', $top['verdict']);
+        $this->assertNull($top['candidate']);
+    }
+
+    public function test_a_server_kept_on_purpose_is_shown_with_its_explanation_and_not_judged(): void
+    {
+        $analysis = $this->analyseWithNotes(
+            [$this->machine('Spare', 'p1', 'stopped'), $this->machine('pet', 'p36')],
+            [$this->disk('Spare', 150), $this->disk('pet', 300)],
+            ['pet' => $this->samples(21, 12, 1.0, 0.05, 36000, 6144)],
+            // Matched on the short lower-case name, as readings are.
+            ['spare' => ['role' => 'keep', 'note' => 'Kept so its work can be resumed.'], 'pet' => ['role' => 'keep', 'note' => '']],
+        );
+
+        $spare = $this->server($analysis, 'Spare');
+        $this->assertSame('kept', $spare['verdict']);
+        $this->assertSame(['Kept so its work can be resumed.', 'Stopped, but still charged for its package and its disk.'], $spare['reasons']);
+
+        // A running server that would otherwise be told to move down is left alone too.
+        $pet = $this->server($analysis, 'pet');
+        $this->assertSame('kept', $pet['verdict']);
+        $this->assertSame([], $pet['reasons']);
+        $this->assertSame(0.0, $analysis['fleet']['possible_saving_paid']);
+    }
+
+    public function test_the_expected_invoice_adds_what_the_api_does_not_show_then_the_discount_then_vat(): void
+    {
+        $analysis = (new ServerSizingAnalyser)->analyse(
+            [$this->machine('one', 'p12')], self::PACKAGES, [$this->disk('one', 150)], self::PRICES, [], $this->now,
+            0.5, 14, [], [], 26.0, 0.2,
+        );
+
+        // 44 for the package and 30 for the disk, plus 26 of other charges: 100. Half price, then VAT.
+        $this->assertSame(74.0, $analysis['fleet']['monthly_list']);
+        $this->assertSame(37.0, $analysis['fleet']['monthly_paid']);
+        $this->assertSame(26.0, $analysis['fleet']['other_list']);
+        $this->assertSame(50.0, $analysis['fleet']['invoice_before_vat']);
+        $this->assertSame(60.0, $analysis['fleet']['invoice_expected']);
+        $this->assertSame(0.2, $analysis['fleet']['vat_rate']);
+    }
+
     public function test_a_disk_attached_to_nothing_is_listed_and_costed(): void
     {
         $analysis = $this->analyse([], [['name' => 'orphan', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null]], [], 0.5);

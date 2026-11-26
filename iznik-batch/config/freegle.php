@@ -1623,6 +1623,16 @@ return [
         // More ssh targets to sample, beside FREEGLE_MONITORING_HOSTS: hosts whose size we want to
         // know but which the patch and monit checks do not cover. Comma-separated, environment only.
         'extra_hosts' => EnvSetting::env('SERVERS_EXTRA_HOSTS', ''),
+        // What the rules should know about particular servers, which no reading can tell them.
+        // "name=role|explanation" entries separated by semicolons. Roles: "bulk" for a server that
+        // does background work and is meant to run flat out, judged on whether jobs keep up and not
+        // on its load; "keep" for one kept on purpose, which is shown with its explanation and not
+        // judged. They name servers, so they live in the environment only.
+        'host_notes' => EnvSetting::env('SERVERS_HOST_NOTES', ''),
+        // The expected invoice: VAT is added, and so is what Katapult's API does not show, such as
+        // object storage (a monthly figure before the discount, read off an invoice).
+        'vat_rate' => (float) EnvSetting::env('SERVERS_VAT_RATE', 0.2),
+        'other_monthly_cost' => (float) EnvSetting::env('SERVERS_OTHER_MONTHLY_COST', 0),
         // The share taken off Katapult's prices for our account, 0 to 1 (0.5 is half price).
         'price_discount' => (float) EnvSetting::env('SERVERS_PRICE_DISCOUNT', 0),
         // Days of readings needed before a size change is suggested, so a normal fortnight has been seen.

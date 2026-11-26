@@ -2,9 +2,12 @@
 
 namespace App\Services\Servers;
 
+use App\Models\ServerJobAlert;
 use App\Models\ServerSample;
 use App\Monitoring\HostCommandRunner;
+use App\Monitoring\PlatformStatusWriter;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -48,13 +51,46 @@ class ServerSampler
     }
 
     /**
-     * Remove readings older than the retention setting. Returns how many went.
+     * Copy the late-job alerts that are showing now, so the weekly report can say how long each
+     * showed. monitor:scheduled-outcomes keeps only the current ones. Host checks ("host:...") are
+     * left out: a pending reboot is not a job running late. A status older than half an hour is
+     * not copied, because nobody knows whether it is still true.
+     *
+     * @return list<string> the alerts recorded
+     */
+    public function recordJobAlerts(): array
+    {
+        $status = json_decode((string) DB::table('config')->where('key', PlatformStatusWriter::CONFIG_KEY)->value('value'), true);
+        $generated = strtotime((string) ($status['generated_at'] ?? ''));
+
+        if (! is_array($status) || $generated === false || $generated < Carbon::now()->subMinutes(30)->getTimestamp()) {
+            return [];
+        }
+
+        $slugs = [];
+        foreach (array_keys((array) ($status['info'] ?? [])) as $slug) {
+            if (! str_starts_with((string) $slug, 'host:')) {
+                $slugs[] = mb_substr((string) $slug, 0, 191);
+            }
+        }
+
+        $now = Carbon::now();
+        foreach ($slugs as $slug) {
+            ServerJobAlert::create(['sampled_at' => $now, 'slug' => $slug]);
+        }
+
+        return $slugs;
+    }
+
+    /**
+     * Remove readings and alerts older than the retention setting. Returns how many went.
      */
     public function prune(): int
     {
-        $days = max(1, (int) config('freegle.servers.sample_retention_days', 400));
+        $before = Carbon::now()->subDays(max(1, (int) config('freegle.servers.sample_retention_days', 400)));
 
-        return ServerSample::where('sampled_at', '<', Carbon::now()->subDays($days))->delete();
+        return ServerSample::where('sampled_at', '<', $before)->delete()
+            + ServerJobAlert::where('sampled_at', '<', $before)->delete();
     }
 
     /**

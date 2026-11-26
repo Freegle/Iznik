@@ -2,10 +2,13 @@
 
 namespace Tests\Feature\Servers;
 
+use App\Models\ServerJobAlert;
 use App\Models\ServerSample;
 use App\Monitoring\HostCommandRunner;
+use App\Monitoring\PlatformStatusWriter;
 use App\Services\Servers\ServerProbe;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -104,6 +107,58 @@ class SampleServersCommandTest extends TestCase
 
         $this->assertSame(['root@one', 'root@extra'], array_column($this->calls, 0));
         $this->assertSame(1, ServerSample::where('host', $extra)->count());
+    }
+
+    private function platformStatus(array $slugs, string $generatedAt): void
+    {
+        DB::table('config')->upsert(
+            [['key' => PlatformStatusWriter::CONFIG_KEY, 'value' => json_encode([
+                'info' => (object) array_fill_keys($slugs, ['error' => true]),
+                'generated_at' => $generatedAt,
+            ])]],
+            ['key'],
+            ['value'],
+        );
+    }
+
+    public function test_the_late_job_alerts_showing_now_are_recorded_without_the_host_checks(): void
+    {
+        $slug = 'digest backlog '.uniqid();
+        config(['freegle.monitoring.hosts' => 'root@one']);
+        $this->answers = ['root@one' => $this->reading('one-'.uniqid())];
+        $this->platformStatus([$slug, 'host:one'], Carbon::now()->subMinutes(5)->toIso8601String());
+
+        $this->artisan('servers:sample')->expectsOutputToContain('1 late-job alert(s) showing')->assertExitCode(0);
+
+        $this->assertSame(1, ServerJobAlert::where('slug', $slug)->count());
+        $this->assertSame(0, ServerJobAlert::where('slug', 'host:one')->where('sampled_at', '>', Carbon::now()->subMinute())->count());
+    }
+
+    public function test_a_stale_or_missing_status_records_no_alerts(): void
+    {
+        $slug = 'old alert '.uniqid();
+        config(['freegle.monitoring.hosts' => 'root@one']);
+        $this->answers = ['root@one' => $this->reading('one-'.uniqid())];
+
+        $this->platformStatus([$slug], Carbon::now()->subHours(2)->toIso8601String());
+        $this->artisan('servers:sample')->expectsOutputToContain('0 late-job alert(s) showing')->assertExitCode(0);
+        $this->assertSame(0, ServerJobAlert::where('slug', $slug)->count());
+
+        DB::table('config')->where('key', PlatformStatusWriter::CONFIG_KEY)->delete();
+        $this->artisan('servers:sample')->expectsOutputToContain('0 late-job alert(s) showing')->assertExitCode(0);
+    }
+
+    public function test_old_alerts_are_removed_with_old_readings(): void
+    {
+        $slug = 'ancient '.uniqid();
+        config(['freegle.monitoring.hosts' => 'root@one', 'freegle.servers.sample_retention_days' => 30]);
+        $this->answers = ['root@one' => $this->reading('one-'.uniqid())];
+        ServerJobAlert::create(['slug' => $slug, 'sampled_at' => Carbon::now()->subDays(31)]);
+        ServerJobAlert::create(['slug' => $slug, 'sampled_at' => Carbon::now()->subDays(29)]);
+
+        $this->artisan('servers:sample')->assertExitCode(0);
+
+        $this->assertSame(1, ServerJobAlert::where('slug', $slug)->count());
     }
 
     public function test_every_host_silent_is_a_failed_run(): void

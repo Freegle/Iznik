@@ -88,13 +88,16 @@ class ServerSizingReportMailTest extends TestCase
     public function test_the_ai_review_is_given_the_same_worded_figures_the_reader_sees(): void
     {
         $mail = $this->mail([$this->server()], null, [
-            'fleet' => ['monthly_list' => 720.0, 'monthly_paid' => 360.0, 'possible_saving_paid' => 0.0, 'possible_cost_paid' => 16.87],
+            'fleet' => ['monthly_list' => 720.0, 'monthly_paid' => 360.0, 'possible_saving_paid' => 0.0, 'possible_cost_paid' => 16.87,
+                'other_list' => 20.0, 'invoice_before_vat' => 370.0, 'invoice_expected' => 444.0, 'vat_rate' => 0.2],
             'unattached_disks' => [['name' => 'old-cache', 'size_gb' => 200, 'state' => 'built', 'machine_id' => null]],
             'unmatched_hosts' => ['stray'],
         ]);
         $facts = ServerSizingReportMail::factsFor($mail->analysis);
 
-        $this->assertSame('£360.00', $facts['we_pay_a_month']);
+        $this->assertSame('£444.00', $facts['expected_monthly_invoice_with_vat']);
+        $this->assertSame('£370.00', $facts['expected_monthly_invoice_before_vat']);
+        $this->assertSame('£360.00', $facts['servers_and_disk_a_month_before_vat']);
         $this->assertSame('£0.00', $facts['moves_down_would_save_a_month']);
         $this->assertSame('£16.87', $facts['moves_up_would_cost_a_month_more']);
         $this->assertSame(21, $facts['days_of_readings']);
@@ -121,6 +124,10 @@ class ServerSizingReportMailTest extends TestCase
             'Too early to say. So far: looks too small; C-36 costs £16.87 more a month' => ['verdict' => 'wait', 'indication' => 'step_up'],
             'Too early to say. So far: looks too small' => ['verdict' => 'wait', 'indication' => 'step_up', 'candidate' => null],
             'Stopped' => ['verdict' => 'stopped', 'candidate' => null],
+            'Kept on purpose' => ['verdict' => 'kept', 'candidate' => null],
+            'Keep as it is: meant to run flat out, and the jobs are keeping up' => ['verdict' => 'bulk', 'candidate' => null],
+            'Not keeping up: C-36 costs £16.87 more a month' => ['verdict' => 'bulk_late'],
+            'Not keeping up, and there is no bigger package of this kind' => ['verdict' => 'bulk_late', 'candidate' => null],
             'Not measured' => ['verdict' => 'unmeasured', 'candidate' => null],
         ];
 
@@ -196,7 +203,9 @@ class ServerSizingReportMailTest extends TestCase
         $this->assertStringContainsString('<html', $html);
         $this->assertStringNotContainsString('<mj-', $html);
         $this->assertStringContainsString('Alpha', $html);
-        $this->assertStringContainsString('£360.00 a month', $html);
+        // No invoice figures in this analysis, so the headline falls back to servers and disk.
+        $this->assertStringContainsString('expected to be about', $html);
+        $this->assertStringContainsString('£360.00', $html);
         $this->assertStringContainsString('would save', $html);
         $this->assertStringContainsString('would cost', $html);
         $this->assertStringContainsString('stray. Its readings are stored', $html);
@@ -218,6 +227,10 @@ class ServerSizingReportMailTest extends TestCase
             'cards' => $mail->cards(),
             'review' => $mail->review,
             'monthlyPaid' => '£360.00',
+            'invoiceExpected' => '£444.00',
+            'invoiceBeforeVat' => '£370.00',
+            'otherPaid' => '£10.00',
+            'vatPct' => 20,
             'monthlyList' => '£720.00',
             'possibleSaving' => null,
             'possibleCost' => null,
@@ -240,8 +253,11 @@ class ServerSizingReportMailTest extends TestCase
         foreach (['emails.mjml.servers.sizing-report', 'emails.text.servers.sizing-report'] as $view) {
             $out = view($view, $data)->render();
 
-            $this->assertStringContainsString('We pay about', $out);
-            $this->assertStringContainsString('£360.00 a month', $out);
+            $this->assertStringContainsString('Our current monthly invoice is expected to be about', $out);
+            $this->assertStringContainsString('£444.00', $out);
+            $this->assertStringContainsString('(£370.00 before VAT). Earlier invoices may be different.', $out);
+            $this->assertStringContainsString('The expected invoice adds £10.00 a month for charges the API does not show, such as object storage, then VAT at 20%.', $out);
+            $this->assertStringContainsString('The cost shown for each server is before VAT.', $out);
             $this->assertStringContainsString('The moves down suggested below would save', $out);
             $this->assertStringContainsString('The moves up suggested below would cost', $out);
             $this->assertStringContainsString('£16.87 a month', $out);
@@ -266,12 +282,13 @@ class ServerSizingReportMailTest extends TestCase
     public function test_both_views_say_when_there_is_no_review_no_saving_no_discount_and_little_history(): void
     {
         $mail = $this->mail([$this->server()]);
-        $data = $this->viewData($mail, ['discountPct' => 0, 'historyDays' => 1, 'minHistoryDays' => 14]);
+        $data = $this->viewData($mail, ['discountPct' => 0, 'historyDays' => 1, 'minHistoryDays' => 14, 'otherPaid' => null]);
 
         foreach (['emails.mjml.servers.sizing-report', 'emails.text.servers.sizing-report'] as $view) {
             $out = view($view, $data)->render();
 
             $this->assertStringContainsString('The AI review was not available this week', $out);
+            $this->assertStringContainsString('The expected invoice adds VAT at 20%; it leaves out object storage', $out);
             $this->assertStringContainsString('No change that saves money is suggested this week', $out);
             $this->assertStringContainsString('There is 1 day of readings so far.', $out);
             $this->assertStringContainsString('Readings only began in the last day.', view($view, ['historyDays' => 0] + $data)->render());

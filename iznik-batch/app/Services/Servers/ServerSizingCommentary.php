@@ -28,6 +28,11 @@ by week trend. The verdicts come from fixed rules and are already decided:
 - "Too early to say. So far: ..." means there are not yet enough days of readings to act; what
   follows is only what the readings point to.
 - "Keep as it is", "Stopped" and "Not measured" mean what they say.
+- "Kept on purpose" is a server its owner has decided to keep, for the reason given. Do not
+  suggest deleting, stopping or changing it, and do not list its cost as something to act on.
+- "meant to run flat out" is a server that does background work. High load and busy processors
+  there are intended and are never a reason to grow it; only late jobs or memory are.
+- "Not keeping up" is such a server with late jobs or no memory left, and is a suggestion to act on.
 
 Write plain text, no Markdown, in this exact shape:
 
@@ -43,7 +48,7 @@ Rules:
   convert, add up or estimate a figure.
 - For a move, quote the saving or the extra cost from the verdict. "Steps available" shows what a
   package costs in total, which is a different figure; do not present it as the cost of moving.
-- Only a "Move down" or "Move up" verdict goes under CHANGES. A "Too early to say" never does.
+- Only a "Move down", "Move up" or "Not keeping up" verdict goes under CHANGES. A "Too early to say" never does.
 - If a section has nothing in it, write "- Nothing this week." under it.
 - You may advise against a suggested change, with the reason. Do not suggest one the verdict does not.
 - With only a day or two of readings, say so once and keep the review short: a single reading is

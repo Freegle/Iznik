@@ -28,14 +28,16 @@ class SampleServersCommand extends Command
         }
 
         $result = $this->sampler->sampleAll();
+        $alerts = $this->sampler->recordJobAlerts();
         $pruned = $this->sampler->prune();
 
         $this->info(sprintf(
-            'Sampled %d host(s): %s. %d did not answer%s. Removed %d old reading(s).',
+            'Sampled %d host(s): %s. %d did not answer%s. %d late-job alert(s) showing. Removed %d old reading(s).',
             count($result['sampled']),
             implode(', ', $result['sampled']) ?: 'none',
             count($result['failed']),
             $result['failed'] ? ' ('.implode(', ', $result['failed']).')' : '',
+            count($alerts),
             $pruned,
         ));
 

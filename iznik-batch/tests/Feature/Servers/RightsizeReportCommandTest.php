@@ -3,7 +3,10 @@
 namespace Tests\Feature\Servers;
 
 use App\Mail\Servers\ServerSizingReportMail;
+use App\Models\ServerJobAlert;
 use App\Models\ServerSample;
+use App\Services\Servers\ServerSizingReport;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Process;
@@ -102,6 +105,48 @@ class RightsizeReportCommandTest extends TestCase
 
         Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->hasTo('someone@example.org') && $mail->review === null);
         Process::assertNothingRan();
+    }
+
+    public function test_notes_about_servers_and_the_week_s_late_jobs_reach_the_verdicts_and_the_invoice(): void
+    {
+        $this->seedSamples('alpha', 3, 12, 20.0, 36000, 6144);
+        $slug = 'digest backlog '.uniqid();
+        ServerJobAlert::where('sampled_at', '>=', Carbon::now()->subDays(8))->delete();
+        foreach (range(1, 6) as $look) {
+            ServerJobAlert::create(['slug' => $slug, 'sampled_at' => Carbon::now()->subHours($look)]);
+        }
+        ServerJobAlert::create(['slug' => $slug, 'sampled_at' => Carbon::now()->subDays(9)]);
+        config([
+            'freegle.servers.host_notes' => ' alpha = bulk | Background work, meant to run flat out. ; gamma=keep|Kept so its work can be resumed.',
+            'freegle.servers.other_monthly_cost' => 20,
+            'freegle.servers.vat_rate' => 0.2,
+        ]);
+
+        $this->artisan('servers:rightsize-report', ['--no-review' => true])->assertExitCode(0);
+
+        Mail::assertSent(ServerSizingReportMail::class, function (ServerSizingReportMail $mail) use ($slug) {
+            $cards = collect($mail->cards())->keyBy('name');
+            $fleet = $mail->analysis['fleet'];
+
+            // Six looks in the week are an hour and a half; the one nine days ago is not counted.
+            return $cards['Alpha']['verdict'] === 'Not keeping up, and there is no bigger package of this kind'
+                && $cards['Alpha']['reasons'] === ['Background work, meant to run flat out.', "Late-job alerts in the last week: {$slug} (about 1.5 hours)."]
+                && $cards['Gamma']['verdict'] === 'Kept on purpose'
+                && $cards['Gamma']['reasons'] === ['Kept so its work can be resumed.', 'Stopped, but still charged for its package and its disk.']
+                && $fleet['other_list'] === 20.0
+                && $fleet['invoice_before_vat'] === round(($fleet['monthly_list'] + 20) * 0.5, 2)
+                && $fleet['invoice_expected'] === round(($fleet['monthly_list'] + 20) * 0.5 * 1.2, 2)
+                && $mail->envelope()->subject === 'Server sizing: 1 size change suggested';
+        });
+    }
+
+    public function test_server_notes_are_read_from_the_setting_and_a_slip_is_left_out(): void
+    {
+        $this->assertSame([
+            'db-9' => ['role' => 'bulk', 'note' => 'Background work, flat out is fine'],
+            'spare' => ['role' => 'keep', 'note' => ''],
+        ], ServerSizingReport::parseHostNotes('DB-9=bulk|Background work, flat out is fine;spare = keep;oops=fast|not a role;;nonsense'));
+        $this->assertSame([], ServerSizingReport::parseHostNotes(''));
     }
 
     public function test_without_a_katapult_token_or_a_recipient_it_does_nothing(): void

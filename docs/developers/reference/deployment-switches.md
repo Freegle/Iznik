@@ -76,6 +76,9 @@ variables like every other Freegle setting.
 | `servers.katapult_token` | `KATAPULT_API_TOKEN` | empty | A Katapult API token, used read-only by `servers:rightsize-report` to list the servers we rent, the packages on offer and their prices. Empty: no report. See [server-right-sizing.md](../../ops/runbooks/server-right-sizing.md). |
 | `servers.report_to` | `SERVERS_REPORT_TO` | empty | Who gets the weekly server sizing report. Empty: no report. |
 | `servers.extra_hosts` | `SERVERS_EXTRA_HOSTS` | empty | More ssh targets for `servers:sample`, beside `FREEGLE_MONITORING_HOSTS`: hosts to size that the patch and monit checks do not cover. |
+| `servers.host_notes` | `SERVERS_HOST_NOTES` | empty | What the sizing rules are told about particular servers: `name=bulk\|why` for one meant to run flat out, judged on late jobs and not load; `name=keep\|why` for one kept on purpose and not judged. Entries separated by semicolons. |
+| `servers.other_monthly_cost` | `SERVERS_OTHER_MONTHLY_COST` | `0` | Monthly charges Katapult's API does not show, such as object storage, before the discount. Added to the expected invoice in the sizing report. |
+| `servers.vat_rate` | `SERVERS_VAT_RATE` | `0.2` | VAT added to the expected invoice in the sizing report. |
 | `servers.price_discount` | `SERVERS_PRICE_DISCOUNT` | `0` | The share taken off Katapult's prices in the sizing report, 0 to 1. Set it to the discount on the account. |
 | `servers.min_history_days` | `SERVERS_MIN_HISTORY_DAYS` | `14` | Days of readings needed before the sizing report suggests a change of package. |
 | `servers.sample_retention_days` | `SERVERS_SAMPLE_RETENTION_DAYS` | `400` | How long `servers:sample` keeps its readings. |
