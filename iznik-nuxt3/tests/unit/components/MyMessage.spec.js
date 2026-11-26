@@ -1015,6 +1015,28 @@ describe('MyMessage', () => {
       const wrapper = await createWrapper({ showOld: true })
       expect(wrapper.find('.no-replies').exists()).toBe(false)
     })
+
+    /* The photo is a fixed square beside the details at desktop width. A hint
+       under the whole card makes the card taller than the photo, leaving a
+       blank strip below it, so there the hint sits in the details column. */
+    it('puts the hint inside the details column at desktop width', async () => {
+      mockData.message.replies = []
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString()
+      const wrapper = await createWrapper()
+      const desktop = wrapper.find('.desktop-details .desktop-no-replies')
+      expect(desktop.exists()).toBe(true)
+      expect(desktop.text()).toContain('No replies yet. Will auto-repost')
+      expect(wrapper.find('.no-replies').classes()).toContain('d-lg-none')
+    })
+
+    it('shows no desktop hint when there are replies', async () => {
+      mockData.message.replies = [
+        { id: 1, userid: 10, date: '2024-01-15T10:00:00Z' },
+      ]
+      mockData.message.repostat = new Date(Date.now() + 86400000).toISOString()
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.desktop-no-replies').exists()).toBe(false)
+    })
   })
 
   describe('Location and Group Display', () => {

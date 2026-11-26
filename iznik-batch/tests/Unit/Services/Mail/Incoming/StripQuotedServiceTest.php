@@ -214,6 +214,14 @@ class StripQuotedServiceTest extends TestCase
         $this->assertStringNotContainsString('Outlook', $result);
     }
 
+    public function test_strips_aol_on_android(): void
+    {
+        $input = "Thanks very much\r\n\r\nAOL on Android (https://aolapp.onelink.me/eG2g?pid=NativePlacement&c=US_Acquisition)";
+
+        $result = $this->service->strip($input);
+        $this->assertEquals("Thanks very much", $result);
+    }
+
     public function test_strips_sent_from_yahoo_mail(): void
     {
         $input = "My reply\r\nSent from Yahoo Mail on Android";
