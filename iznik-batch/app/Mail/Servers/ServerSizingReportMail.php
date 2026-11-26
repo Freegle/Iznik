@@ -231,7 +231,7 @@ class ServerSizingReportMail extends MjmlMailable
         return match ($server['verdict']) {
             'step_down' => [sprintf('Move down to %s: saves %s a month', $candidate['name'], self::money($saving)), 'act'],
             'step_up' => [$candidate === null
-                ? 'Too small, and no bigger package of this kind fits'
+                ? 'Too small, and there is no bigger package of this kind'
                 : sprintf('Move up to %s: %s', $candidate['name'], $extra), 'act'],
             'wait' => match ($server['indication']) {
                 'step_down' => [sprintf('Too early to say. So far: could move down to %s, saving %s a month', $candidate['name'], self::money($saving)), 'info'],

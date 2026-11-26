@@ -156,7 +156,7 @@ class ServerSizingAnalyserTest extends TestCase
         $server = $this->server($this->analyse(
             [$this->machine('hot', 'p24')],
             [$this->disk('hot', 300)],
-            ['hot' => $this->samples(21, 8, 8.4, 0.6, 24000, 12000)],
+            ['hot' => $this->samples(21, 8, 8.4, 0.7, 24000, 12000)],
         ), 'hot');
 
         $this->assertSame('step_up', $server['verdict']);
@@ -183,6 +183,40 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertStringContainsString('Memory is 96% used', implode(' ', $full['reasons']));
     }
 
+    public function test_a_move_up_is_one_step_even_when_that_leaves_it_short_of_headroom(): void
+    {
+        // Load 11 on 4 busy processors wants 16 with headroom. It is offered the next size up, 8, and told so.
+        $server = $this->server($this->analyse(
+            [$this->machine('far', 'p12')], [$this->disk('far', 150)],
+            ['far' => $this->samples(21, 4, 11.0, 0.9, 12000, 6000)],
+        ), 'far');
+
+        $this->assertSame('step_up', $server['verdict']);
+        $this->assertSame('C-24', $server['candidate']['name']);
+        $this->assertContains('The next size up may still be short of headroom; this report looks again next week.', $server['reasons']);
+    }
+
+    public function test_high_load_with_idle_processors_is_waiting_for_disk_not_short_of_processors(): void
+    {
+        $server = $this->server($this->analyse(
+            [$this->machine('io', 'p24')], [$this->disk('io', 300)],
+            ['io' => $this->samples(21, 8, 9.0, 0.2, 24000, 12000)],
+        ), 'io');
+
+        $this->assertSame('keep', $server['verdict']);
+    }
+
+    public function test_a_server_short_of_memory_only_is_offered_more_memory(): void
+    {
+        $server = $this->server($this->analyse(
+            [$this->machine('full', 'p12')], [$this->disk('full', 150)],
+            ['full' => $this->samples(21, 4, 1.0, 0.1, 12000, 11500)],
+        ), 'full');
+
+        $this->assertSame('C-24', $server['candidate']['name']);
+        $this->assertNotContains('The next size up may still be short of headroom; this report looks again next week.', $server['reasons']);
+    }
+
     public function test_too_small_with_nothing_bigger_on_offer_says_so(): void
     {
         $server = $this->server($this->analyse(
@@ -192,7 +226,7 @@ class ServerSizingAnalyserTest extends TestCase
 
         $this->assertSame('step_up', $server['verdict']);
         $this->assertNull($server['candidate']);
-        $this->assertStringContainsString('No bigger package of this kind is big enough', implode(' ', $server['reasons']));
+        $this->assertStringContainsString('There is no bigger package of this kind.', implode(' ', $server['reasons']));
     }
 
     public function test_nothing_is_suggested_before_enough_days_of_readings(): void
@@ -346,7 +380,7 @@ class ServerSizingAnalyserTest extends TestCase
     {
         $twoDays = $this->server($this->analyse(
             [$this->machine('hot', 'p24')], [$this->disk('hot', 300)],
-            ['hot' => $this->samples(1, 8, 8.4, 0.6, 24000, 12000)],
+            ['hot' => $this->samples(1, 8, 8.4, 0.7, 24000, 12000)],
         ), 'hot');
         $this->assertSame('wait', $twoDays['verdict']);
         $this->assertSame('step_up', $twoDays['indication']);
@@ -355,7 +389,7 @@ class ServerSizingAnalyserTest extends TestCase
 
         $analysis = $this->analyse(
             [$this->machine('hot', 'p24')], [$this->disk('hot', 300)],
-            ['hot' => $this->samples(4, 8, 8.4, 0.6, 24000, 12000)],
+            ['hot' => $this->samples(4, 8, 8.4, 0.7, 24000, 12000)],
         );
         $this->assertSame('step_up', $this->server($analysis, 'hot')['verdict']);
         $this->assertSame(15.5, $analysis['fleet']['possible_cost_paid']);
@@ -369,6 +403,8 @@ class ServerSizingAnalyserTest extends TestCase
             [
                 'BIG.internal.example' => $this->samples(21, 12, 1.0, 0.05, 36000, 6144),
                 'stray' => $this->samples(1, 1, 0.1, 0.02, 1000, 300),
+                // A host that gave no name at all is not listed as a stray.
+                '' => $this->samples(1, 1, 0.1, 0.02, 1000, 300),
             ],
         );
 
@@ -439,7 +475,7 @@ class ServerSizingAnalyserTest extends TestCase
     {
         $server = $this->server($this->analyse(
             [$this->machine('odd', 'unpriced')], [$this->disk('odd', 15)],
-            ['odd' => $this->samples(21, 1, 3.0, 0.5, 2000, 500)],
+            ['odd' => $this->samples(21, 1, 3.0, 0.7, 2000, 500)],
         ), 'odd');
 
         $this->assertSame('step_up', $server['verdict']);

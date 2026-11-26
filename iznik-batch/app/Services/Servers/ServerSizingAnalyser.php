@@ -15,7 +15,8 @@ use Carbon\CarbonInterface;
  *    weeks) would still leave headroom on it: load at most 70% of the processors, processor time
  *    at most 60% busy, memory at most 80% used. One quiet week is not enough.
  *  - A bigger package is suggested when the last week is past a higher mark (load above the number
- *    of processors, processor time above 85% busy, or memory above 92% used). Between the two
+ *    of processors while they are more than 60% busy, processor time above 85% busy, or memory
+ *    above 92% used). It is the next size up, one step at a time. Between the two
  *    marks the answer is "keep", so a server near a line does not flip from week to week.
  *  - A move down needs enough days of readings to have seen a normal fortnight, and readings on
  *    most days of the last week. A day counts when it has at least six hours' worth of readings. A move up needs only a few days: an overloaded server should not
@@ -350,17 +351,20 @@ class ServerSizingAnalyser
         $busy = $week['cpu_busy_p95'];
         $memory = $week['mem_used_pct_p95'];
 
-        $tooSmall = false;
-        if ($loadPerCpu > self::LOAD_TOO_HIGH) {
-            $tooSmall = true;
+        // Load counts work that is waiting for disk as well as work that wants a processor, so
+        // high load only means "short of processors" when the processors are busy too.
+        $shortOfProcessors = false;
+        $shortOfMemory = false;
+        if ($loadPerCpu > self::LOAD_TOO_HIGH && ($busy === null || $busy > self::BUSY_HEADROOM)) {
+            $shortOfProcessors = true;
             $reasons[] = sprintf('Load is above the number of processors for part of the week (%.2f per processor).', $loadPerCpu);
         }
         if ($busy !== null && $busy > self::BUSY_TOO_HIGH) {
-            $tooSmall = true;
+            $shortOfProcessors = true;
             $reasons[] = sprintf('Processors are %d%% busy at the busy end of the week.', round($busy * 100));
         }
         if ($memory > self::MEMORY_TOO_HIGH) {
-            $tooSmall = true;
+            $shortOfMemory = true;
             $reasons[] = sprintf('Memory is %d%% used at the busy end of the week.', round($memory * 100));
         }
 
@@ -368,18 +372,24 @@ class ServerSizingAnalyser
         $position = array_search($package['id'], array_column($ladder, 'id'), true);
         $fits = fn (array $option): bool => $option['cpus'] >= $needs['cpus'] && $option['memory_gb'] >= $needs['memory_gb'];
 
-        if ($tooSmall) {
-            // The first step up the ladder that fits, and is no smaller in either measure.
+        if ($shortOfProcessors || $shortOfMemory) {
+            // One step at a time: the next package up that is bigger in what the server is short of
+            // and no smaller in the other. Next week's report shows whether that was enough.
             foreach ($position === false ? [] : array_slice($ladder, $position + 1) as $option) {
-                if ($fits($option) && $option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']) {
+                if ($option['cpus'] >= $package['cpus'] && $option['memory_gb'] >= $package['memory_gb']
+                    && (! $shortOfProcessors || $option['cpus'] > $package['cpus'])
+                    && (! $shortOfMemory || $option['memory_gb'] > $package['memory_gb'])) {
                     $cost = $this->monthlyCost($option, $diskTotal, $ipv4, $prices, true);
+                    if (! $fits($option)) {
+                        $reasons[] = 'The next size up may still be short of headroom; this report looks again next week.';
+                    }
 
                     return ['step_up', $this->candidate(['package' => $option, 'list' => $cost], $currentList, $discount), $reasons];
                 }
             }
             $reasons[] = $position === false
                 ? 'Its package has no price, so no other size can be compared.'
-                : 'No bigger package of this kind is big enough by these rules.';
+                : 'There is no bigger package of this kind.';
 
             return ['step_up', null, $reasons];
         }
@@ -530,17 +540,13 @@ class ServerSizingAnalyser
     }
 
     /**
-     * The busy end and the average of a set of readings, or null when there are none.
+     * The busy end and the average of a set of readings. Only called with at least one.
      *
-     * @param  list<array<string, mixed>>  $samples
-     * @return array<string, float|int|null>|null
+     * @param  non-empty-list<array<string, mixed>>  $samples
+     * @return array<string, float|int|null>
      */
-    private function summarise(array $samples): ?array
+    private function summarise(array $samples): array
     {
-        if ($samples === []) {
-            return null;
-        }
-
         $load = [];
         $memoryShare = [];
         $memoryGb = [];

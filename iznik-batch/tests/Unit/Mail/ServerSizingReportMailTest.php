@@ -91,7 +91,7 @@ class ServerSizingReportMailTest extends TestCase
         $cases = [
             'Keep as it is' => ['verdict' => 'keep', 'candidate' => null],
             'Move down to C-12: saves £22.50 a month' => ['verdict' => 'step_down', 'candidate' => $down],
-            'Too small, and no bigger package of this kind fits' => ['verdict' => 'step_up', 'candidate' => null],
+            'Too small, and there is no bigger package of this kind' => ['verdict' => 'step_up', 'candidate' => null],
             'Move up to C-36: costs no more' => ['verdict' => 'step_up', 'candidate' => ['name' => 'C-36', 'saving_paid' => 3.0]],
             'Too early to say. So far: the size looks right' => ['verdict' => 'wait', 'indication' => 'keep', 'candidate' => null],
             'Too early to say. So far: could move down to C-12, saving £22.50 a month' => ['verdict' => 'wait', 'indication' => 'step_down', 'candidate' => $down],

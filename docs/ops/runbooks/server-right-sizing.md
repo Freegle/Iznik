@@ -43,8 +43,11 @@ The rules are fixed and are in `ServerSizingAnalyser`. The foot of every report 
   processor time at most 60% in use, memory at most 80% used. It picks the cheapest smaller
   package of the same kind that does, counting the disk the smaller package no longer
   includes. One quiet week is not enough.
-- **Move up** is suggested when, in the last week, load is above the number of processors,
-  processor time is above 85% in use, or memory is above 92% used.
+- **Move up** is suggested when, in the last week, load is above the number of processors
+  while they are more than 60% in use, processor time is above 85% in use, or memory is above
+  92% used. It is always the next size up, one step at a time; the following report shows
+  whether that was enough. High load with idle processors is work waiting for disk, and a
+  bigger package would not help it.
 - Between those two marks the verdict is **keep**, so a server near a line does not flip
   from week to week.
 - A move down needs readings on **14 days**, and on at least five days of the last week. A
