@@ -3,20 +3,18 @@ FROM ghcr.io/freegle/freegle-base:latest
 # ONNX Runtime C library — required for native Go embedding pool.
 # SetIntraOpNumThreads/SetInterOpNumThreads parallelise GEMM tiles and
 # independent graph nodes (Q/K/V projections) across all CPU cores.
-#
-# Fetched from Microsoft's NuGet package: the GitHub repository and its release
-# downloads were removed in November 2026. The hash pins the exact package, so a
-# changed or substituted download fails the build. A version bump needs a new hash.
+# Fetched from Microsoft's NuGet package, which carries the same Linux x64 build
+# and headers as the GitHub release, and checked against a pinned sha256.
 ARG ONNXRUNTIME_VERSION=1.20.1
 ARG ONNXRUNTIME_SHA256=9c32108e9a1c78b090a95c2a219f244dd5f067d4caf68fb0f967103f3f20839c
-RUN curl -fsSL -o /tmp/ort.nupkg "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg" && \
-    echo "${ONNXRUNTIME_SHA256}  /tmp/ort.nupkg" | sha256sum -c - && \
-    unzip -q /tmp/ort.nupkg 'runtimes/linux-x64/native/libonnxruntime.so' 'build/native/include/*' -d /tmp/ort && \
-    cp /tmp/ort/runtimes/linux-x64/native/libonnxruntime.so "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" && \
-    ln -sf "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/libonnxruntime.so.1 && \
+RUN curl -fsSL -o /tmp/onnxruntime.nupkg \
+      "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg" && \
+    echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.nupkg" | sha256sum -c - && \
+    unzip -q /tmp/onnxruntime.nupkg 'runtimes/linux-x64/native/libonnxruntime.so' 'build/native/include/*' -d /tmp/onnxruntime && \
+    cp /tmp/onnxruntime/runtimes/linux-x64/native/libonnxruntime.so "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" && \
     ln -sf "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/libonnxruntime.so && \
-    cp -r /tmp/ort/build/native/include /usr/local/include/onnxruntime && \
-    rm -rf /tmp/ort /tmp/ort.nupkg && \
+    cp -r /tmp/onnxruntime/build/native/include /usr/local/include/onnxruntime && \
+    rm -rf /tmp/onnxruntime /tmp/onnxruntime.nupkg && \
     ldconfig
 
 WORKDIR /app

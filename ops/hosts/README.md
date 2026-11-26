@@ -91,6 +91,11 @@ after a `monit reload`. Keep it well under freegle-maint's `MAINT_MONIT_TIMEOUT`
 (300 seconds): the maintenance checks after a reboot wait for every service to
 read OK, and none does until the first check has run.
 
+monit also leaves its http interface closed until the delay is over, so for that
+long every `monit` command on the host fails with "Cannot connect to
+[localhost]:2812". freegle-maint waits for the daemon to answer before it sends
+`monit monitor` or `unmonitor` (`monit_ready` in `scripts/maintenance/lib/common.sh`).
+
 The database nodes do not need one. db2 and db3 do not start monit at boot, since
 the maintenance script starts it once the node has rejoined, and db1's services
 are up before monit's first check.
