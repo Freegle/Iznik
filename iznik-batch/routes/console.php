@@ -1699,10 +1699,10 @@ Schedule::command('integrations:whatjobs-clicks')
     ->withoutOverlapping(60)
     ->appendOutputTo(cronLog('integrations:whatjobs-clicks'));
 
-// The weekly WhatJobs clicks summary with the trend chart. Tuesday, because WhatJobs take 48
-// hours to finalise a day, so the Sunday before is final by then.
+// The weekly WhatJobs clicks summary with the trend chart. Wednesday, because WhatJobs publish a
+// day at midnight and take 48 hours more to finalise it, so the Sunday before is final by then.
 Schedule::command('integrations:whatjobs-clicks-weekly')
-    ->weeklyOn(2, '07:40')
+    ->weeklyOn(3, '07:40')
     ->withoutOverlapping(30)
     ->appendOutputTo(cronLog('integrations:whatjobs-clicks-weekly'));
 

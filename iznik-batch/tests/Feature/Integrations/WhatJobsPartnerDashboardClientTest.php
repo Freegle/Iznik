@@ -105,6 +105,13 @@ class WhatJobsPartnerDashboardClientTest extends TestCase
         PartnerDashboardClient::parseMonth('<html><body><table id="other"><tr><th>Date</th></tr></table></body></html>');
     }
 
+    public function test_a_cell_that_is_not_a_count_fails_rather_than_reading_as_zero(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage("'-' for Billable Clicks on 2026-11-01");
+        PartnerDashboardClient::parseMonth(self::page(['2026-11-01' => ['-', 4, 102, 3, 3, 0]]));
+    }
+
     public function test_from_config_needs_both_username_and_password(): void
     {
         config(['freegle.whatjobs.partner_username' => 'Freegle', 'freegle.whatjobs.partner_password' => '']);

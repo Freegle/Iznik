@@ -108,7 +108,12 @@ class PartnerDashboardClient
             $day = [];
             foreach ($headings as $i => $heading) {
                 if (isset(self::COLUMNS[$heading])) {
-                    $day[self::COLUMNS[$heading]] = (int) str_replace(',', '', $cells[$i] ?? '0');
+                    $cell = str_replace(',', '', $cells[$i] ?? '');
+                    // Anything but a count means the page has changed; never read it as 0.
+                    if (! ctype_digit($cell)) {
+                        throw new RuntimeException("The WhatJobs usage page has '{$cell}' for {$heading} on {$cells[0]}: the page has changed.");
+                    }
+                    $day[self::COLUMNS[$heading]] = (int) $cell;
                 }
             }
             $days[$cells[0]] = $day;

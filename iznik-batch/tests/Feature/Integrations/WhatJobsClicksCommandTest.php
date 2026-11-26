@@ -13,8 +13,9 @@ use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 /**
- * integrations:whatjobs-clicks and integrations:whatjobs-clicks-weekly. "Today" is Thursday
- * 26 November 2026, so the newest day WhatJobs has finalised is Tuesday 24 November.
+ * integrations:whatjobs-clicks and integrations:whatjobs-clicks-weekly. "Today" is Friday
+ * 27 November 2026, so the newest day WhatJobs has finalised is Tuesday 24 November. The weekly
+ * summary runs on Wednesday 25 November and covers 16 to 22 November.
  */
 class WhatJobsClicksCommandTest extends TestCase
 {
@@ -28,7 +29,7 @@ class WhatJobsClicksCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Carbon::setTestNow('2026-11-26 07:10:00');
+        Carbon::setTestNow('2026-11-27 07:10:00');
         config([
             'freegle.whatjobs.partner_url' => 'https://partner.example',
             'freegle.whatjobs.partner_username' => 'Freegle',
@@ -117,7 +118,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_stores_each_day_and_keeps_the_billable_figure_first_seen(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
         $this->assertSame(160, (int) $this->row('2026-11-24')->billable_clicks);
@@ -134,7 +135,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_records_our_own_clicks_and_active_members(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->ourClicks('2026-11-24', 3);
         $this->activeMembers('2026-11-24', [$this->createTestUser(), $this->createTestUser()]);
 
@@ -143,12 +144,12 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertSame(3, (int) $this->row('2026-11-24')->our_clicks);
         $this->assertSame(2, (int) $this->row('2026-11-24')->active_users);
         // Today is not over, so it is not recorded.
-        $this->assertNull(DB::table(self::TABLE)->where('date', '2026-11-26')->first());
+        $this->assertNull(DB::table(self::TABLE)->where('date', '2026-11-27')->first());
     }
 
     public function test_a_sudden_drop_is_mailed_once(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-24'][0] = 60;
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
@@ -169,7 +170,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_a_sudden_rise_is_mailed(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-24'][0] = 300;
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
@@ -179,7 +180,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_an_ordinary_wobble_is_not_mailed(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-24'][0] = 110;
         $this->dashboard['2026-11-23'][0] = 230;
 
@@ -190,7 +191,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_filling_in_history_judges_old_days_silently(): void
     {
-        $this->billable('2026-09-01', '2026-11-25', 160);
+        $this->billable('2026-09-01', '2026-11-26', 160);
         $this->dashboard['2026-10-10'][0] = 1;
 
         $this->artisan('integrations:whatjobs-clicks', ['--months' => 3])->assertSuccessful();
@@ -203,9 +204,10 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_a_quieter_site_excuses_a_drop(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-24'][0] = 64;
-        // Ten active members a day as usual, four on the day itself.
+        // Ten active members a day as usual, six on the day itself: clicks 0.4 of usual, members
+        // 0.6, so clicks per member are within the usual range.
         for ($d = CarbonImmutable::parse('2026-10-01'); $d->lte(CarbonImmutable::parse('2026-11-18')); $d = $d->addDay()) {
             $this->storedDay($d->toDateString(), ['active_users' => 10]);
         }
@@ -213,8 +215,8 @@ class WhatJobsClicksCommandTest extends TestCase
         for ($i = 0; $i < 10; $i++) {
             $users[] = $this->createTestUser();
         }
-        for ($d = CarbonImmutable::parse('2026-11-19'); $d->lte(CarbonImmutable::parse('2026-11-25')); $d = $d->addDay()) {
-            $this->activeMembers($d->toDateString(), $d->toDateString() === '2026-11-24' ? array_slice($users, 0, 4) : $users);
+        for ($d = CarbonImmutable::parse('2026-11-19'); $d->lte(CarbonImmutable::parse('2026-11-26')); $d = $d->addDay()) {
+            $this->activeMembers($d->toDateString(), $d->toDateString() === '2026-11-24' ? array_slice($users, 0, 6) : $users);
         }
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
@@ -226,7 +228,7 @@ class WhatJobsClicksCommandTest extends TestCase
     public function test_whatjobs_billing_a_smaller_share_of_our_clicks_is_put_down_to_their_side(): void
     {
         // We log 30 clicks a day and WhatJobs bill 20; on the 24th they bill 12 of the 30.
-        $this->billable('2026-10-01', '2026-11-25', 20);
+        $this->billable('2026-10-01', '2026-11-26', 20);
         $this->dashboard['2026-11-24'][0] = 12;
         for ($d = CarbonImmutable::parse('2026-10-28'); $d->lte(CarbonImmutable::parse('2026-11-18')); $d = $d->addDay()) {
             $this->storedDay($d->toDateString(), ['our_clicks' => 30, 'active_users' => 10]);
@@ -235,7 +237,7 @@ class WhatJobsClicksCommandTest extends TestCase
         for ($i = 0; $i < 10; $i++) {
             $users[] = $this->createTestUser();
         }
-        for ($d = CarbonImmutable::parse('2026-11-19'); $d->lte(CarbonImmutable::parse('2026-11-25')); $d = $d->addDay()) {
+        for ($d = CarbonImmutable::parse('2026-11-19'); $d->lte(CarbonImmutable::parse('2026-11-26')); $d = $d->addDay()) {
             $this->ourClicks($d->toDateString(), 30);
             $this->activeMembers($d->toDateString(), $users);
         }
@@ -276,7 +278,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_a_day_with_no_clicks_counts_in_the_weekly_average(): void
     {
-        Carbon::setTestNow('2026-11-24 07:40:00');
+        Carbon::setTestNow('2026-11-25 07:40:00');
         for ($d = CarbonImmutable::parse('2026-10-01'); $d->lte(CarbonImmutable::parse('2026-11-23')); $d = $d->addDay()) {
             $this->storedDay($d->toDateString(), ['billable_clicks' => $d->toDateString() === '2026-11-18' ? 0 : 140, 'active_users' => 4000]);
         }
@@ -306,7 +308,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_several_changes_go_in_one_mail(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-23'][0] = 40;
         $this->dashboard['2026-11-24'][0] = 40;
 
@@ -341,8 +343,8 @@ class WhatJobsClicksCommandTest extends TestCase
     {
         // 160 a day, then 100 a day from the 18th: never half, so no single day is flagged,
         // but the seven days to the 22nd are 0.73 of a usual week.
-        $this->billable('2026-10-01', '2026-11-25', 160);
-        $this->billable('2026-11-18', '2026-11-25', 100);
+        $this->billable('2026-10-01', '2026-11-26', 160);
+        $this->billable('2026-11-18', '2026-11-26', 100);
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
 
@@ -354,9 +356,72 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertStringContainsString('a week-long drop to Sunday 22 November', $mails[0]->getOriginalMessage()->getSubject());
     }
 
+    public function test_one_missing_day_does_not_switch_off_the_week_check(): void
+    {
+        $this->billable('2026-10-01', '2026-11-26', 160);
+        $this->billable('2026-11-18', '2026-11-26', 100);
+        unset($this->dashboard['2026-11-03']);
+
+        $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
+
+        $this->assertSame('week-drop', $this->row('2026-11-22')->alert);
+    }
+
+    public function test_an_alert_that_cannot_be_sent_is_judged_again_next_run(): void
+    {
+        $this->billable('2026-10-01', '2026-11-26', 160);
+        $this->dashboard['2026-11-24'][0] = 60;
+        config(['freegle.whatjobs.clicks_report_to' => 'not an address']);
+
+        $this->artisan('integrations:whatjobs-clicks')
+            ->expectsOutputToContain('Could not send the WhatJobs clicks alert')
+            ->assertFailed();
+        $this->assertNull($this->row('2026-11-24')->judged_at);
+
+        config(['freegle.whatjobs.clicks_report_to' => 'cto-test@example.org']);
+        $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
+
+        $this->assertCount(1, $this->mails());
+        $this->assertSame('day-drop', $this->row('2026-11-24')->alert);
+    }
+
+    public function test_a_recent_day_with_no_clicks_at_all_is_not_yet_published(): void
+    {
+        $this->billable('2026-10-01', '2026-11-26', 160);
+        $this->dashboard['2026-11-26'] = [0, 0, 0, 0, 0, 0];
+        // A finalised day with no clicks at all is real, and is news.
+        $this->dashboard['2026-11-24'] = [0, 0, 0, 0, 0, 0];
+
+        $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
+
+        $this->assertNull($this->row('2026-11-26')->billable_clicks);
+        $this->assertSame('day-drop', $this->row('2026-11-24')->alert);
+    }
+
+    public function test_a_broken_activity_log_does_not_excuse_a_drop(): void
+    {
+        $this->billable('2026-10-01', '2026-11-26', 160);
+        $this->dashboard['2026-11-24'][0] = 40;
+        // Ten active members a day as usual, two on the day: more likely the log than the site.
+        for ($d = CarbonImmutable::parse('2026-10-01'); $d->lte(CarbonImmutable::parse('2026-11-19')); $d = $d->addDay()) {
+            $this->storedDay($d->toDateString(), ['active_users' => 10]);
+        }
+        $users = [];
+        for ($i = 0; $i < 10; $i++) {
+            $users[] = $this->createTestUser();
+        }
+        for ($d = CarbonImmutable::parse('2026-11-20'); $d->lte(CarbonImmutable::parse('2026-11-26')); $d = $d->addDay()) {
+            $this->activeMembers($d->toDateString(), $d->toDateString() === '2026-11-24' ? array_slice($users, 0, 2) : $users);
+        }
+
+        $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
+
+        $this->assertSame('day-drop', $this->row('2026-11-24')->alert);
+    }
+
     public function test_the_alert_carries_the_chart_in_the_message(): void
     {
-        $this->billable('2026-10-01', '2026-11-25', 160);
+        $this->billable('2026-10-01', '2026-11-26', 160);
         $this->dashboard['2026-11-24'][0] = 60;
 
         $this->artisan('integrations:whatjobs-clicks')->assertSuccessful();
@@ -391,7 +456,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_the_weekly_summary_covers_the_last_finalised_monday_to_sunday(): void
     {
-        Carbon::setTestNow('2026-11-24 07:40:00');
+        Carbon::setTestNow('2026-11-25 07:40:00');
         for ($d = CarbonImmutable::parse('2026-06-01'); $d->lte(CarbonImmutable::parse('2026-11-23')); $d = $d->addDay()) {
             $old = $d->lt(CarbonImmutable::parse('2026-08-31'));
             $this->storedDay($d->toDateString(), [
@@ -418,8 +483,8 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertStringContainsString('against 200 in the 12 weeks before (down 20%)', $text);
         $this->assertStringContainsString('Billable clicks per 1,000 active members: 40.0 against 50.0 (down 20%), so members click job ads less than they did', $text);
         $this->assertStringContainsString('Friday 20 November was flagged: a sudden rise that day.', $text);
-        // Only the days first read while WhatJobs could still revise them count: 29 October to 22 November.
-        $this->assertStringContainsString('changed the billable figure for 1 of the last 25 days after first publishing it, by +10 clicks', $text);
+        // Only the days first read while WhatJobs could still revise them count: 28 October to 22 November.
+        $this->assertStringContainsString('changed the billable figure for 1 of the last 26 days after first publishing it, by +10 clicks', $text);
         $this->assertStringContainsString('WhatJobs clicks, 16 to 22 November 2026', $text);
         $this->assertStringContainsString('Mon 16 Nov | 160 | 90 | 250 | 64% | 4,000', $text);
         $this->assertStringContainsString('src="cid:', $message->getHtmlBody());
@@ -427,7 +492,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
     public function test_the_weekly_summary_can_go_to_another_address_and_says_when_figures_are_missing(): void
     {
-        Carbon::setTestNow('2026-11-24 07:40:00');
+        Carbon::setTestNow('2026-11-25 07:40:00');
         for ($d = CarbonImmutable::parse('2026-10-01'); $d->lte(CarbonImmutable::parse('2026-11-19')); $d = $d->addDay()) {
             $this->storedDay($d->toDateString(), ['billable_clicks' => 160, 'first_billable_clicks' => 160, 'active_users' => 4000]);
         }
@@ -436,14 +501,14 @@ class WhatJobsClicksCommandTest extends TestCase
 
         $message = $this->mails()[0]->getOriginalMessage();
         $this->assertSame('someone@example.org', $message->getTo()[0]->getAddress());
-        $this->assertStringContainsString('WhatJobs have not published figures for 20 November, 21 November, 22 November.', $message->getTextBody());
+        $this->assertStringContainsString('There are no WhatJobs figures for 20 November, 21 November, 22 November: WhatJobs have not published them, or the dashboard could not be read.', $message->getTextBody());
         // History filled in on one run says nothing about revisions.
         $this->assertStringNotContainsString('after first publishing', $message->getTextBody());
     }
 
     public function test_the_weekly_summary_leaves_out_notes_when_there_are_none(): void
     {
-        Carbon::setTestNow('2026-11-24 07:40:00');
+        Carbon::setTestNow('2026-11-25 07:40:00');
         for ($d = CarbonImmutable::parse('2026-06-01'); $d->lte(CarbonImmutable::parse('2026-11-23')); $d = $d->addDay()) {
             $this->storedDay($d->toDateString(), ['billable_clicks' => 160, 'first_billable_clicks' => 160, 'active_users' => 4000, 'partner_seen_at' => '2026-11-24 07:10:00']);
         }
@@ -452,7 +517,7 @@ class WhatJobsClicksCommandTest extends TestCase
 
         $text = $this->mails()[0]->getOriginalMessage()->getTextBody();
         $this->assertStringNotContainsString('Notes', $text);
-        $this->assertStringContainsString('Billable clicks per 1,000 active members: 40.0 against 40.0 (about the same), so clicks have moved with site activity.', $text);
+        $this->assertStringContainsString('Billable clicks per 1,000 active members: 40.0 against 40.0 (about the same), so clicks per member have held steady.', $text);
     }
 
     public function test_the_weekly_summary_sends_nothing_without_figures(): void
@@ -479,7 +544,7 @@ class WhatJobsClicksCommandTest extends TestCase
     public function test_both_commands_are_scheduled_with_bounded_overlap_guards(): void
     {
         $events = collect(app(\Illuminate\Console\Scheduling\Schedule::class)->events());
-        foreach (['integrations:whatjobs-clicks' => '10 7 * * *', 'integrations:whatjobs-clicks-weekly' => '40 7 * * 2'] as $command => $cron) {
+        foreach (['integrations:whatjobs-clicks' => '10 7 * * *', 'integrations:whatjobs-clicks-weekly' => '40 7 * * 3'] as $command => $cron) {
             $event = $events->first(fn ($e) => str_ends_with((string) $e->command, "'artisan' {$command}") || str_ends_with((string) $e->command, "artisan {$command}"));
             $this->assertNotNull($event, "{$command} is scheduled");
             $this->assertSame($cron, $event->expression);

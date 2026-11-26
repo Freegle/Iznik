@@ -70,7 +70,15 @@ class WhatJobsClicksCommand extends Command
 
         $findings = $this->monitor->judge($today);
         if ($findings && ! $this->option('no-mail')) {
-            Mail::to(config('freegle.whatjobs.clicks_report_to'))->send($this->composer->alert($findings));
+            try {
+                Mail::to(config('freegle.whatjobs.clicks_report_to'))->send($this->composer->alert($findings));
+            } catch (\Throwable $e) {
+                // Judge those days again next run, so the alert is not lost.
+                $this->monitor->unjudge(array_column($findings, 'date'));
+                $this->error('Could not send the WhatJobs clicks alert: '.$e->getMessage());
+
+                return self::FAILURE;
+            }
         }
 
         $latest = $this->monitor->latestPartnerDate();

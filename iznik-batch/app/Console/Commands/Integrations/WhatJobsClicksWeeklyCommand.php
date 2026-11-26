@@ -10,9 +10,9 @@ use Illuminate\Support\Facades\Mail;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
- * Tuesdays: mail the summary of the last Monday to Sunday of WhatJobs clicks, with the trend
- * chart. It runs on Tuesday because WhatJobs take 48 hours to finalise a day, so Sunday is
- * final on Tuesday morning. It reads only whatjobs_clicks_daily, so it still reports, and says
+ * Wednesdays: mail the summary of the last Monday to Sunday of WhatJobs clicks, with the trend
+ * chart. WhatJobs publish a day at midnight and take 48 hours more to finalise it, so Sunday is
+ * final on Wednesday morning. It reads only whatjobs_clicks_daily, so it still reports, and says
  * the figures are missing, when the dashboard could not be read.
  */
 #[AsCommand(name: 'integrations:whatjobs-clicks-weekly')]

@@ -117,7 +117,7 @@ Things to know before touching it:
 WhatJobs report the clicks they bill us for on their partner dashboard, a day at a time, and
 nowhere else. `integrations:whatjobs-clicks` (daily, 07:10 UTC) logs in, copies the current and
 previous month into `whatjobs_clicks_daily`, records our own figures for the same days, and mails
-an alert when a day or a week changes suddenly. `integrations:whatjobs-clicks-weekly` (Tuesday
+an alert when a day or a week changes suddenly. `integrations:whatjobs-clicks-weekly` (Wednesday
 07:40 UTC) mails a summary of the last Monday to Sunday with a trend chart. Both go to
 `freegle.whatjobs.clicks_report_to` (cto@ by default). The code is in
 `iznik-batch/app/Services/WhatJobs/`.
@@ -127,19 +127,23 @@ an alert when a day or a week changes suddenly. `integrations:whatjobs-clicks-we
   `Mozilla/5.0`, so the login "works" and every page after it goes back to the login; the client
   fails rather than reading that as no clicks. The login is `WHATJOBS_PARTNER_USERNAME` and
   `WHATJOBS_PARTNER_PASSWORD` in `.env.background`; without them both commands do nothing.
-- **WhatJobs revise a day for 48 hours**, and say so on the dashboard. Every run refreshes the
-  stored figures, `first_billable_clicks` keeps the first one, and a day is judged once, two days
-  after it ends. The weekly summary therefore runs on Tuesday, when Sunday is final.
+- **WhatJobs publish a day at 00:00 UTC the next day and revise it for 48 hours**, and say so on
+  the dashboard. Every run refreshes the stored figures, `first_billable_clicks` keeps the first
+  one, and a day is judged once, three days after it. The weekly summary therefore runs on
+  Wednesday, when Sunday is final. A recent day with no clicks of any kind is taken as not yet
+  published, and a cell that is not a count fails the run rather than reading as 0.
 - **The table is the long history.** The dashboard shows about a year, `logs_jobs` keeps 31 days
   and `users_active` two years, so our figures are copied in daily and nothing prunes the table.
-  `--months=12` fills in history; days more than nine days old are judged without an alert.
+  `--months=12 --no-mail` fills in history. Days more than 35 days old are judged without an
+  alert, so days missed while the dashboard could not be read are still judged once it can.
 - **What counts as a sudden change** was measured on January to November 2026 (the reasoning is in
   `ClickMonitorService`). Our own logged clicks follow billable clicks closely from day to day
   (r 0.80), and WhatJobs bill about two thirds of them. Active members hardly move the clicks
   from day to day, and over 2026 they rose while clicks fell, so activity only excuses a change
   the whole site shared. A day is flagged under half or over 1.6 times the 28-day median, a week
   under 0.75 or over 1.3 times the four weeks before, and a billed share under 0.7 or over 1.4
-  times usual. Run against 2026 those rules fired 15 times in ten months, each on a real event:
+  times usual. Active members only excuse a change when they moved between 0.6 and 1.5 times
+  usual; beyond that the activity log is more likely broken than the site. Run against 2026 those rules fired 15 times in ten months, each on a real event:
   the feed import failing (11 to 14 May), fewer jobs showing (16 to 25 June, 26 to 28 August),
   or a one-day spike.
 - **The alert says which side moved.** Clicks in our own log down too, with the site as busy as
@@ -150,8 +154,8 @@ an alert when a day or a week changes suddenly. `integrations:whatjobs-clicks-we
   no scripts and Gmail shows no SVG. The batch image has no font files, so the labels use GD's
   built-in font.
 - **A failure turns the SysAdmin Cron Jobs tab red**: a refused login, a page that has changed,
-  or no figures for the day two days back. The weekly summary still goes, and lists the days
-  with no figures.
+  no figures for the newest day that should be final, or an alert that could not be sent (its days
+  are judged again next run). The weekly summary still goes, and lists the days with no figures.
 
 ## The email job page does not open the advert for mail scanners
 

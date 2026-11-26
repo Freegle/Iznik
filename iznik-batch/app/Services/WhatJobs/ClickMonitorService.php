@@ -46,11 +46,28 @@ class ClickMonitorService
 
     public const MIN_BASELINE_DAYS = 14;
 
-    /** WhatJobs: "Daily click data requires 48 hours to finalise." */
-    public const FINAL_AFTER_DAYS = 2;
+    /**
+     * WhatJobs: "Daily click data requires 48 hours to finalise. Data updates at 00:00 UTC." A
+     * day first appears at 00:00 the day after it; 48 hours on is 00:00 three days after it.
+     */
+    public const FINAL_AFTER_DAYS = 3;
 
-    /** A day first judged when older than this is history being filled in, not news. */
-    public const NEWS_WITHIN_DAYS = 9;
+    /**
+     * A day first judged when older than this is history being filled in, not news. Long enough
+     * that days missed while the dashboard could not be read are still judged when it can.
+     */
+    public const NEWS_WITHIN_DAYS = 35;
+
+    /**
+     * Active members only excuse a change within this range. Outside it the activity log is more
+     * likely broken than the whole site that much quieter or busier.
+     */
+    private const ACTIVITY_EXCUSE_LOW = 0.6;
+
+    private const ACTIVITY_EXCUSE_HIGH = 1.5;
+
+    /** A seven-day block is compared when it has figures for at least this many days. */
+    private const BLOCK_MIN_DAYS = 6;
 
     /** logs_jobs keeps 31 days (WhatJobsService::analyseClickability); stay clear of the edge. */
     public const OUR_CLICKS_KEPT_DAYS = 29;
@@ -65,8 +82,14 @@ class ClickMonitorService
     public function storePartnerDays(array $days, CarbonInterface $today): int
     {
         $stored = 0;
+        $final = CarbonImmutable::parse($today)->subDays(self::FINAL_AFTER_DAYS)->toDateString();
         foreach ($days as $date => $counts) {
             if ($date >= $today->toDateString()) {
+                continue;
+            }
+            // A recent day with no clicks of any kind has not been published yet; storing it
+            // would make 0 its first figure and read as a sudden drop.
+            if ($date > $final && array_sum($counts) === 0) {
                 continue;
             }
             $row = DB::table(self::TABLE)->where('date', $date)->first();
@@ -216,7 +239,7 @@ class ClickMonitorService
         $usual = self::median($billables);
         $b = $day->billable_clicks / $usual;
         $activeUsual = $this->usual($base, 'active_users');
-        $a = ($activeUsual && $day->active_users) ? $day->active_users / $activeUsual : null;
+        $a = self::excuse(($activeUsual && $day->active_users) ? $day->active_users / $activeUsual : null);
         $ourUsual = $this->usual($base, 'our_clicks');
         $shareUsual = $this->usualShare($base);
         $share = $day->our_clicks ? $day->billable_clicks / $day->our_clicks : null;
@@ -250,7 +273,7 @@ class ClickMonitorService
             'usual' => $usual,
             'our' => $day->our_clicks === null ? null : (int) $day->our_clicks,
             'ourUsual' => $ourUsual,
-            'active' => $day->active_users === null ? null : (int) $day->active_users,
+            'active' => $day->active_users ? (int) $day->active_users : null,
             'activeUsual' => $activeUsual,
             'share' => $share,
             'shareUsual' => $shareUsual,
@@ -276,37 +299,43 @@ class ClickMonitorService
         $end = CarbonImmutable::parse($date);
         $blocks = [];
         for ($i = 0; $i < 5; $i++) {
-            $rows = $this->window($all, $end->subDays(7 * $i)->toDateString(), 7, true);
-            if (count($rows) < 7 || array_filter($rows, fn ($r) => $r->billable_clicks === null)) {
-                return null;
-            }
-            $blocks[] = $rows;
+            $blocks[] = $this->window($all, $end->subDays(7 * $i)->toDateString(), 7, true);
         }
-        $sum = fn (array $rows, string $col) => array_sum(array_map(fn ($r) => (int) $r->$col, $rows));
-        $complete = fn (array $rows, string $col) => ! array_filter($rows, fn ($r) => ! $r->$col);
-        $usual = self::median(array_map(fn ($rows) => $sum($rows, 'billable_clicks'), array_slice($blocks, 1)));
-        if ($usual <= 0) {
-            return null;
-        }
-        $ratio = $sum($blocks[0], 'billable_clicks') / $usual;
 
-        $ratioOf = function (string $col) use ($blocks, $sum, $complete): ?float {
-            foreach ($blocks as $rows) {
-                if (! $complete($rows, $col)) {
-                    return null;
+        // A block's seven-day total, scaled up from the days that have a figure, so one missing
+        // day does not switch the check off for five weeks. Too few days gives no total.
+        $total = function (array $rows, string $col): ?float {
+            $vals = [];
+            foreach ($rows as $r) {
+                if ($col === 'billable_clicks' ? $r->$col !== null : (bool) $r->$col) {
+                    $vals[] = (int) $r->$col;
                 }
             }
-            $usual = self::median(array_map(fn ($rows) => $sum($rows, $col), array_slice($blocks, 1)));
 
-            return $usual > 0 ? $sum($blocks[0], $col) / $usual : null;
+            return count($vals) >= self::BLOCK_MIN_DAYS ? array_sum($vals) * 7 / count($vals) : null;
         };
-        $active = $ratioOf('active_users');
+        $ratioOf = function (string $col) use ($blocks, $total): ?array {
+            $totals = array_map(fn ($rows) => $total($rows, $col), $blocks);
+            if (in_array(null, $totals, true)) {
+                return null;
+            }
+            $usual = self::median(array_slice($totals, 1));
+
+            return $usual > 0 ? ['ratio' => $totals[0] / $usual, 'sum' => $totals[0], 'usual' => $usual] : null;
+        };
+
+        $billable = $ratioOf('billable_clicks');
+        if (! $billable) {
+            return null;
+        }
+        $ratio = $billable['ratio'];
+        $active = self::excuse($ratioOf('active_users')['ratio'] ?? null);
 
         return [
             'ratio' => $ratio,
-            'sum' => $sum($blocks[0], 'billable_clicks'),
-            'usual' => $usual,
-            'our' => $ratioOf('our_clicks'),
+            'sum' => (int) round($billable['sum']),
+            'usual' => $billable['usual'],
+            'our' => $ratioOf('our_clicks')['ratio'] ?? null,
             'active' => $active,
             'out' => self::outside($ratio, self::WEEK_LOW, self::WEEK_HIGH)
                 && ($active === null || self::outside($ratio / $active, self::WEEK_LOW, self::WEEK_HIGH)),
@@ -595,6 +624,18 @@ class ClickMonitorService
         $mid = intdiv($n, 2);
 
         return $n % 2 ? (float) $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
+    }
+
+    /** An activity ratio that may excuse a change, or null when it is too extreme to trust. */
+    private static function excuse(?float $ratio): ?float
+    {
+        return $ratio !== null && $ratio >= self::ACTIVITY_EXCUSE_LOW && $ratio <= self::ACTIVITY_EXCUSE_HIGH ? $ratio : null;
+    }
+
+    /** Put days back to be judged again, after their alert could not be sent. */
+    public function unjudge(array $dates): void
+    {
+        DB::table(self::TABLE)->whereIn('date', $dates)->update(['judged_at' => null, 'alert' => null]);
     }
 
     public static function outside(float $ratio, float $low, float $high): bool

@@ -13,8 +13,8 @@ class ClickReportComposer
     private const HOW_JUDGED = 'A day is flagged when its billable clicks are under half or over 1.6 times the median of '
         .'the 28 days before and the number of active members does not account for it, or when WhatJobs bill under 0.7 '
         .'or over 1.4 times their usual share of the clicks in our own log. Seven days are flagged when they are under '
-        .'0.75 or over 1.3 times the median of the four weeks before. WhatJobs take 48 hours to finalise a day, so each '
-        .'day is judged two days later.';
+        .'0.75 or over 1.3 times the median of the four weeks before. WhatJobs publish a day at midnight and take '
+        .'48 hours more to finalise it, so each day is judged three days later.';
 
     public function __construct(private readonly ClickMonitorService $monitor) {}
 
@@ -76,8 +76,10 @@ class ClickReportComposer
         $w = $s['weekRatio'];
 
         $headline = [];
-        $headline[] = sprintf('%s billable clicks, %s a day. The week before: %s a day.',
-            number_format($billed), self::n($f['week']['billable_clicks']), self::n($f['lastWeek']['billable_clicks']));
+        $recorded = 7 - count($s['missing']);
+        $headline[] = sprintf('%s billable clicks%s, %s a day. The week before: %s a day.',
+            number_format($billed), $recorded < 7 ? " on the {$recorded} days with figures" : '',
+            self::n($f['week']['billable_clicks']), self::n($f['lastWeek']['billable_clicks']));
         if ($w) {
             $inRange = ! ClickMonitorService::outside($w['ratio'], ClickMonitorService::WEEK_LOW, ClickMonitorService::WEEK_HIGH);
             $headline[] = sprintf('A usual week lately (the median of the four before) was %s, so this week was %s. %s',
@@ -109,7 +111,7 @@ class ClickReportComposer
                     number_format(1000 * $now['billable_clicks'] / $now['active_users'], 1),
                     number_format(1000 * $before['billable_clicks'] / $before['active_users'], 1),
                     ClickMonitorService::change($rate),
-                    abs($rate - 1) < 0.05 ? ', so clicks have moved with site activity.'
+                    abs($rate - 1) < 0.05 ? ', so clicks per member have held steady.'
                         : ($rate < 1 ? ', so members click job ads less than they did, or WhatJobs bill fewer of the clicks.'
                             : ', so members click job ads more than they did.'));
             }
@@ -122,7 +124,8 @@ class ClickReportComposer
             $notes[] = sprintf('%s was flagged: %s.', CarbonImmutable::parse($r->date)->format('l j F'), self::codesInWords($r->alert));
         }
         if ($s['missing']) {
-            $notes[] = 'WhatJobs have not published figures for '.implode(', ', array_map(fn ($d) => CarbonImmutable::parse($d)->format('j F'), $s['missing'])).'.';
+            $notes[] = 'There are no WhatJobs figures for '.implode(', ', array_map(fn ($d) => CarbonImmutable::parse($d)->format('j F'), $s['missing']))
+                .': WhatJobs have not published them, or the dashboard could not be read.';
         }
         // Say nothing about revisions until a week of days has been read while still fresh.
         if ($s['watchedDays'] >= 7) {
