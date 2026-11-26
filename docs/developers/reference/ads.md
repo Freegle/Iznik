@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-25
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -80,9 +80,12 @@ Things to know before touching it:
   them, the Go API and the retired V1 code - and they must move together.
 - **Listings older than a week are dropped** (`MAX_AGE_DAYS`).
 - **The sync builds a new table and renames it into place**, and refuses to do so if the
-  new table has fewer than half the rows of the old one. This exists because a partial feed
-  failure once emptied the live table. If jobs go stale, look for that refusal in the logs
-  before assuming the feed is fine.
+  new table has fewer than a tenth of the rows of the old one (`MIN_SWAP_RATIO`). This exists
+  because a partial feed failure once emptied the live table. The limit is low because
+  WhatJobs publishes complete feeds of very different sizes through the day, sometimes a
+  quarter the size of the last one. A limit of one half refused all of them and left the table
+  unchanged for over a day. If jobs go stale, look for the refusal in the logs before assuming
+  the feed is fine.
 - **A gate skips the rebuild when the feed has not changed**, but never for more than
   ten hours (the syncs run at 04:40 and then every three hours from 09:00 to 21:00 UTC,
   so a limit near twenty leaves a day between forced rebuilds), so the freshness check that watches the `jobs` table still fires if the
