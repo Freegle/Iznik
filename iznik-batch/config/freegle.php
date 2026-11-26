@@ -1777,6 +1777,13 @@ return [
         // The newest job may be at most this old before integrations:check-whatjobs-freshness
         // fails and the SysAdmin Cron Jobs tab goes red.
         'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
+        // The partner dashboard login, read daily by integrations:whatjobs-clicks. Unset, the
+        // command does nothing.
+        'partner_url' => EnvSetting::env('WHATJOBS_PARTNER_URL', 'https://partner.whatjobs.com'),
+        'partner_username' => EnvSetting::env('WHATJOBS_PARTNER_USERNAME', ''),
+        'partner_password' => EnvSetting::env('WHATJOBS_PARTNER_PASSWORD', ''),
+        // Who gets the sudden-change alerts and the weekly summary.
+        'clicks_report_to' => EnvSetting::env('WHATJOBS_CLICKS_REPORT_TO', 'cto@ilovefreegle.org'),
     ],
 
     'reach_volunteering' => [
