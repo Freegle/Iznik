@@ -538,7 +538,10 @@ class ServerSizingAnalyser
         $shortOfMemory = $week['mem_used_pct_p95'] > self::MEMORY_TOO_HIGH;
 
         if ($lateJobs === []) {
-            $server['reasons'][] = 'No late-job alerts showed in the last week.';
+            // Alerts are recorded alongside the readings, so there is a week of them only once there is a week of readings.
+            $server['reasons'][] = $server['history_days'] >= 7
+                ? 'No late-job alerts showed in the last week.'
+                : 'No late-job alerts have shown since readings began.';
         } else {
             $server['reasons'][] = 'Late-job alerts in the last week: '.implode(', ', array_map(
                 fn (array $job) => sprintf('%s (about %s hour%s)', $job['slug'], rtrim(rtrim(number_format($job['hours'], 1), '0'), '.'), $job['hours'] == 1.0 ? '' : 's'),

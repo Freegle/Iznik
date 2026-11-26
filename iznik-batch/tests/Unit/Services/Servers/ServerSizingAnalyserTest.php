@@ -591,7 +591,15 @@ class ServerSizingAnalyserTest extends TestCase
         $this->assertSame('bulk', $server['verdict']);
         $this->assertSame('bulk', $server['role']);
         $this->assertNull($server['candidate']);
-        $this->assertSame(['Background bulk work, meant to run flat out.', 'No late-job alerts showed in the last week.'], $server['reasons']);
+        $this->assertSame(['Background bulk work, meant to run flat out.', 'No late-job alerts have shown since readings began.'], $server['reasons']);
+
+        // With a week or more of readings there is a week of alerts to speak for.
+        $settled = $this->server($this->analyseWithNotes(
+            [$this->machine('work', 'p24')], [$this->disk('work', 300)],
+            ['work' => $this->samples(10, 8, 12.0, 0.95, 24000, 12000)],
+            ['work' => ['role' => 'bulk', 'note' => '']],
+        ), 'work');
+        $this->assertSame(['No late-job alerts showed in the last week.'], $settled['reasons']);
         $this->assertSame(0.0, $analysis['fleet']['possible_cost_paid']);
     }
 
@@ -621,7 +629,7 @@ class ServerSizingAnalyserTest extends TestCase
         ), 'work');
         $this->assertSame('bulk_late', $short['verdict']);
         $this->assertSame('C-24', $short['candidate']['name']);
-        $this->assertSame(['No late-job alerts showed in the last week.', 'Memory is 96% used at the busy end of the week.'], $short['reasons']);
+        $this->assertSame(['No late-job alerts have shown since readings began.', 'Memory is 96% used at the busy end of the week.'], $short['reasons']);
 
         $top = $this->server($this->analyseWithNotes(
             [$this->machine('work', 'p36')], [$this->disk('work', 300)],
