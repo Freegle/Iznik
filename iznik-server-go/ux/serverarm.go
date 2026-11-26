@@ -119,13 +119,15 @@ var ServerSwitches = map[string]ServerSwitch{
 		Metric:    ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
 	},
 	"krystal-hosting-ad": {
-		Name:    "krystal-hosting-ad",
-		Opened:  "2026-10-30",
-		Channel: "server",
-		Type:    "hosting_ad",
-		Varies:  "step",
-		Arms:    []string{"control", "ad"},
-		Metric:  ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
+		Name:   "krystal-hosting-ad",
+		Opened: "2026-10-30",
+		// Never started, so every member still gets the old version. Kept so it can be started.
+		KeepUntil: "2026-12-06",
+		Channel:   "server",
+		Type:      "hosting_ad",
+		Varies:    "step",
+		Arms:      []string{"control", "ad"},
+		Metric:    ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
 	},
 }
 
