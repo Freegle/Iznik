@@ -408,8 +408,22 @@ monit_has() {  # <host> <snapshot file> <svc...>
   [ -z "$missing" ] || die "$h: no monit service named:$missing"
 }
 
+# monit answers commands only once its http interface is up, and a host with
+# `with start delay` (ops/hosts/README.md) starts it only when the delay is over:
+# a `monit monitor` straight after boot is refused with "Cannot connect". Wait for
+# the daemon to answer before sending it anything.
+monit_ready() {  # <host>
+  local h=$1 deadline=$(( $(date -u +%s) + MAINT_MONIT_TIMEOUT ))
+  $DRY && return 0
+  until [ "$(rq "$h" "monit summary >/dev/null 2>&1 && echo up")" = up ]; do
+    [ "$(date -u +%s)" -ge "$deadline" ] && die "$h: the monit daemon did not answer within ${MAINT_MONIT_TIMEOUT}s"
+    sleep 10
+  done
+}
+
 monit_unmonitor() {  # <host> <svc...>
   local h=$1; shift
+  monit_ready "$h"
   act "$h" "monit unmonitor $*" "for s in $*; do monit unmonitor \$s; done" || die "$h: monit unmonitor failed"
   ledger "$h: monit unmonitor $*" "ssh $h 'for s in $*; do monit monitor \$s; done'"
   $DRY && return 0
@@ -428,6 +442,7 @@ monit_unmonitor() {  # <host> <svc...>
 
 monit_monitor() {  # <host> <svc...>; waits until each is OK
   local h=$1; shift
+  monit_ready "$h"
   act "$h" "monit monitor $*" "for s in $*; do monit monitor \$s; done" || die "$h: monit monitor failed"
   $DRY && return 0
   local i s line pending

@@ -106,11 +106,12 @@ var ServerSwitches = map[string]ServerSwitch{
 		Arms:    []string{"control", "ask"},
 		Metric:  ServerSwitchMetric{Source: "confirm_reply_post", WindowHours: 168},
 	},
+	// Not yet started on production: no ux_experiments row on 2026-11-25. Start it or remove the
+	// switch by KeepUntil.
 	"interested-button": {
-		Name:   "interested-button",
-		Opened: "2026-10-23",
-		// Never started, so every member still gets the old version. Kept so it can be started.
-		KeepUntil: "2026-12-06",
+		Name:      "interested-button",
+		Opened:    "2026-10-23",
+		KeepUntil: "2026-12-09",
 		Channel:   "server",
 		Type:      "interested_button",
 		Varies:    "step",
@@ -118,15 +119,13 @@ var ServerSwitches = map[string]ServerSwitch{
 		Metric:    ServerSwitchMetric{Source: "interested_reply", WindowHours: 168},
 	},
 	"krystal-hosting-ad": {
-		Name:   "krystal-hosting-ad",
-		Opened: "2026-10-30",
-		// Never started, so every member still gets the old version. Kept so it can be started.
-		KeepUntil: "2026-12-06",
-		Channel:   "server",
-		Type:      "hosting_ad",
-		Varies:    "step",
-		Arms:      []string{"control", "ad"},
-		Metric:    ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
+		Name:    "krystal-hosting-ad",
+		Opened:  "2026-10-30",
+		Channel: "server",
+		Type:    "hosting_ad",
+		Varies:  "step",
+		Arms:    []string{"control", "ad"},
+		Metric:  ServerSwitchMetric{Source: "hosting_ad_click", WindowHours: 168},
 	},
 }
 
