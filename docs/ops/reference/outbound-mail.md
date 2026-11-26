@@ -51,7 +51,8 @@ base64 under `attachments`. Only the contact-group alerts attach files today, so
 spool is normally a few kilobytes and an alert with pictures can be a few megabytes.
 
 Each message is built once on its way into the spool. When the caller does not name the recipient,
-the spooler reads it from the mail's `envelope()` without building the mail. Building it twice
+the spooler reads it from the mail's `envelope()` without building the mail. A mail that names its
+recipient only while it is built is built to find it, and that build is the one spooled. Building twice
 gave Community News and matched-posts mail two tracking rows each until November 2026, so their
 open and click rates from before then are half the true figure.
 
