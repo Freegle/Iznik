@@ -1861,6 +1861,18 @@ commands:
                   sh -c 'npm ci --no-audit --no-fund && npx vitest run'
               fi
               echo "monitor-fsm unit tests passed"
+
+              # discourse-frontline sits beside monitor-fsm and shares this check, so a
+              # failure in either fails the job. Its suite installs nothing and uses no
+              # network, but it needs Node 22.13 for the built-in SQLite, so an older
+              # host Node runs it in node:22.
+              FL_DIR="$FSM_DIR/../discourse-frontline"
+              if node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)' 2>/dev/null; then
+                sh "$FL_DIR/check.sh"
+              else
+                docker run --rm -v "$FL_DIR":/app -w /app node:22 sh check.sh
+              fi
+              echo "discourse-frontline unit tests passed"
             ) > ~/test-output/monitor-fsm.out 2>&1 || RC=$?
             tail -20 ~/test-output/monitor-fsm.out
             if [ "$RC" -eq 0 ]; then echo pass > ~/test-output/monitor-fsm.result; else echo fail > ~/test-output/monitor-fsm.result; fi
