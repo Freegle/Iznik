@@ -14,7 +14,7 @@ class ClickTrendChart
 {
     private const WIDTH = 680;
 
-    private const HEIGHT = 380;
+    private const HEIGHT = 410;
 
     private const LEFT = 52;
 
@@ -22,7 +22,7 @@ class ClickTrendChart
 
     private const TOP_PANEL = [34, 228];
 
-    private const BOTTOM_PANEL = [272, 342];
+    private const BOTTOM_PANEL = [276, 380];
 
     public const COLOURS = [
         'billable' => [51, 136, 8],

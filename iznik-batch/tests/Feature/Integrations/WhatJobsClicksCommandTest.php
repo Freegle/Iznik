@@ -325,6 +325,8 @@ class WhatJobsClicksCommandTest extends TestCase
                 'invalid_clicks' => 80, 'duplicate_clicks' => 5, 'foreign_clicks' => 3, 'latent_clicks' => 2,
                 'our_clicks' => $d->gte(CarbonImmutable::parse('2026-10-27')) ? 250 : null,
                 'active_users' => 4000,
+                // Read daily from 1 November; the days before were filled in on that first run.
+                'partner_seen_at' => max($d->addDay(), CarbonImmutable::parse('2026-11-01'))->toDateTimeString(),
             ]);
         }
         DB::table(self::TABLE)->where('date', '2026-11-20')->update(['billable_clicks' => 170, 'alert' => 'day-rise']);
@@ -340,9 +342,11 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertStringContainsString('1,130 billable clicks, 161 a day. The week before: 160 a day.', $text);
         $this->assertStringContainsString('of which WhatJobs billed 65%', $text);
         $this->assertStringContainsString('against 200 in the 12 weeks before (down 20%)', $text);
-        $this->assertStringContainsString('fewer of our members click jobs', $text);
+        $this->assertStringContainsString('Billable clicks per 1,000 active members: 40.0 against 50.0 (down 20%), so members click job ads less than they did', $text);
         $this->assertStringContainsString('Friday 20 November was flagged: a sudden rise that day.', $text);
-        $this->assertStringContainsString('changed the billable figure for 1 of the last 28 days after first publishing it, by +10 clicks', $text);
+        // Only the days first read while WhatJobs could still revise them count: 29 October to 22 November.
+        $this->assertStringContainsString('changed the billable figure for 1 of the last 25 days after first publishing it, by +10 clicks', $text);
+        $this->assertStringContainsString('WhatJobs clicks, 16 to 22 November 2026', $text);
         $this->assertStringContainsString('Mon 16 Nov | 160 | 90 | 250 | 64% | 4,000', $text);
         $this->assertStringContainsString('src="cid:', $message->getHtmlBody());
     }
@@ -359,6 +363,22 @@ class WhatJobsClicksCommandTest extends TestCase
         $message = $this->mails()[0]->getOriginalMessage();
         $this->assertSame('someone@example.org', $message->getTo()[0]->getAddress());
         $this->assertStringContainsString('WhatJobs have not published figures for 20 November, 21 November, 22 November.', $message->getTextBody());
+        // History filled in on one run says nothing about revisions.
+        $this->assertStringNotContainsString('after first publishing', $message->getTextBody());
+    }
+
+    public function test_the_weekly_summary_leaves_out_notes_when_there_are_none(): void
+    {
+        Carbon::setTestNow('2026-11-24 07:40:00');
+        for ($d = CarbonImmutable::parse('2026-06-01'); $d->lte(CarbonImmutable::parse('2026-11-23')); $d = $d->addDay()) {
+            $this->storedDay($d->toDateString(), ['billable_clicks' => 160, 'first_billable_clicks' => 160, 'active_users' => 4000, 'partner_seen_at' => '2026-11-24 07:10:00']);
+        }
+
+        $this->artisan('integrations:whatjobs-clicks-weekly')->assertSuccessful();
+
+        $text = $this->mails()[0]->getOriginalMessage()->getTextBody();
+        $this->assertStringNotContainsString('Notes', $text);
+        $this->assertStringContainsString('Billable clicks per 1,000 active members: 40.0 against 40.0 (about the same), so clicks have moved with site activity.', $text);
     }
 
     public function test_the_weekly_summary_sends_nothing_without_figures(): void

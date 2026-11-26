@@ -102,15 +102,16 @@ class ClickReportComposer
                 self::n($now['billable_clicks']), self::n($before['billable_clicks']), ClickMonitorService::change($clicks));
             if ($now['active_users'] && $before['active_users']) {
                 $active = $now['active_users'] / $before['active_users'];
-                $trend[] = sprintf('Active members over the same weeks: %s a day against %s (%s). Billable clicks per 1,000 active members: %s against %s.',
-                    self::n($now['active_users']), self::n($before['active_users']), ClickMonitorService::change($active),
+                $rate = $clicks / $active;
+                $trend[] = sprintf('Active members over the same weeks: %s a day against %s (%s).',
+                    self::n($now['active_users']), self::n($before['active_users']), ClickMonitorService::change($active));
+                $trend[] = sprintf('Billable clicks per 1,000 active members: %s against %s (%s)%s',
                     number_format(1000 * $now['billable_clicks'] / $now['active_users'], 1),
-                    number_format(1000 * $before['billable_clicks'] / $before['active_users'], 1));
-                $trend[] = abs($clicks / $active - 1) < 0.1
-                    ? 'Clicks have moved with site activity.'
-                    : ($clicks < $active
-                        ? 'Clicks have fallen further than site activity, so fewer of our members click jobs, or WhatJobs bill fewer of the clicks.'
-                        : 'Clicks have risen further than site activity.');
+                    number_format(1000 * $before['billable_clicks'] / $before['active_users'], 1),
+                    ClickMonitorService::change($rate),
+                    abs($rate - 1) < 0.05 ? ', so clicks have moved with site activity.'
+                        : ($rate < 1 ? ', so members click job ads less than they did, or WhatJobs bill fewer of the clicks.'
+                            : ', so members click job ads more than they did.'));
             }
         } else {
             $trend[] = 'There are not yet 24 weeks of figures to compare.';
@@ -123,9 +124,12 @@ class ClickReportComposer
         if ($s['missing']) {
             $notes[] = 'WhatJobs have not published figures for '.implode(', ', array_map(fn ($d) => CarbonImmutable::parse($d)->format('j F'), $s['missing'])).'.';
         }
-        $notes[] = $s['revisedDays']
-            ? sprintf('WhatJobs changed the billable figure for %d of the last 28 days after first publishing it, by %+d clicks in all.', $s['revisedDays'], $s['revisedBy'])
-            : 'WhatJobs changed none of the last 28 days\' billable figures after first publishing them.';
+        // Say nothing about revisions until a week of days has been read while still fresh.
+        if ($s['watchedDays'] >= 7) {
+            $notes[] = $s['revisedDays']
+                ? sprintf('WhatJobs changed the billable figure for %d of the last %d days after first publishing it, by %+d clicks in all.', $s['revisedDays'], $s['watchedDays'], $s['revisedBy'])
+                : sprintf('WhatJobs changed none of the last %d days\' billable figures after first publishing them.', $s['watchedDays']);
+        }
 
         $rows = [];
         foreach ($s['days'] as $date => $r) {
@@ -155,12 +159,12 @@ class ClickReportComposer
 
         return new WhatJobsClicksMail(
             $subject,
-            [
-                ['heading' => sprintf('WhatJobs clicks, %s to %s', $start->format('j F'), $end->format('j F Y')), 'paragraphs' => $headline],
+            array_values(array_filter([
+                ['heading' => sprintf('WhatJobs clicks, %s to %s', $start->format($start->month === $end->month ? 'j' : 'j F'), $end->format('j F Y')), 'paragraphs' => $headline],
                 ['heading' => 'The longer trend', 'paragraphs' => $trend],
-                ['heading' => 'Notes', 'paragraphs' => $notes],
+                $notes ? ['heading' => 'Notes', 'paragraphs' => $notes] : null,
                 ['heading' => 'Day by day', 'paragraphs' => []],
-            ],
+            ])),
             ['head' => ['Day', 'Billable', 'Not billed', 'Our log', 'Billed share', 'Active members'], 'rows' => $rows],
             $points ? ClickTrendChart::render($points) : null,
             'Weekly averages of billable clicks a day, our own logged job ad clicks a day and active members a day.',

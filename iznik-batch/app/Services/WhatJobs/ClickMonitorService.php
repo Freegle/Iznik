@@ -448,11 +448,18 @@ class ClickMonitorService
             }
         }
 
-        $weekRatio = $this->weekRatio($end->toDateString(), $all);
+        // Revisions only show on days first read while WhatJobs could still change them; a day
+        // first read weeks later (history filled in) was already final.
+        $watchedDays = 0;
         $revisedDays = 0;
         $revisedBy = 0;
-        foreach ($this->window($all, $end->toDateString(), 28, true) as $r) {
-            if ($r->billable_clicks !== null && $r->first_billable_clicks !== null && $r->billable_clicks != $r->first_billable_clicks) {
+        foreach ($this->window($all, $end->toDateString(), 28, true) as $date => $r) {
+            if ($r->billable_clicks === null || $r->first_billable_clicks === null || ! $r->partner_seen_at
+                || CarbonImmutable::parse($r->partner_seen_at)->gt(CarbonImmutable::parse($date)->addDays(self::FINAL_AFTER_DAYS + 1))) {
+                continue;
+            }
+            $watchedDays++;
+            if ($r->billable_clicks != $r->first_billable_clicks) {
                 $revisedDays++;
                 $revisedBy += $r->billable_clicks - $r->first_billable_clicks;
             }
@@ -463,9 +470,10 @@ class ClickMonitorService
             'end' => $end->toDateString(),
             'days' => $week,
             'figures' => $figures,
-            'weekRatio' => $weekRatio,
+            'weekRatio' => $this->weekRatio($end->toDateString(), $all),
             'missing' => array_keys(array_filter($week, fn ($r) => $r->billable_clicks === null)),
             'alerts' => array_values(array_filter($week, fn ($r) => $r->alert !== null)),
+            'watchedDays' => $watchedDays,
             'revisedDays' => $revisedDays,
             'revisedBy' => $revisedBy,
             'latest' => $this->latestPartnerDate(),
