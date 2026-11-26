@@ -374,11 +374,19 @@ class ClickMonitorService
     {
         $steady = fn (?float $r) => $r !== null && $r >= self::STEADY_LOW && $r <= self::STEADY_HIGH;
         $same = fn (?float $r) => $r !== null && ($dir === 'drop' ? $r < self::STEADY_LOW : $r > self::STEADY_HIGH);
-        $shareCode = (bool) array_filter($codes, fn ($c) => str_starts_with($c, 'share-'));
+        $share = array_values(array_filter($codes, fn ($c) => str_starts_with($c, 'share-')));
 
-        if ($shareCode && ($ours === null || $steady($ours))) {
+        if ($share && ($ours === null || $steady($ours))) {
             return 'Members clicked job ads as usual, but WhatJobs billed a different share of those clicks. '
                 .'That is on their side: the Invalid, Duplicate, Foreign and Latent columns on their dashboard show where the clicks went.';
+        }
+        if ($share) {
+            $smaller = $share[0] === 'share-drop';
+
+            return sprintf('Both moved: our own log shows %s job ad clicks than usual, and WhatJobs billed a %s share of them.%s',
+                $ours > 1 ? 'more' : 'fewer', $smaller ? 'smaller' : 'larger',
+                $ours > 1 && $smaller ? ' That fits repeated or automated clicks, which WhatJobs do not pay for.'
+                    : ($ours < 1 && ! $smaller ? ' Check that our click log is still recording every click.' : ''));
         }
         if ($same($ours) && ($active === null || $steady($active))) {
             return $dir === 'drop'
@@ -396,7 +404,7 @@ class ClickMonitorService
             return 'Our own click log has no figures for these days to compare.';
         }
 
-        return 'Our own clicks and site activity were about as usual, so the change is in what WhatJobs counted.';
+        return 'Neither our own clicks nor site activity explain it, so the change is in what WhatJobs counted.';
     }
 
     /**
@@ -424,10 +432,13 @@ class ClickMonitorService
             return null;
         }
 
+        // A day with no clicks counts (an outage is the news); no active members means the
+        // activity log was not being written that day, so it does not.
         $perDay = function (CarbonImmutable $from, CarbonImmutable $to, string $col) use ($all): ?float {
             $vals = [];
             foreach ($all as $date => $r) {
-                if ($date >= $from->toDateString() && $date <= $to->toDateString() && $r->$col) {
+                $recorded = $col === 'active_users' ? (bool) $r->$col : $r->$col !== null;
+                if ($date >= $from->toDateString() && $date <= $to->toDateString() && $recorded) {
                     $vals[] = (int) $r->$col;
                 }
             }

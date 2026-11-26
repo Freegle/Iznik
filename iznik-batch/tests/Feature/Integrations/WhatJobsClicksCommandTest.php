@@ -271,7 +271,37 @@ class WhatJobsClicksCommandTest extends TestCase
         $this->assertStringContainsString('busier than usual', $read(['day-rise'], 'rise', 1.0, 1.5));
         $this->assertStringContainsString('Something sent more people to job ads', $read(['day-rise'], 'rise', 1.6, 1.0));
         $this->assertStringContainsString('no figures for these days', $read(['day-drop'], 'drop', null, null));
-        $this->assertStringContainsString('the change is in what WhatJobs counted', $read(['day-drop'], 'drop', 1.0, 1.0));
+        $this->assertStringContainsString('Neither our own clicks nor site activity explain it', $read(['day-drop'], 'drop', 1.0, 1.0));
+    }
+
+    public function test_a_day_with_no_clicks_counts_in_the_weekly_average(): void
+    {
+        Carbon::setTestNow('2026-11-24 07:40:00');
+        for ($d = CarbonImmutable::parse('2026-10-01'); $d->lte(CarbonImmutable::parse('2026-11-23')); $d = $d->addDay()) {
+            $this->storedDay($d->toDateString(), ['billable_clicks' => $d->toDateString() === '2026-11-18' ? 0 : 140, 'active_users' => 4000]);
+        }
+
+        $this->artisan('integrations:whatjobs-clicks-weekly')->assertSuccessful();
+
+        $this->assertStringContainsString('840 billable clicks, 120 a day.', $this->mails()[0]->getOriginalMessage()->getTextBody());
+    }
+
+    public function test_a_change_in_the_billed_share_with_our_clicks_moving_says_both_moved(): void
+    {
+        $f = [
+            'date' => '2026-11-24', 'codes' => ['share-drop'], 'billable' => 170, 'usual' => 160.0,
+            'our' => 500, 'ourUsual' => 250.0, 'active' => 4000, 'activeUsual' => 4000.0,
+            'share' => 0.34, 'shareUsual' => 0.64,
+            'discarded' => ['invalid' => 300, 'duplicate' => 2, 'foreign' => 1, 'latent' => 0], 'week' => null,
+        ];
+
+        $reading = app(ClickMonitorService::class)->describe($f)['reading'];
+
+        // Twice our usual clicks, a smaller share billed.
+        $this->assertStringContainsString('Both moved: our own log shows more job ad clicks than usual, and WhatJobs billed a smaller share of them.', $reading);
+        $this->assertStringContainsString('repeated or automated clicks', $reading);
+        $this->assertStringContainsString('Check that our click log',
+            ClickMonitorService::reading(['share-rise'], 'rise', 0.5, 1.0));
     }
 
     public function test_several_changes_go_in_one_mail(): void
