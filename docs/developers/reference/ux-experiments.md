@@ -1229,7 +1229,7 @@ no row, so an experiment that changes both mail and the site is measured from it
 counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
 probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
 counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
-are. Five ship.
+are. Four ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
