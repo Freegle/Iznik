@@ -30,7 +30,7 @@
               </b-input-group>
             </div>
 
-            <div v-if="!payPalFallback" class="frequency-toggle">
+            <div v-if="!(payPalFallback && isApp)" class="frequency-toggle">
               <button
                 :class="['freq-btn', { active: !monthly }]"
                 @click="monthly = false"
@@ -57,6 +57,12 @@
               :class="{ 'payment-section--pending': !amountSettled }"
               :aria-hidden="!amountSettled"
             >
+              <p
+                v-if="payPalFallback && !isApp && monthly"
+                class="text-muted small mb-2"
+              >
+                Monthly giving isn't available just now. This button gives once.
+              </p>
               <DonationButton
                 v-if="payPalFallback && !isApp"
                 :key="payAmount + '-fallback'"
@@ -314,6 +320,12 @@ function succeeded() {
 function noMethods() {
   payPalFallback.value = true
 }
+
+// A fallback can be about one choice only (monthly set-up needs a session), so switching
+// between one-off and monthly gives Stripe another try.
+watch(monthly, () => {
+  payPalFallback.value = false
+})
 
 useHead(
   buildHead(

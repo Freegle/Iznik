@@ -410,7 +410,7 @@ describe('StripeDonate', () => {
       }
     })
 
-    it('emits error and starts no timer when creating express checkout throws', async () => {
+    it('emits error and clears its timer when creating express checkout throws', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       try {
         mockElements.create = vi.fn(() => {

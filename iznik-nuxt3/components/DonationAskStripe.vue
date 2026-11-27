@@ -60,7 +60,7 @@
                 :monthly="monthly"
                 @success="succeeded"
                 @no-payment-methods="noMethods"
-                @error="noMethods"
+                @error="noMethods('error')"
               />
             </div>
             <DonationButton
@@ -258,8 +258,10 @@ function noMethods(reason) {
   action('donation_payment_fallback', {
     amount: price.value,
     variant: variation.value,
-    // 'timeout' when express checkout was too slow, so it is not counted as no wallets.
-    reason: reason === 'timeout' ? 'stripe_timeout' : 'no_stripe_methods',
+    // Kept apart so a slow load or a Stripe failure is not counted as "no wallets".
+    reason:
+      { timeout: 'stripe_timeout', error: 'stripe_error' }[reason] ||
+      'no_stripe_methods',
   })
   payPalFallback.value = true
 }

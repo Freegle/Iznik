@@ -133,6 +133,29 @@ describe('donate page', () => {
     expect(wrapper.text()).toContain('Please donate £250')
   })
 
+  it('says so when monthly is not available, and lets the member switch back', async () => {
+    const wrapper = await mountPage({ amount: '3', monthly: '1' })
+
+    // Monthly set-up failed (for example, not signed in): the page falls back to PayPal.
+    await wrapper.findComponent({ name: 'StripeDonate' }).vm.$emit('error')
+    await flushPromises()
+
+    expect(wrapper.find('.donation-button-stub').exists()).toBe(true)
+    expect(wrapper.text()).toContain("Monthly giving isn't available just now")
+
+    // The toggle is still there, and choosing One-off tries Stripe again.
+    const oneOff = wrapper
+      .findAll('.freq-btn')
+      .find((b) => b.text() === 'One-off')
+    expect(oneOff).toBeTruthy()
+    await oneOff.trigger('click')
+    await flushPromises()
+
+    const stripe = wrapper.findComponent({ name: 'StripeDonate' })
+    expect(stripe.exists()).toBe(true)
+    expect(stripe.props('monthly')).toBe(false)
+  })
+
   it('honours a monthly link', async () => {
     const wrapper = await mountPage({ amount: '3', monthly: '1' })
 
