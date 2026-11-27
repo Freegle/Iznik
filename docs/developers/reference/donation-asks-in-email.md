@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-27
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/DonateLinkService.php
@@ -88,6 +88,11 @@ the click.
    completes, so a fast tap cannot race the login into a 401. The payment section follows an edited
    amount 700 ms after the last keystroke (and is hidden until then, so a tap cannot pay an old amount), and in the app `StripeDonate` only creates its payment
    intent in advance when there is a session; without one the intent is created on the button press.
+6. **The PayPal fallback.** On the web, `StripeDonate` emits `noPaymentMethods` when Express
+   Checkout says no wallet is available (Stripe reports each wallet as `false`, so an object of
+   all-false values counts as none), when it is not ready within 10 seconds, or `error` when
+   Stripe.js did not load at all. The page then shows the plain PayPal `DonationButton`, so the
+   box is never left blank.
 
 ## Donors who asked not to be asked
 

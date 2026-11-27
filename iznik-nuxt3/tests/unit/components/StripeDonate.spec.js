@@ -363,6 +363,78 @@ describe('StripeDonate', () => {
       expect(component.emitted('noPaymentMethods')).toBeTruthy()
     })
 
+    it('emits noPaymentMethods when ready reports every wallet as unavailable', async () => {
+      // Stripe sends the object with each wallet set to false, not an empty object.
+      const wrapper = await createWrapper()
+
+      const readyCallback = mockExpressCheckoutElement.on.mock.calls.find(
+        (call) => call[0] === 'ready'
+      )[1]
+      readyCallback({
+        availablePaymentMethods: {
+          applePay: false,
+          googlePay: false,
+          link: false,
+          paypal: false,
+        },
+      })
+
+      await flushPromises()
+
+      const component = wrapper.findComponent(StripeDonate)
+      expect(component.emitted('noPaymentMethods')).toBeTruthy()
+      expect(component.emitted('loaded')).toBeFalsy()
+    })
+
+    it('emits noPaymentMethods when express checkout never becomes ready', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const wrapper = await createWrapper()
+        const component = wrapper.findComponent(StripeDonate)
+        expect(component.emitted('noPaymentMethods')).toBeFalsy()
+
+        vi.advanceTimersByTime(15000)
+        await flushPromises()
+
+        expect(component.emitted('noPaymentMethods')).toBeTruthy()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not fall back once express checkout is ready', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const wrapper = await createWrapper()
+        const readyCallback = mockExpressCheckoutElement.on.mock.calls.find(
+          (call) => call[0] === 'ready'
+        )[1]
+        readyCallback({ availablePaymentMethods: { googlePay: true } })
+
+        vi.advanceTimersByTime(15000)
+        await flushPromises()
+
+        const component = wrapper.findComponent(StripeDonate)
+        expect(component.emitted('loaded')).toBeTruthy()
+        expect(component.emitted('noPaymentMethods')).toBeFalsy()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('emits error in web mode when there is no Stripe key', async () => {
+      const key = mockRuntimeConfig.public.STRIPE_PUBLISHABLE_KEY
+      mockRuntimeConfig.public.STRIPE_PUBLISHABLE_KEY = ''
+      try {
+        const wrapper = await createWrapper()
+        const component = wrapper.findComponent(StripeDonate)
+        expect(component.emitted('error')).toBeTruthy()
+        expect(mockElements.create).not.toHaveBeenCalled()
+      } finally {
+        mockRuntimeConfig.public.STRIPE_PUBLISHABLE_KEY = key
+      }
+    })
+
     it('emits error on loaderror', async () => {
       const wrapper = await createWrapper()
 

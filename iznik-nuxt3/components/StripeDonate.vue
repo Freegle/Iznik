@@ -3,6 +3,7 @@
     <div
       v-if="loading"
       class="d-flex flex-column justify-content-around text-center pulsate text-muted w-100"
+      :class="{ 'loading-overlay': !isApp }"
     >
       Loading donation methods...
     </div>
@@ -124,10 +125,25 @@ if (!isApp.value) {
       Sentry.captureMessage('Stripe load error', {
         extra: e,
       })
-      emit('error')
     }
   }
 }
+
+// If express checkout has not said it is ready by this time, nothing will appear in the box, so
+// let the caller show the PayPal button instead.
+const READY_TIMEOUT = 10000
+let readyTimer = null
+let settled = false
+
+function settle(event) {
+  if (settled) return
+  settled = true
+  clearTimeout(readyTimer)
+  loading.value = false
+  emit(event)
+}
+
+onBeforeUnmount(() => clearTimeout(readyTimer))
 
 const appearance = {/* appearance */}
 
@@ -286,19 +302,25 @@ onMounted(async () => {
     )
     const expressCheckoutElement = elements.create('expressCheckout', options)
     expressCheckoutElement.mount('#' + uniqueId)
+    readyTimer = setTimeout(() => {
+      console.log('Express checkout not ready in time')
+      settle('noPaymentMethods')
+    }, READY_TIMEOUT)
     expressCheckoutElement.on('ready', (event) => {
       console.log('Express checkout ready', event)
-      loading.value = false
 
+      // Stripe reports each wallet as true or false, so an object with no true value means
+      // there is nothing to show. We've seen this happen on Brave.
+      const methods = event.availablePaymentMethods
       if (
-        typeof event.availablePaymentMethods !== 'object' ||
-        !Object.keys(event.availablePaymentMethods).length
+        !methods ||
+        typeof methods !== 'object' ||
+        !Object.values(methods).some(Boolean)
       ) {
-        // We've seen this happen on Brave.
         console.log('No Stripe payment methods available')
-        emit('noPaymentMethods')
+        settle('noPaymentMethods')
       } else {
-        emit('loaded')
+        settle('loaded')
       }
     })
     expressCheckoutElement.on('loaderror', (event) => {
@@ -306,7 +328,7 @@ onMounted(async () => {
       Sentry.captureMessage('Stripe Express Checkout load error', {
         extra: event,
       })
-      emit('error')
+      settle('error')
     })
     expressCheckoutElement.on('change', (event) => {
       console.log('Express checkout change', event)
@@ -410,8 +432,16 @@ onMounted(async () => {
         }
       }
     })
+  } else if (!isApp.value) {
+    // No key, or Stripe.js would not load (often blocked): nothing will appear in the box.
+    settle('error')
   }
-  loading.value = false
+
+  // On the web, the loading message stays until express checkout settles, so the box does not
+  // empty and then refill.
+  if (isApp.value) {
+    loading.value = false
+  }
 })
 
 // Create payment intent on-demand if it wasn't ready at mount time (e.g., API error).
@@ -579,5 +609,14 @@ async function useApplePay() {
 <style scoped lang="scss">
 .height {
   min-height: 48px;
+  position: relative;
+}
+
+/* Sits over the express checkout box while it loads, so the box keeps one height. */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  min-height: 48px;
+  background: inherit;
 }
 </style>
