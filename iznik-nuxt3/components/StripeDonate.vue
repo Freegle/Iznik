@@ -3,6 +3,7 @@
     <div
       v-if="loading"
       class="d-flex flex-column justify-content-around text-center pulsate text-muted w-100"
+      :class="{ 'loading-overlay': !isApp }"
     >
       Loading donation methods...
     </div>
@@ -124,10 +125,31 @@ if (!isApp.value) {
       Sentry.captureMessage('Stripe load error', {
         extra: e,
       })
-      emit('error')
     }
   }
 }
+
+// If express checkout has not said it is ready by this time, nothing will appear in the box, so
+// let the caller show the PayPal button instead. Generous, because on a slow phone connection a
+// wallet can take a while to load, and falling back then would hide it.
+const READY_TIMEOUT = 20000
+let readyTimer = null
+let settled = false
+
+// The second argument says why, for callers that log the fallback ('timeout').
+function settle(event, reason) {
+  if (settled) return
+  settled = true
+  clearTimeout(readyTimer)
+  loading.value = false
+  if (reason) {
+    emit(event, reason)
+  } else {
+    emit(event)
+  }
+}
+
+onBeforeUnmount(() => clearTimeout(readyTimer))
 
 const appearance = {/* appearance */}
 
@@ -146,23 +168,30 @@ const options = {
 let elements = null
 
 if (stripe) {
-  if (props.monthly) {
-    console.log('Create elements for subscription', event)
-    const res = await donationStore.stripeSubscription(props.price)
-    console.log('Subscription returned', res)
+  // If this fails, elements stays null and onMounted falls back to PayPal.
+  try {
+    if (props.monthly) {
+      console.log('Create elements for subscription')
+      const res = await donationStore.stripeSubscription(props.price)
+      console.log('Subscription returned', res)
 
-    elements = stripe.elements({
-      clientSecret: res.clientSecret,
-      appearance,
-    })
-  } else {
-    console.log('Create elements for one-off payment')
-    elements = stripe.elements({
-      mode: 'payment',
-      amount: props.price * 100, // Price is in pence
-      currency: 'gbp',
-      appearance,
-    })
+      elements = stripe.elements({
+        clientSecret: res.clientSecret,
+        appearance,
+      })
+    } else {
+      console.log('Create elements for one-off payment')
+      elements = stripe.elements({
+        mode: 'payment',
+        amount: props.price * 100, // Price is in pence
+        currency: 'gbp',
+        appearance,
+      })
+    }
+  } catch (e) {
+    console.error('Stripe elements error', e)
+    Sentry.captureException(e, { tags: { stripe_step: 'elements' } })
+    elements = null
   }
 }
 
@@ -278,27 +307,43 @@ onMounted(async () => {
       emit('noPaymentMethods')
     }
   }
-  if (stripe) {
+  let expressCheckoutElement = null
+  if (stripe && elements) {
     console.log(
       'Mounted for #',
       uniqueId,
       document.getElementById(uniqueId) !== null
     )
-    const expressCheckoutElement = elements.create('expressCheckout', options)
-    expressCheckoutElement.mount('#' + uniqueId)
+    readyTimer = setTimeout(() => {
+      console.log('Express checkout not ready in time')
+      settle('noPaymentMethods', 'timeout')
+    }, READY_TIMEOUT)
+    try {
+      expressCheckoutElement = elements.create('expressCheckout', options)
+      expressCheckoutElement.mount('#' + uniqueId)
+    } catch (e) {
+      console.error('Express checkout create error', e)
+      Sentry.captureException(e, { tags: { stripe_step: 'express_mount' } })
+      expressCheckoutElement = null
+      settle('error')
+    }
+  }
+  if (expressCheckoutElement) {
     expressCheckoutElement.on('ready', (event) => {
       console.log('Express checkout ready', event)
-      loading.value = false
 
+      // Stripe reports each wallet as true or false, so an object with no true value means
+      // there is nothing to show. We've seen this happen on Brave.
+      const methods = event.availablePaymentMethods
       if (
-        typeof event.availablePaymentMethods !== 'object' ||
-        !Object.keys(event.availablePaymentMethods).length
+        !methods ||
+        typeof methods !== 'object' ||
+        !Object.values(methods).some(Boolean)
       ) {
-        // We've seen this happen on Brave.
         console.log('No Stripe payment methods available')
-        emit('noPaymentMethods')
+        settle('noPaymentMethods')
       } else {
-        emit('loaded')
+        settle('loaded')
       }
     })
     expressCheckoutElement.on('loaderror', (event) => {
@@ -306,7 +351,7 @@ onMounted(async () => {
       Sentry.captureMessage('Stripe Express Checkout load error', {
         extra: event,
       })
-      emit('error')
+      settle('error')
     })
     expressCheckoutElement.on('change', (event) => {
       console.log('Express checkout change', event)
@@ -410,8 +455,17 @@ onMounted(async () => {
         }
       }
     })
+  } else if (!isApp.value) {
+    // No key, Stripe.js would not load (often blocked), or the elements could not be set up:
+    // nothing will appear in the box. A no-op if a failed create already settled.
+    settle('error')
   }
-  loading.value = false
+
+  // On the web, the loading message stays until express checkout settles, so the box does not
+  // empty and then refill.
+  if (isApp.value) {
+    loading.value = false
+  }
 })
 
 // Create payment intent on-demand if it wasn't ready at mount time (e.g., API error).
@@ -579,5 +633,16 @@ async function useApplePay() {
 <style scoped lang="scss">
 .height {
   min-height: 48px;
+  position: relative;
+}
+
+/* Sits over the express checkout box while it loads, so the box keeps one height. */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  min-height: 48px;
+  /* Solid, so wallet buttons painting underneath before they are ready do not show through. */
+  background: var(--bs-body-bg, white);
+  z-index: 1;
 }
 </style>

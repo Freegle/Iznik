@@ -1,89 +1,103 @@
 <template>
-  <client-only>
-    <div class="adsoff-page">
-      <div class="adsoff-container">
-        <div class="adsoff-content">
-          <div class="adsoff-header">
-            <h1>Love Freegle, Hate Ads?</h1>
-            <p class="subtitle">Donate and we'll turn them off for a month.</p>
-          </div>
+  <div class="adsoff-page">
+    <div class="adsoff-container">
+      <div class="adsoff-content">
+        <div class="adsoff-header">
+          <h1>Love Freegle, Hate Ads?</h1>
+          <p class="subtitle">Donate and we'll turn them off for a month.</p>
+        </div>
 
-          <div class="adsoff-main">
-            <div class="adsoff-text">
-              <p class="intro">
-                Our charity is free to use but not free to run. Ads help cover
-                our costs - but wouldn't it be nice not to have them?
-              </p>
+        <div class="adsoff-main">
+          <div class="adsoff-text">
+            <p class="intro">
+              Our charity is free to use but not free to run. Ads help cover our
+              costs - but wouldn't it be nice not to have them?
+            </p>
 
-              <div class="donation-section">
-                <DonationThank v-if="success" />
-                <div v-else>
-                  <h2>Support Freegle</h2>
-                  <p class="donate-prompt">
-                    Please donate £3 or whatever you can give
-                  </p>
+            <div class="donation-section">
+              <DonationThank v-if="success" />
+              <div v-else>
+                <h2>Support Freegle</h2>
+                <p class="donate-prompt">
+                  Please donate £3 or whatever you can give
+                </p>
 
-                  <div class="amount-input">
-                    <b-input-group prepend="£">
-                      <b-input
-                        v-model="amount"
-                        type="number"
-                        min="1"
-                        step="1"
-                        class="amount-field"
-                      />
-                    </b-input-group>
-                  </div>
-
-                  <div v-if="parseFloat(amount)" class="payment-section">
-                    <DonationButton
-                      v-if="payPalFallback"
-                      :key="amount + '-fallback'"
-                      :text="'Donate £' + amount"
-                      :value="String(amount)"
-                      @clicked="score"
+                <div class="amount-input">
+                  <b-input-group prepend="£">
+                    <b-input
+                      v-model="amount"
+                      type="number"
+                      min="1"
+                      step="1"
+                      class="amount-field"
                     />
-                    <StripeDonate
-                      v-else
-                      :key="amount + '-stripe'"
-                      :price="parseFloat(amount)"
-                      :monthly="false"
-                      @success="succeeded"
-                      @error="payPalFallback = true"
-                      @no-payment-methods="noMethods"
-                    />
-                  </div>
-
-                  <p class="monthly-note">
-                    Regular monthly donations are especially helpful.
-                  </p>
+                  </b-input-group>
                 </div>
-              </div>
 
+                <div class="payment-section">
+                  <client-only>
+                    <template v-if="parseFloat(amount)">
+                      <DonationButton
+                        v-if="payPalFallback"
+                        :key="amount + '-fallback'"
+                        :text="'Donate £' + amount"
+                        :value="String(amount)"
+                      />
+                      <StripeDonate
+                        v-else
+                        :key="amount + '-stripe'"
+                        :price="parseFloat(amount)"
+                        :monthly="false"
+                        @success="succeeded"
+                        @error="noMethods"
+                        @no-payment-methods="noMethods"
+                      />
+                    </template>
+                    <template #fallback>
+                      <div class="payment-placeholder text-muted pulsate">
+                        Loading donation methods...
+                      </div>
+                    </template>
+                  </client-only>
+                </div>
+
+                <p class="monthly-note">
+                  Regular monthly donations are especially helpful.
+                </p>
+              </div>
+            </div>
+
+            <client-only>
               <div v-if="recentDonor" class="status-section">
                 <div class="status-message success">
                   <v-icon icon="heart" class="status-icon" />
                   <span>You've donated - ads are off for you. Thank you!</span>
                 </div>
               </div>
+            </client-only>
 
-              <p class="other-ways">
-                Other ways to donate are
-                <nuxt-link to="/donate">here</nuxt-link>.
-              </p>
-            </div>
+            <p class="other-ways">
+              Other ways to donate are
+              <nuxt-link to="/donate">here</nuxt-link>.
+            </p>
+          </div>
 
-            <div class="thermometer-wrapper">
-              <DonationThermometer />
-              <div class="thermometer-label">Monthly target</div>
+          <div class="thermometer-wrapper">
+            <div class="thermometer-box">
+              <client-only>
+                <DonationThermometer />
+              </client-only>
             </div>
+            <div class="thermometer-label">Monthly target</div>
           </div>
         </div>
       </div>
     </div>
-  </client-only>
+  </div>
 </template>
 <script setup>
+// The page is rendered on the server so it does not arrive empty and then jump into place. Only
+// the parts that need the browser are client-only, each in a box that keeps its height.
 import { ref } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import DonationButton from '~/components/DonationButton.vue'
@@ -225,6 +239,18 @@ function noMethods() {
 
 .payment-section {
   margin-bottom: 1rem;
+  min-height: 48px;
+}
+
+.payment-placeholder {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+/* The thermometer is drawn in the browser; keep its space so the page does not jump. */
+.thermometer-box {
+  min-height: 366px;
 }
 
 .monthly-note {
