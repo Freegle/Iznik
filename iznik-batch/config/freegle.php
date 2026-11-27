@@ -467,6 +467,45 @@ return [
         // instead, neither of which needs the email path switched off.
         'ingest_posts_via_api' => EnvSetting::env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
+        // Read TN's chat-messages feed in tn:sync (plans/2026-11-12-tn-api-chat-ingestion.md).
+        // Read-only: each record is planned and traced, and nothing is written, because the
+        // email path still writes these messages. Off until TN serves the endpoint, since every
+        // tn:sync run would otherwise ask for a feed that is not there.
+        'read_chat_feed' => EnvSetting::env('FREEGLE_TN_READ_CHAT_FEED', false),
+
+        // CUTOVER SWITCH for TN members' chat messages, separate from the posts one so the two
+        // cut over and roll back on their own. One switch for both halves, because neither is safe
+        // alone: on, tn:sync writes what the chat feed carries (ChatMessageSyncer), the email path
+        // stops routing the same mail (TnEmailRoutingGate; still archived), tn:verify-chat-coverage
+        // runs, and the tn:sync (chat) scheduled-outcome check is live. Off again, the email path
+        // routes TN chat mail at once, which is why TN keeps emailing through the soak.
+        'ingest_chat_via_api' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_VIA_API', false),
+
+        // Which kinds of TN chat message the cutover moves (TnChatMessage::KINDS, comma separated),
+        // so it can start with some rows of the plan's section 1 and leave the rest on email. Both
+        // halves of the switch read this one list.
+        'ingest_chat_kinds' => EnvSetting::env('FREEGLE_TN_INGEST_CHAT_KINDS', 'chat_reply,post_reply,user_message,volunteers,report'),
+
+        // Lets tn:chat-parity-check --apply write the API path's messages for real, to compare
+        // written rows with the email path's. Only a run on yesterday's discardable clone sets it.
+        'parity_allow_writes' => EnvSetting::env('FREEGLE_TN_PARITY_ALLOW_WRITES', false),
+
+        // After the chat cutover, tn:verify-chat-coverage: every TN chat email the archive kept, of a
+        // kind the cutover moved, must have been written from the feed. A chat message is written
+        // seconds after it is sent, so the window runs an hour behind, well inside the archive's
+        // 48 hours. Backfilling a miss is off until the misses seen are understood.
+        'verify_chat_coverage' => [
+            'lag_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_LAG_MINUTES', 60),
+            'window_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_WINDOW_MINUTES', 60),
+            'overlap_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_OVERLAP_MINUTES', 15),
+            'auto_ingest' => EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST', false),
+            // Above this many misses in one run, write none and alert: a mass miss means the sync
+            // is broken, and hours-late messages in bulk are worse than paging a person.
+            'auto_ingest_max' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST_MAX', 20),
+            // A message TN dates further back than this is not written late.
+            'max_age_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_CHAT_MAX_AGE_HOURS', 24),
+        ],
+
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
         // key, so this is enforced once for the whole run by
@@ -1662,6 +1701,12 @@ return [
         'tn_posts_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
         // Minimum TN posts expected within that window.
         'tn_posts_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
+
+        // The same for TN chat messages written from the chat feed (chat_messages_tn). About 2,600
+        // a day, with mail in every hour of a whole day measured. Only evaluated when
+        // FREEGLE_TN_INGEST_CHAT_VIA_API is on.
+        'tn_chat_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_CHAT_MAX_AGE_HOURS', 6),
+        'tn_chat_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_CHAT_MIN', 1),
 
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.

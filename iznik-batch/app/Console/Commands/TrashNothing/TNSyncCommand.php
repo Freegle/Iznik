@@ -5,6 +5,7 @@ namespace App\Console\Commands\TrashNothing;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Models\Rating;
 use App\Services\LokiService;
+use App\Services\TrashNothing\Sync\ChatMessageSyncer;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Sync\RatingsSyncer;
 use App\Services\TrashNothing\Sync\UserChangesSyncer;
@@ -43,6 +44,7 @@ class TNSyncCommand extends Command
     // The feeds whose failure holds the stored date, as the alert names them.
     private const FEED_RATINGS = 'ratings';
     private const FEED_USER_CHANGES = 'user changes';
+    private const FEED_CHAT_MESSAGES = 'chat messages';
 
     // A feed that cannot be read holds the stored date. Sentry hears once the hold has lasted
     // FEED_HOLD_ALERT_MINUTES, and the hold is given up after FEED_HOLD_MAX_MINUTES: the date
@@ -177,6 +179,33 @@ class TNSyncCommand extends Command
                     Log::info('TN-SYNC-TRACE [POSTS-SKIP] reason=feature-flag-off');
                 }
 
+                // Chat messages (plans/2026-11-12-tn-api-chat-ingestion.md). Before the cutover it
+                // only plans and traces, and the email path writes the message, so a page that cannot
+                // be read loses nothing and does not hold the stored date. After it, this is the only
+                // path, and an unread page holds the date like any feed's.
+                $chatProcessed = 0;
+                $chatWrites = (bool) config('freegle.trashnothing.ingest_chat_via_api');
+                if ($chatWrites || config('freegle.trashnothing.read_chat_feed') || $this->localTesting) {
+                    $chatSyncer = app()->makeWith(ChatMessageSyncer::class, [
+                        'dryRun' => $this->dryRun,
+                        'localTesting' => $this->localTesting,
+                        // The partner key: chat-messages is an /fd/api feed like ratings.
+                        'apiKey' => $this->apiKey,
+                        'apiBaseUrl' => $this->apiBaseUrl,
+                        'loki' => $this->loki,
+                        'write' => $chatWrites,
+                    ]);
+                    [$chatProcessed, $chatMaxDate] = $chatSyncer->sync($from, $to);
+                    if ($chatWrites && $chatSyncer->fetchFailed()) {
+                        $failedFeeds[] = self::FEED_CHAT_MESSAGES;
+                    }
+                    if ($chatMaxDate && (!$maxChangeDate || strtotime($chatMaxDate) > strtotime($maxChangeDate))) {
+                        $maxChangeDate = gmdate('Y-m-d\TH:i:s\Z', strtotime($chatMaxDate));
+                    }
+                } else {
+                    Log::info('TN-SYNC-TRACE [CHAT-SKIP] reason=feature-flag-off');
+                }
+
                 // The post sync stopped at a poster TN could not be asked about. Ratings and
                 // user changes may have dates later than that window, but one date is stored
                 // for all three, and the next run has to fetch that window again. The
@@ -215,19 +244,20 @@ class TNSyncCommand extends Command
                     $this->endFeedHold();
                 }
 
-                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $postsProcessed === 0) {
+                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $postsProcessed === 0 && $chatProcessed === 0) {
                     $this->alertIfSyncStale();
                 }
 
-                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesFlagged} shared-username groups flagged, {$postsProcessed} posts.");
+                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesFlagged} shared-username groups flagged, {$postsProcessed} posts, {$chatProcessed} chat messages.");
                 Log::info('TN sync complete', [
                     'ratings_processed' => $ratingsProcessed,
                     'changes_processed' => $changesProcessed,
                     'duplicates_flagged' => $duplicatesFlagged,
                     'posts_processed' => $postsProcessed,
+                    'chat_messages_processed' => $chatProcessed,
                 ]);
 
-                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} flagged={$duplicatesFlagged} posts={$postsProcessed} max_date=" . ($maxChangeDate ?? 'null'));
+                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} flagged={$duplicatesFlagged} posts={$postsProcessed} chat={$chatProcessed} max_date=" . ($maxChangeDate ?? 'null'));
 
                 return Command::SUCCESS;
             });

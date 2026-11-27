@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-16
+last_reviewed: 2026-11-19
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -12,6 +12,7 @@ covers:
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
   - iznik-batch/app/Services/TrashNothing/SharedAccountSplitter.php
+  - iznik-batch/app/Models/ChatMessageTn.php
   - iznik-batch/app/Services/TnMembershipBackfillService.php
   - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
@@ -890,6 +891,102 @@ command fails only on those escalations, not on any miss at all.
 
 Design rationale and the live evidence behind each rule are in
 `plans/tn-api-post-ingestion.md` section S.
+
+### Chat messages via the API
+
+TN members' chat messages reach Freegle by email today: replies in a chat to our `notify-`
+address, first replies and other messages to a member's `*-{uid}@users.ilovefreegle.org` address,
+and mail and reports to `{community}-volunteers@`. TN is building a partner feed,
+`GET /fd/api/chat-messages`, to replace that mail. The plan, with the measurements behind it, is
+[`plans/2026-11-12-tn-api-chat-ingestion.md`](../../../plans/2026-11-12-tn-api-chat-ingestion.md).
+Messages Freegle sends to TN members stay on email.
+
+It follows the posts work: the email path stays frozen, the API path is added beside it, a parity
+check compares the two on real traffic, and one switch moves over.
+
+**Reading and deciding.** `ChatMessageSyncer` reads the feed in `tn:sync` with the partner key, a
+day at a time, and sorts each window by `(date, id)` before handling it.
+`ChatMessageIngestionService::plan()` decides each record as the email handler for the same mail
+would (`handleChatNotificationReply`, `handleDirectMail`, `handleVolunteersMessage` and
+`createChatMessageFromEmail`), with the same spam and review checks, the same "last message in this
+chat is held" rule and the email path's drop reasons. It reads and never writes. On purpose it
+differs in four ways:
+
+- The sender is the account holding the TN user id (`TnMemberMatch`), never one found by address.
+  A record from an id no account holds is skipped (`tn-sender-unknown`), and so is one whose sender
+  is not in the chat TN names (`tn-sender-not-in-chat`, reported to Sentry once a day: usually an
+  account two members share, which `tn:split-shared-account` fixes).
+- The chat and the post come from ids, with no fuzzy subject match.
+- No address is attached to the sender's account.
+- TN's own notices to volunteers, from `noreply@trashnothing.com`, are not carried yet
+  (`tn-notice-not-carried`), and stay on email.
+
+**Writing.** `ChatMessageIngestionService::apply()` writes the chat if there is none yet, then the
+chat message and its `chat_messages_tn` row in one transaction. That row records which message
+each feed record became, by TN's id, meant to be the `X-Trash-Nothing-Log-Id` TN puts on every chat
+email; its unique key makes re-reading a window harmless. The message is dated when it is written,
+not when TN sent it, so a late one is still mailed to the Freegle member. Then, as the email path
+does: the sender's `lastaccess` for a chat reply or mail to volunteers, the rippling hold for a
+reply to a post, and the chat notification marked replied, with `replied_via = 'tn_api'`.
+
+**Moderators** see a TN member's message written this way like one written in the app: there is
+no "View original email" in chat review, because there is no email.
+
+**The switches.**
+
+- `FREEGLE_TN_READ_CHAT_FEED`: `tn:sync` reads the feed and only plans, tracing each record as
+  `TN-SYNC-TRACE [CHAT-PLAN]`. A page it cannot read does not hold the stored date, because the
+  email path still writes those messages. `tn:chat-parity-check` runs hourly.
+- `FREEGLE_TN_INGEST_CHAT_VIA_API`, the cutover, separate from the posts one. `tn:sync` writes,
+  with one routed Loki entry per record (`source="tn_api"`, as each email gets one with
+  `source="incoming_mail"`), and an unreadable page holds the stored date like any feed's.
+  `TnEmailRoutingGate` stops routing the same mail, which is still archived (outcome
+  `SkippedTnApi`). `tn:verify-chat-coverage` runs hourly, and the `tn:sync (chat)` scheduled-outcome
+  check is live.
+- `FREEGLE_TN_INGEST_CHAT_KINDS` lists the kinds the cutover moves (`chat_reply`, `post_reply`,
+  `user_message`, `volunteers`, `report`). Both halves read it, so a kind left out keeps arriving,
+  and being written, by email.
+
+**The gate.** `TnEmailRoutingGate::trashNothingChatKind()` says which mail is a TN member's chat the
+feed carries, by kind: From at `user.trashnothing.com` with a TN envelope, and an address `route()`
+would hand to one of the three handlers, in `route()`'s own phase order. Bounces, read receipts,
+auto-replies and the command addresses are left to the email path. TN puts no secret on reply
+mail, so the gate goes by the sender's domain: a Freegle member's mail never comes from a TN
+address, so it can never be skipped by mistake.
+
+**Comparing.** `tn:chat-parity-check` compares what the email path wrote with what `plan()` would
+write, joined on the log id: every email has a record, both paths write or neither does, and where
+both write, the same chat, sender, type, post, text and hold. A hold only the email row has is
+allowed when its reason is one `chats:process-incoming` writes, since processing can add a hold but
+never clear one. Differences the TN id rule explains are listed apart, and so are changes to the email
+path's row after it was written: a hold a moderator has since approved or rejected (`reviewedby`), and
+text cleared when the sender was forgotten. On batch-prod it reads the
+incoming archive (`--email-side=archive`); on yesterday it reads the raw mail kept beside each chat
+message (`--email-side=db`), which lasts about two days, and `--apply` there writes the API rows
+for real to compare them (refused unless `FREEGLE_TN_PARITY_ALLOW_WRITES` is set). `--feed=email`
+builds, from each email, the record TN's feed should give for it (`SyntheticChatFeed`), so our side can
+be tested on real mail before TN serves the feed. It prints ids,
+kinds and field names, never what anyone wrote. It does not yet compare the two paths' Loki entries.
+
+**Checking the gate.** `tn:chat-gate-check` runs the predicate over the real mail a snapshot keeps
+(`--source=db`, on yesterday) or the archive (`--source=archive`), and fails on any match the email path
+did not make a chat message of: that is a mail the cutover would stop routing. It also lists TN members'
+chat the gate leaves to email, with why.
+
+**After the cutover.** `tn:verify-chat-coverage` checks that every archived TN chat email of a moved
+kind has a `chat_messages_tn` row, or was skipped on purpose (noted in `DeliberateSkips` under
+`chat:` with its reason). A miss is looked up at TN by its id and fails the run, because the email
+path no longer delivers it. `--auto-ingest` (or `FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST`) writes a miss
+TN still has, through the same path as the sync, but none at all above
+`FREEGLE_TN_VERIFY_CHAT_AUTO_INGEST_MAX` in one run, and none TN dates more than
+`FREEGLE_TN_VERIFY_CHAT_MAX_AGE_HOURS` back.
+
+**Rolling back** is turning the cutover flag off: the email path routes TN chat mail again at once,
+which is why TN keeps emailing through the soak. A message the API wrote just before the switch and
+whose email arrives just after is delivered twice; the frozen email path cannot see
+`chat_messages_tn`, and that is accepted.
+
+
 ### Group Membership (Subscribe Mail)
 
 TN keeps its members' Freegle group list in step by emailing

@@ -149,6 +149,21 @@ class ScheduledOutcomeRegistry
                 ->describedAs('TrashNothing posts still being ingested from the TN API')
                 ->inCategory('cursor-staleness')
                 ->enabledWhen(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api')),
+            // The same for TN members' chat messages after their cutover: about 2,600 a day, so
+            // hours with none written means the chat feed or its ingestion has stopped. Counted
+            // over chat_messages_tn, which only the API path writes.
+            (new ProducedSinceCheck(
+                'tn:sync (chat)',
+                'chat_messages_tn',
+                'created',
+                fn (CarbonInterface $now) => $now->copy()->subHours(
+                    (int) config('freegle.monitoring.tn_chat_max_age_hours', 6)
+                ),
+                (int) config('freegle.monitoring.tn_chat_min_expected', 1),
+            ))
+                ->describedAs('TrashNothing chat messages still being written from the TN chat feed')
+                ->inCategory('cursor-staleness')
+                ->enabledWhen(fn () => (bool) config('freegle.trashnothing.ingest_chat_via_api')),
             // The check above asks only "did ANY daily digest go out today?", floor 1. That is
             // a liveness check, and a liveness check cannot see a collapse. On 2026-09-15..17
             // the daily run fell to a thirteenth of its throughput and ran around the clock -

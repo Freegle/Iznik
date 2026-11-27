@@ -19,7 +19,7 @@ TNSyncCommand (orchestrator)
 
 `GroupPostIngestionService` is the new TN-only service that re-implements the posts slice of `IncomingMailService` logic, operating on TN API DTOs instead of `ParsedEmail`. The email service is not touched.
 
-**Out of scope**: Chat (TN chat replies arrive via email and are handled by `IncomingMailService::handleChatNotificationReply` — that path remains unchanged. The TN API exposes no chat messages endpoint.)
+**Out of scope**: Chat. TN chat replies arrive via email and are handled by `IncomingMailService::handleChatNotificationReply`, unchanged by this work. TN is now building a chat-messages feed, planned separately in `plans/2026-11-12-tn-api-chat-ingestion.md`.
 
 ## File layout
 
@@ -93,7 +93,7 @@ Keep the single sync-date file. Each syncer runs in try/catch; if any throws, th
 - Side-effects: `messages_postings`, `messages_history`, `messages_groups`, `messages_spatial`, `logs (Message/Received)`, `notifyGroupMods`, `addToSpatialIndex`, `pruneSubject`, `recordFailure`
 
 ### E. Chat messages — OUT OF SCOPE
-TN chat replies continue to arrive via email and are handled by the existing `IncomingMailService::handleChatNotificationReply` path. The TN public API exposes no chat messages endpoint. No API-based chat ingestion will be built.
+TN chat replies continue to arrive via email and are handled by the existing `IncomingMailService::handleChatNotificationReply` path, unchanged by this work. When this was written the TN API exposed no chat messages endpoint. TN is now building one, `GET /fd/api/chat-messages`, and its ingestion is planned in `plans/2026-11-12-tn-api-chat-ingestion.md`.
 
 ### F. Ordering between syncers
 Order: ratings → user-changes → posts → duplicate merge.

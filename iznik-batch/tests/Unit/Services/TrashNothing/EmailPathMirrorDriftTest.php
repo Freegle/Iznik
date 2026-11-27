@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\TrashNothing;
 
 use App\Services\Mail\Incoming\IncomingMailService;
+use App\Services\TrashNothing\Ingestion\ChatMessageIngestionService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
@@ -77,14 +78,36 @@ class EmailPathMirrorDriftTest extends TestCase
         // post when it is empty, because TN is the master for it. The API mirror makes
         // the same check.
         'createGroupPostMessage'  => '2e541f310c4733ee124793d71b07d99cebc20be4adfde5dcf04fb6da3d6073bf',
+
+        // TN chat messages: mirrored in ChatMessageIngestionService (and the gate's predicate), per
+        // plans/2026-11-12-tn-api-chat-ingestion.md 4.3. Pinned when the mirror was written.
+        'handleChatNotificationReply' => '5ee34591ca68e1c9e4198be6e95f7a1fd925db4193a2ee975f61e9dd496381df',
+        'handleDirectMail'            => '9706b32ca1635c4c6f541431a5f2aa0794ce7520dcc32fbbb048ca3b2581f508',
+        'handleVolunteersMessage'     => 'b0f2d2fa61b4c49040aa4f2d415d1955bca66edc200119859d9faee7e7e819ed',
+        'createChatMessageFromEmail'  => '9766a4bdfa569235a3e74593c4cd0346fd3952cf90738bc194bbb95d4c29bf5f',
+        'findRefMessage'              => 'e68355ad9a5e3313b6959bc01328f2c7bbe87fb3d414a81149dc021fafdc324e',
+        'chatIsClosedToModerator'     => '8e633855b20b4c66171948de6398a2375bdb0a2dbd0f21d93f01be3fc1a105ab',
+        'isUserInChat'                => 'a8cbc4861a373eee9a65bac460f9da100901337ca43356e539d0491980d3ea31',
+        'trackEmailReply'             => 'c24176b0a0690f4d89fb706e7aa59f1caeb62d74a6597e6ed1d8d6024a67c687',
+        'getOrCreateUserChat'         => '7170eaec0a5f8bb8c83e420103cf4b0126e45c88bdabdb5c1cac36a411b08aec',
+        'holdReplyIfOutsideReach'     => 'f1f3f0f0d4321d018a982f0946faf6a7c602ee4dd6bc0b0e0c795c5591443807',
+        'resolveReplierLatLng'        => '8b1792afdd9d9039e361a739878b57df5006f190f31c321e991976c54e1b9f43',
+        'mapReportReason'             => '795492c5a676e27ee88127b1011d293dd3db48fc547315b692e49008045b6f1b',
+        'isKnownSpammer'              => '03748f5a653ed3e37a1d0f2a66fc09babf4f7513a9e3d1b354a548c6f124d313',
+        'isReadReceipt'               => 'ae56f409fa091f9959af06f8052106e8a93a10d833277ee100d3e32ef2868587',
     ];
 
     public static function mirroredMethods(): array
     {
-        return [
-            'handleGroupPost'        => ['handleGroupPost'],
-            'createGroupPostMessage' => ['createGroupPostMessage'],
-        ];
+        return array_combine(array_keys(self::PINNED_DIGESTS), array_map(fn ($m) => [$m], array_keys(self::PINNED_DIGESTS)));
+    }
+
+    /** Where each pinned email-path method is mirrored. */
+    private static function mirrorOf(string $method): string
+    {
+        return in_array($method, ['handleGroupPost', 'createGroupPostMessage'], true)
+            ? GroupPostIngestionService::class
+            : ChatMessageIngestionService::class;
     }
 
     #[DataProvider('mirroredMethods')]
@@ -100,7 +123,7 @@ class EmailPathMirrorDriftTest extends TestCase
                 . "It is mirrored by hand in %s. Check whether this change also belongs there, "
                 . "make it if so, then re-pin PINNED_DIGESTS['%s'] in %s to:\n\n    %s\n",
                 $method,
-                GroupPostIngestionService::class,
+                self::mirrorOf($method),
                 $method,
                 basename(__FILE__),
                 $actual,
@@ -115,6 +138,10 @@ class EmailPathMirrorDriftTest extends TestCase
         $this->assertTrue(
             (new ReflectionClass(GroupPostIngestionService::class))->hasMethod('ingest'),
             'GroupPostIngestionService::ingest() is the API-path mirror entry point.',
+        );
+        $this->assertTrue(
+            (new ReflectionClass(ChatMessageIngestionService::class))->hasMethod('plan'),
+            'ChatMessageIngestionService::plan() is the chat mirror entry point.',
         );
 
         foreach (array_keys(self::PINNED_DIGESTS) as $method) {

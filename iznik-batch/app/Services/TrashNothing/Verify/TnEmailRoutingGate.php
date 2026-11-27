@@ -3,6 +3,8 @@
 namespace App\Services\TrashNothing\Verify;
 
 use App\Services\Mail\Incoming\ParsedEmail;
+use App\Services\TrashNothing\Ingestion\TnChatMessage;
+use App\Services\TrashNothing\Sync\ChatMessageSyncer;
 
 /**
  * Decides whether an inbound email should skip the legacy routing path because
@@ -70,21 +72,28 @@ class TnEmailRoutingGate
     public const OUTCOME_SKIPPED = 'SkippedTnApi';
 
     /**
-     * True when this email is a TN group post AND the cutover flag is set.
+     * True when this email is a TN group post and the posts cutover flag is set, or a TN member's
+     * chat message of a kind the chat cutover has moved and that flag is set.
      *
-     * The flag is the same one that turns the API path on
-     * (FREEGLE_TN_INGEST_POSTS_VIA_API): switching the email path off is one half
-     * of a single cutover, and either half alone is wrong — email-off with the API
-     * off drops TN posts entirely, API-on with email still routing double-writes
-     * them.
+     * Each flag is the same one that turns its API path on (FREEGLE_TN_INGEST_POSTS_VIA_API,
+     * FREEGLE_TN_INGEST_CHAT_VIA_API): switching the email path off is one half of a single
+     * cutover, and either half alone is wrong — email-off with the API off drops the mail
+     * entirely, API-on with email still routing double-writes it. The chat kinds come from the
+     * same list ChatMessageSyncer writes (cutOverKinds()), for the same reason.
      */
     public function shouldSkipRouting(ParsedEmail $email): bool
     {
-        if (! config('freegle.trashnothing.ingest_posts_via_api', false)) {
+        if (config('freegle.trashnothing.ingest_posts_via_api', false) && $this->isTrashNothingGroupPost($email)) {
+            return true;
+        }
+
+        if (! config('freegle.trashnothing.ingest_chat_via_api', false)) {
             return false;
         }
 
-        return $this->isTrashNothingGroupPost($email);
+        $kind = $this->trashNothingChatKind($email);
+
+        return $kind !== null && in_array($kind, ChatMessageSyncer::cutOverKinds(), true);
     }
 
     /**
@@ -102,6 +111,109 @@ class TnEmailRoutingGate
         }
 
         return ! $this->claimedByAnEarlierPhase($email);
+    }
+
+    /**
+     * The command addresses route() hands to routeSystemAddress() (Phase 1) or claims in
+     * Phases 2 and 3 by local part. Several end in digits, like a member's address, so direct
+     * mail must be told apart from them by prefix.
+     */
+    private const COMMAND_PREFIXES = [
+        'readreceipt-', 'handover-', 'digestoff-', 'eventsoff-', 'newslettersoff-', 'relevantoff-',
+        'volunteeringoff-', 'notificationmailsoff-', 'unsubscribe-', 'replyto-', 'bounce-', 'notify-',
+    ];
+
+    /**
+     * Whether this is a TN member's chat message that TN's chat-messages feed carries: the
+     * flag-independent predicate of plans/2026-11-12-tn-api-chat-ingestion.md section 4.3. Under the
+     * chat cutover flag, shouldSkipRouting() stops routing what it matches.
+     */
+    public function isTrashNothingChatMessage(ParsedEmail $email): bool
+    {
+        return $this->trashNothingChatKind($email) !== null;
+    }
+
+    /**
+     * Which row of the chat plan's section 1 a TN member's email is, as a TnChatMessage kind, or
+     * null when it is not one the feed carries. Both conditions must hold:
+     *
+     *   - It comes from a TN member: From at user.trashnothing.com, and a TN envelope as
+     *     isFromTrashNothing() reads it. TN's own notices (row 9) come from noreply@trashnothing.com
+     *     and so stay on email. TN puts no secret on reply mail, so the gate cannot ask for it; a
+     *     Freegle member's mail never comes from a TN address, so it is never matched.
+     *   - route() would hand it to a handler the feed covers, in route()'s own phase order, and
+     *     that handler would write it. Bounces, read receipts and auto-replies are left to the
+     *     email path, which drops or handles them before writing anything.
+     */
+    public function trashNothingChatKind(ParsedEmail $email): ?string
+    {
+        if (! $this->isFromTrashNothingMember($email)) {
+            return null;
+        }
+
+        $localPart = strtolower(explode('@', $email->envelopeTo)[0] ?? '');
+
+        // Phase 1, system addresses.
+        if ($localPart === 'fbl' || $email->isSubscribeCommand() || $email->isUnsubscribeCommand()) {
+            return null;
+        }
+        foreach (self::COMMAND_PREFIXES as $prefix) {
+            if ($prefix !== 'notify-' && str_starts_with($localPart, $prefix)) {
+                return null;
+            }
+        }
+
+        // Phase 2, a reply in a chat (row 1), less what handleChatNotificationReply drops first.
+        if ($email->isChatNotificationReply()) {
+            if ($this->isReadReceipt($email) || $email->isBounce() || $email->isAutoSubmitted() || $email->isAutoReply()) {
+                return null;
+            }
+
+            return TnChatMessage::KIND_CHAT_REPLY;
+        }
+
+        // Phases 3 to 3c and the filters before Phase 4.
+        if ($email->isBounce() || $email->isDigestReply() || $email->isAutoReply()) {
+            return null;
+        }
+        $envelopeFrom = strtolower($email->envelopeFrom);
+        if ($envelopeFrom !== '' && $envelopeFrom === strtolower($email->envelopeTo)) {
+            return null;
+        }
+
+        // Phase 4, to a community's volunteers (rows 4 and 5). Not -auto@, which is not a TN route.
+        if ($email->isToVolunteers) {
+            return str_starts_with($email->subject ?? '', 'Reporting ')
+                ? TnChatMessage::KIND_REPORT
+                : TnChatMessage::KIND_VOLUNTEERS;
+        }
+        if ($email->isToAuto || $email->targetGroupName !== null) {
+            return null;
+        }
+
+        // Phase 6, direct mail to a member's address on our user domain (rows 2 and 3).
+        $userDomain = preg_quote((string) config('freegle.mail.user_domain', 'users.ilovefreegle.org'), '/');
+        if (! preg_match('/-\d+@' . $userDomain . '$/i', $email->envelopeTo)) {
+            return null;
+        }
+
+        return $email->getHeader('x-fd-msgid') !== null
+            ? TnChatMessage::KIND_POST_REPLY
+            : TnChatMessage::KIND_USER_MESSAGE;
+    }
+
+    private function isFromTrashNothingMember(ParsedEmail $email): bool
+    {
+        $domain = '@user.' . strtolower((string) config('freegle.mail.trashnothing_domain', 'trashnothing.com'));
+
+        return str_ends_with(strtolower(trim((string) $email->fromAddress)), $domain) && $email->isFromTrashNothing();
+    }
+
+    /** IncomingMailService::isReadReceipt(). */
+    private function isReadReceipt(ParsedEmail $email): bool
+    {
+        return str_contains(strtolower($email->getHeader('content-type') ?? ''), 'disposition-notification')
+            || str_contains(strtolower($email->getHeader('content-disposition') ?? ''), 'notification');
     }
 
     /**

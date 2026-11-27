@@ -102,6 +102,62 @@ class IncomingArchiveReader
     }
 
     /**
+     * Every readable record whose own timestamp falls in [$from, $to], with its path and that
+     * timestamp. Files are first picked by their name, which is cheap, before any is read: the
+     * archive holds all inbound mail, and reading tens of thousands of unrelated files to find an
+     * hour would dominate a run. $stats counts the files read and those that could not be.
+     *
+     * @param  array{files_scanned?: int, files_unreadable?: int}  $stats
+     * @return \Generator<int, array{string, array, CarbonImmutable}>
+     */
+    public function recordsBetween(CarbonImmutable $from, CarbonImmutable $to, array &$stats = []): \Generator
+    {
+        $stats['files_scanned'] ??= 0;
+        $stats['files_unreadable'] ??= 0;
+        $slop = $this->filenameSlopSeconds();
+
+        // Date directories a day either side, for the app-timezone/UTC difference in their names.
+        foreach ($this->files($from->subDay()->format('Y-m-d'), $to->addDay()->format('Y-m-d')) as $path) {
+            $stamp = $this->filenameTimestamp($path);
+            // A name that cannot be read is kept, so a naming change costs time rather than mail.
+            if ($stamp !== null
+                && ($stamp->getTimestamp() < $from->getTimestamp() - $slop || $stamp->getTimestamp() > $to->getTimestamp() + $slop)) {
+                continue;
+            }
+
+            $stats['files_scanned']++;
+
+            $record = $this->read($path);
+            if ($record === null) {
+                $stats['files_unreadable']++;
+                continue;
+            }
+
+            $timestamp = $this->recordTimestamp($record);
+            if ($timestamp === null || $timestamp->lt($from) || $timestamp->gt($to)) {
+                continue;
+            }
+
+            yield [$path, $record, $timestamp];
+        }
+    }
+
+    /**
+     * How far a filename's implied time may sit from the record's own UTC timestamp.
+     *
+     * IncomingArchiveService names files with date()/His (app timezone) but stamps records with
+     * gmdate() (UTC), so the two differ by the app's UTC offset: zero today, since app.timezone is
+     * UTC. Deriving it from the configured timezone keeps the prefilter right if that changes, and
+     * the extra hour covers DST and the gap between naming a file and writing it.
+     */
+    private function filenameSlopSeconds(): int
+    {
+        $offsetMinutes = CarbonImmutable::now(config('app.timezone', 'UTC'))->utcOffset();
+
+        return abs($offsetMinutes) * 60 + 3600;
+    }
+
+    /**
      * Decode one archive file.
      *
      * Returns null when the file is missing, truncated or still being written —

@@ -2438,6 +2438,124 @@ class TNSyncCommandTest extends TestCase
     }
 
     // =========================================================================
+    // Chat messages feed (plans/2026-11-12-tn-api-chat-ingestion.md)
+    // =========================================================================
+
+    public function test_chat_feed_is_not_read_while_its_flag_is_off(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+
+        Http::assertNotSent(fn (Request $request) => str_contains($request->url(), 'chat-messages'));
+    }
+
+    public function test_chat_feed_is_read_with_the_partner_key_and_writes_nothing(): void
+    {
+        config(['freegle.trashnothing.read_chat_feed' => true]);
+        $poster = $this->createTestUser();
+        $member = $this->userWithTnId(99150001);
+        $chat = $this->createTestChatRoom($poster, $member);
+        $before = DB::table('chat_messages')->count();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+            '*/chat-messages*' => Http::response(['chat_messages' => [[
+                'id' => 'tn-chat-feed-test-1',
+                'date' => '2026-03-20T12:30:00Z',
+                'tn_user_id' => 99150001,
+                'kind' => 'chat_reply',
+                'fd_chat_id' => $chat->id,
+                'text' => 'Thank you, see you then.',
+            ]]], 200),
+        ]);
+
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+
+        Http::assertSent(fn (Request $request) => str_contains($request->url(), '/chat-messages')
+            && $request['key'] === 'test-key');
+        $this->assertSame($before, DB::table('chat_messages')->count());
+        $this->assertSame(0, DB::table('chat_messages_tn')->where('tnmessageid', 'tn-chat-feed-test-1')->count());
+        // Its date counts towards the stored date like any feed's.
+        $this->assertSame('2026-03-20T12:30:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_an_unreadable_chat_feed_does_not_hold_the_stored_date_while_read_only(): void
+    {
+        config(['freegle.trashnothing.read_chat_feed' => true]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [['fd_user_id' => null, 'date' => '2026-03-20T12:00:00Z']]], 200),
+            '*/chat-messages*' => Http::response(null, 500),
+        ]);
+
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T12:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    private function fakeChatFeed(array|int $records): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [['fd_user_id' => null, 'date' => '2026-03-20T12:00:00Z']]], 200),
+            '*/chat-messages*' => is_int($records) ? Http::response(null, $records) : Http::response(['chat_messages' => $records], 200),
+        ]);
+    }
+
+    public function test_after_the_cutover_the_chat_feed_is_written(): void
+    {
+        config(['freegle.trashnothing.ingest_chat_via_api' => true]);
+        $poster = $this->createTestUser();
+        $member = $this->userWithTnId(99150002);
+        $chat = $this->createTestChatRoom($poster, $member);
+        $this->fakeChatFeed([[
+            'id' => 'tn-chat-cutover-1', 'date' => '2026-03-20T12:30:00Z', 'tn_user_id' => 99150002,
+            'kind' => 'chat_reply', 'fd_chat_id' => $chat->id, 'text' => 'On my way.',
+        ]]);
+
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+
+        $chatMsgId = DB::table('chat_messages_tn')->where('tnmessageid', 'tn-chat-cutover-1')->value('chatmsgid');
+        $this->assertNotNull($chatMsgId);
+        $this->assertSame('On my way.', DB::table('chat_messages')->where('id', $chatMsgId)->value('message'));
+        $this->assertSame('2026-03-20T12:30:00Z', trim(file_get_contents($this->dateFile)));
+
+        // Read again, as the next run's overlap does: still one message.
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+        $this->assertSame(1, DB::table('chat_messages')->where('chatid', $chat->id)->count());
+    }
+
+    public function test_after_the_cutover_a_kind_not_yet_moved_is_left_to_email(): void
+    {
+        config(['freegle.trashnothing.ingest_chat_via_api' => true, 'freegle.trashnothing.ingest_chat_kinds' => 'post_reply']);
+        $poster = $this->createTestUser();
+        $member = $this->userWithTnId(99150003);
+        $chat = $this->createTestChatRoom($poster, $member);
+        $this->fakeChatFeed([[
+            'id' => 'tn-chat-cutover-2', 'date' => '2026-03-20T12:30:00Z', 'tn_user_id' => 99150003,
+            'kind' => 'chat_reply', 'fd_chat_id' => $chat->id, 'text' => 'On my way.',
+        ]]);
+
+        $this->artisan('tn:sync', self::ONE_DAY_WINDOW)->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('chat_messages')->where('chatid', $chat->id)->count());
+    }
+
+    public function test_after_the_cutover_an_unreadable_chat_feed_holds_the_stored_date(): void
+    {
+        config(['freegle.trashnothing.ingest_chat_via_api' => true]);
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->fakeChatFeed(500);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)));
+    }
+
+    // =========================================================================
     // Local testing flag
     // =========================================================================
 
