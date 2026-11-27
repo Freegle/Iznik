@@ -220,16 +220,21 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 // doesn't overlap the full-screen overlay.
 const replyOverlayOpen = computed(() => miscStore.replyOverlayOpen)
 const routePath = computed(() => route?.path)
+const AD_FREE_PATHS = [
+  '/partnerships',
+  '/together',
+  '/adsoff',
+  '/donate',
+  '/donated',
+]
 const allowAd = computed(() => {
   // We don't want to show the ad on the landing page when logged out - looks tacky.
   // Recent donors don't see ads, so don't reserve space for them (avoids CLS).
   if (recentDonor.value) return false
-  if (
-    routePath.value === '/partnerships' ||
-    routePath.value === '/partnerships/' ||
-    routePath.value === '/together' ||
-    routePath.value === '/together/'
-  ) {
+  // The pages that ask for a donation, including the one offering to turn ads off, must not
+  // show ads themselves.
+  const path = (routePath.value || '').replace(/\/+$/, '')
+  if (AD_FREE_PATHS.includes(path)) {
     return false
   }
   return routePath.value !== '/' || loggedIn.value
