@@ -373,6 +373,21 @@ describe('DonationAskStripe', () => {
         reason: 'no_stripe_methods',
       })
     })
+
+    it('logs a timeout separately from no payment methods', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      const stripe = wrapper.findComponent({ name: 'StripeDonate' })
+      await stripe.vm.$emit('no-payment-methods', 'timeout')
+      await flushPromises()
+
+      expect(mockAction).toHaveBeenCalledWith('donation_payment_fallback', {
+        amount: expect.any(Number),
+        variant: 'minimal-friction',
+        reason: 'stripe_timeout',
+      })
+    })
   })
 
   describe('props passed to children', () => {

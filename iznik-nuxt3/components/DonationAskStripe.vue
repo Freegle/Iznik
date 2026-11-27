@@ -253,12 +253,13 @@ async function succeeded() {
   }
 }
 
-function noMethods() {
-  console.log('No payment methods')
+function noMethods(reason) {
+  console.log('No payment methods', reason)
   action('donation_payment_fallback', {
     amount: price.value,
     variant: variation.value,
-    reason: 'no_stripe_methods',
+    // 'timeout' when express checkout was too slow, so it is not counted as no wallets.
+    reason: reason === 'timeout' ? 'stripe_timeout' : 'no_stripe_methods',
   })
   payPalFallback.value = true
 }

@@ -130,17 +130,23 @@ if (!isApp.value) {
 }
 
 // If express checkout has not said it is ready by this time, nothing will appear in the box, so
-// let the caller show the PayPal button instead.
-const READY_TIMEOUT = 10000
+// let the caller show the PayPal button instead. Generous, because on a slow phone connection a
+// wallet can take a while to load, and falling back then would hide it.
+const READY_TIMEOUT = 20000
 let readyTimer = null
 let settled = false
 
-function settle(event) {
+// The second argument says why, for callers that log the fallback ('timeout').
+function settle(event, reason) {
   if (settled) return
   settled = true
   clearTimeout(readyTimer)
   loading.value = false
-  emit(event)
+  if (reason) {
+    emit(event, reason)
+  } else {
+    emit(event)
+  }
 }
 
 onBeforeUnmount(() => clearTimeout(readyTimer))
@@ -162,23 +168,30 @@ const options = {
 let elements = null
 
 if (stripe) {
-  if (props.monthly) {
-    console.log('Create elements for subscription', event)
-    const res = await donationStore.stripeSubscription(props.price)
-    console.log('Subscription returned', res)
+  // If this fails, elements stays null and onMounted falls back to PayPal.
+  try {
+    if (props.monthly) {
+      console.log('Create elements for subscription')
+      const res = await donationStore.stripeSubscription(props.price)
+      console.log('Subscription returned', res)
 
-    elements = stripe.elements({
-      clientSecret: res.clientSecret,
-      appearance,
-    })
-  } else {
-    console.log('Create elements for one-off payment')
-    elements = stripe.elements({
-      mode: 'payment',
-      amount: props.price * 100, // Price is in pence
-      currency: 'gbp',
-      appearance,
-    })
+      elements = stripe.elements({
+        clientSecret: res.clientSecret,
+        appearance,
+      })
+    } else {
+      console.log('Create elements for one-off payment')
+      elements = stripe.elements({
+        mode: 'payment',
+        amount: props.price * 100, // Price is in pence
+        currency: 'gbp',
+        appearance,
+      })
+    }
+  } catch (e) {
+    console.error('Stripe elements error', e)
+    Sentry.captureException(e, { tags: { stripe_step: 'elements' } })
+    elements = null
   }
 }
 
@@ -294,18 +307,28 @@ onMounted(async () => {
       emit('noPaymentMethods')
     }
   }
-  if (stripe) {
+  let expressCheckoutElement = null
+  if (stripe && elements) {
     console.log(
       'Mounted for #',
       uniqueId,
       document.getElementById(uniqueId) !== null
     )
-    const expressCheckoutElement = elements.create('expressCheckout', options)
-    expressCheckoutElement.mount('#' + uniqueId)
     readyTimer = setTimeout(() => {
       console.log('Express checkout not ready in time')
-      settle('noPaymentMethods')
+      settle('noPaymentMethods', 'timeout')
     }, READY_TIMEOUT)
+    try {
+      expressCheckoutElement = elements.create('expressCheckout', options)
+      expressCheckoutElement.mount('#' + uniqueId)
+    } catch (e) {
+      console.error('Express checkout create error', e)
+      Sentry.captureException(e, { tags: { stripe_step: 'express_mount' } })
+      expressCheckoutElement = null
+      settle('error')
+    }
+  }
+  if (expressCheckoutElement) {
     expressCheckoutElement.on('ready', (event) => {
       console.log('Express checkout ready', event)
 
@@ -433,7 +456,8 @@ onMounted(async () => {
       }
     })
   } else if (!isApp.value) {
-    // No key, or Stripe.js would not load (often blocked): nothing will appear in the box.
+    // No key, Stripe.js would not load (often blocked), or the elements could not be set up:
+    // nothing will appear in the box. A no-op if a failed create already settled.
     settle('error')
   }
 
@@ -617,6 +641,8 @@ async function useApplePay() {
   position: absolute;
   inset: 0;
   min-height: 48px;
-  background: inherit;
+  /* Solid, so wallet buttons painting underneath before they are ready do not show through. */
+  background: var(--bs-body-bg, white);
+  z-index: 1;
 }
 </style>

@@ -90,7 +90,7 @@ the click.
    intent in advance when there is a session; without one the intent is created on the button press.
 6. **The PayPal fallback.** On the web, `StripeDonate` emits `noPaymentMethods` when Express
    Checkout says no wallet is available (Stripe reports each wallet as `false`, so an object of
-   all-false values counts as none), when it is not ready within 10 seconds, or `error` when
+   all-false values counts as none), when it is not ready within 20 seconds (reported as `timeout`), or `error` when
    Stripe.js did not load at all. The page then shows the plain PayPal `DonationButton`, so the
    box is never left blank.
 
