@@ -136,12 +136,12 @@ describe('donate page', () => {
   it('says so when monthly is not available, and lets the member switch back', async () => {
     const wrapper = await mountPage({ amount: '3', monthly: '1' })
 
-    // Monthly set-up failed (for example, not signed in): the page falls back to PayPal.
+    // Monthly set-up needs a session, so signed out it fails and the page falls back to PayPal.
     await wrapper.findComponent({ name: 'StripeDonate' }).vm.$emit('error')
     await flushPromises()
 
     expect(wrapper.find('.donation-button-stub').exists()).toBe(true)
-    expect(wrapper.text()).toContain("Monthly giving isn't available just now")
+    expect(wrapper.text()).toContain('Please sign in to give monthly')
 
     // The toggle is still there, and choosing One-off tries Stripe again.
     const oneOff = wrapper
@@ -154,6 +154,17 @@ describe('donate page', () => {
     const stripe = wrapper.findComponent({ name: 'StripeDonate' })
     expect(stripe.exists()).toBe(true)
     expect(stripe.props('monthly')).toBe(false)
+  })
+
+  it('does not ask a signed-in member to sign in when monthly fails', async () => {
+    mockAuthStore.user = { id: 1 }
+    const wrapper = await mountPage({ amount: '3', monthly: '1' })
+
+    await wrapper.findComponent({ name: 'StripeDonate' }).vm.$emit('error')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain("Monthly giving isn't available just now")
+    expect(wrapper.text()).not.toContain('Please sign in')
   })
 
   it('honours a monthly link', async () => {

@@ -61,7 +61,13 @@
                 v-if="payPalFallback && !isApp && monthly"
                 class="text-muted small mb-2"
               >
-                Monthly giving isn't available just now. This button gives once.
+                <template v-if="myid">
+                  Monthly giving isn't available just now. This button gives
+                  once.
+                </template>
+                <template v-else>
+                  Please sign in to give monthly. This button gives once.
+                </template>
               </p>
               <DonationButton
                 v-if="payPalFallback && !isApp"
