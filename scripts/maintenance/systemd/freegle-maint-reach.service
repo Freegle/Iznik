@@ -1,0 +1,12 @@
+# The road map refresh slot (freegle-maint scheduled reach). Its own unit rather
+# than freegle-maint@reach because a refresh (housekeep, build, two exports, the
+# staging writes, the switch) can run past the three hours the host slots allow.
+[Unit]
+Description=Freegle road map refresh
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/var/www/FreegleDocker/scripts/maintenance/freegle-maint scheduled reach
+TimeoutStartSec=6h

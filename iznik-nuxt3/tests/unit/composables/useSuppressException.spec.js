@@ -219,6 +219,76 @@ describe('suppressException', () => {
 })
 
 describe('suppressSentryEvent', () => {
+  function overflow(frames) {
+    return {
+      exception: {
+        values: [
+          {
+            type: 'RangeError',
+            value: 'Maximum call stack size exceeded.',
+            stacktrace: { frames },
+          },
+        ],
+      },
+    }
+  }
+
+  it('drops a stack overflow with no frame in our bundle (the ad stack)', () => {
+    const page = 'https://www.ilovefreegle.org/explore/region/East%20Midlands'
+    expect(
+      suppressSentryEvent(
+        overflow([
+          { filename: page, function: null, lineno: 194, colno: 68 },
+          { filename: page, function: 'yk', lineno: 230, colno: 69 },
+          { filename: page, function: 'Ak', lineno: 230, colno: 415 },
+        ])
+      )
+    ).toBe(true)
+  })
+
+  it('keeps a stack overflow that passes through our bundle', () => {
+    expect(
+      suppressSentryEvent(
+        overflow([
+          {
+            filename: 'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+            function: 'recurse',
+          },
+          {
+            filename: 'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+            function: 'recurse',
+          },
+        ])
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a stack overflow in source-mapped code of ours', () => {
+    expect(
+      suppressSentryEvent(
+        overflow([
+          { filename: '/components/PostMap.vue', function: 'refit' },
+          { filename: 'app:///_nuxt/composables/useMap.js', function: 'refit' },
+        ])
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a stack overflow that runs through a script file of any host', () => {
+    expect(
+      suppressSentryEvent(
+        overflow([
+          { filename: 'https://www.ilovefreegle.org/explore', function: 'yk' },
+          { filename: 'https://cdn.example.com/lib.min.js', function: 'loop' },
+        ])
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a stack overflow with no frames at all', () => {
+    expect(suppressSentryEvent(overflow([]))).toBe(false)
+  })
+
   it('returns false for falsy input', () => {
     expect(suppressSentryEvent(null)).toBe(false)
     expect(suppressSentryEvent(undefined)).toBe(false)

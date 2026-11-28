@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
  * codebases. If one is missed, or a new join path appears later without one, the members it
  * would have covered are never picked up and nothing reports it. Once a day this re-queues
  * anyone whose join or postcode change since yesterday has no reach mail ledger row after it.
+ * The drain looks back an hour from the re-queue, so they hear about that hour's posts and
+ * not about the day they missed.
  *
  * It has no containment test of its own on purpose. The drain decides whether any live reach
  * covers the member; a member nobody covers is dequeued without mail. So this pass is two
@@ -62,12 +64,15 @@ class ReachMemberReconcileService
                     ->whereColumn('n.userid', 'l.user')
                     ->whereColumn('n.notified_at', '>=', 'l.timestamp');
             })
-            ->distinct()
-            ->pluck('l.user');
+            ->orderBy('l.timestamp')
+            ->pluck('l.timestamp', 'l.user');
 
-        foreach ($moved as $userid) {
+        // Keyed by member and read oldest first, so each member's latest move is the one kept.
+        // Queued with the time of the move, not of this pass: reach mail leaves out posts from
+        // before the queue row's time, and those that arrived since the move are theirs.
+        foreach ($moved as $userid => $movedAt) {
             if (! $dryRun) {
-                ReachMemberQueueService::enqueue((int) $userid, ReachMemberQueueService::REASON_MOVED);
+                ReachMemberQueueService::enqueue((int) $userid, ReachMemberQueueService::REASON_MOVED, $movedAt);
             }
             $queued++;
         }

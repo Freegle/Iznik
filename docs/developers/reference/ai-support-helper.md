@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-18
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -28,6 +28,7 @@ covers:
   - claude-agent-sdk/ux-internal.test.js
   - claude-agent-sdk/first-pass.js
   - claude-agent-sdk/first-pass.test.js
+  - claude-agent-sdk/mail-history.js
   - claude-agent-sdk/first-pass-prompt.js
   - claude-agent-sdk/agent-options.js
   - claude-agent-sdk/agent-options.test.js
@@ -115,6 +116,45 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 | `sentry_search` | recent Sentry issues across the nuxt3/go/capacitor/modtools projects |
 | `discourse_search` | search the community forum (bug reports cite topic numbers) |
 | `code_history_search` / `git_fixed_already` | grep git history to see if an issue is already fixed |
+| `support_mail_history` | the member's past mail with support@ and info@ (see [Past mail with support](#past-mail-with-support)); offered only when the mailbox passwords are set |
+
+### Past mail with support
+
+`mail-history.js` reads a member's past mail with the support@ and info@ mailboxes. The first pass puts
+it in its prompt, and the `support_mail_history` tool gives it to the interactive helper. One reader
+serves both.
+
+- **What it reads.** Each mailbox's All Mail folder (found by its `\All` flag, whatever its local name),
+  over IMAP to Gmail with a Google app password. Mail from, to or copied to any of the member's own
+  addresses (up to eight, preferred first, from `users_emails`), two years back, newest 15 per mailbox and
+  20 in all. A mail sent to both mailboxes appears once.
+- **What it returns.** For each mail: the date, the mailbox, `in` (from the member) or `out`, the subject
+  and up to 300 characters of the new text, with quoted mail, "On ... wrote:", forwarded headers and
+  signatures cut. Plain text is used when there is one, else the HTML with its tags taken out.
+- **Read only.** The folder is opened with `EXAMINE` and bodies are fetched with `BODY.PEEK`, so nothing
+  is marked read or changed. The tests check that no writing command is ever sent.
+- **Our own addresses are not searched.** An `@ilovefreegle.org` address (or a subdomain) is a volunteer's
+  or the system's. Searching on it would pull in the team's own mail, which is a separate data-protection
+  question.
+- **Kept per member for six hours**, in memory, so a follow-up question does not go back to Gmail.
+  Callers asking about the same member at the same time share one read, which ends within 45 seconds
+  whatever is stuck. A failure, or a result missing a mailbox, is not kept.
+- **Plus addresses.** Mail from `name+tag@` counts as the member's own (`in`) when it is found, but the
+  search uses the addresses on record, so mail only ever sent from a tagged form may not be found.
+- **When it cannot read.** No passwords: "mailbox access is not set up yet". No member, or a member with
+  no address of their own: said in plain words. A refused login, a mailbox that does not answer in 30
+  seconds or a database error: "the support mailboxes could not be read just now", so the brief never
+  says "none" when it means "not read". When only one mailbox fails, the other's mail is listed under a
+  line saying which was not read. One mail Gmail will not give is listed without its excerpt. The log
+  line names the mailbox, never the member or their mail.
+- **Inside the first pass's deadline.** The read starts after the deadline clock, and a caller that
+  stops waiting (the deadline, or the batch going away) is told "not read" at once.
+- **Audited.** Every read is in the audit trail as `support_mail_history`, with the member and, in a first
+  pass, the referral.
+- **The first pass may read only the member in its case**, as with the dump.
+
+Settings, by name only: `SUPPORT_MAIL_USER`, `SUPPORT_MAIL_PASS`, `INFO_MAIL_USER` and `INFO_MAIL_PASS`
+in the helper's `environment:` block. info@ signs in as its own account's address, not as info@.
 
 The investigation playbook (held chat replies, duplicate conversations, purged accounts,
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
@@ -246,17 +286,40 @@ Style section asks for them in the second person ("you haven't verified your ema
 never "she hasn't"), with no internal names, under a **Suggested reply** heading in a
 blockquote. The draft can then be copied out as-is and the analysis left behind.
 
-**The tone.** The prompt asks for a reply that sounds like a kind, capable volunteer wrote it: a
-greeting, a warm line showing the problem was understood, short sentences, plain words and
-contractions, one apology at most, one or two clear next steps, and none of the stock phrases
-that mark machine writing. It is under about 120 words unless the problem needs more.
+**The tone.** The prompt asks for a reply that reads like the ones the support volunteers write
+themselves (`REPLY_VOICE` in `prompt.js`). It was set from 419 replies sent from the support@ and
+info@ mailboxes to people outside Freegle in the four months to November 2026:
+
+| | Volunteers' replies | The helper's drafts before |
+|---|---|---|
+| Median length | about 55 words with the sign-off | 110 words |
+| Middle half | 37 to 94 words | 92 to 140 words |
+| Greeting | "Hi" (half), "Good morning" and the like (a quarter) | "Hi" or "Hello" |
+| Sign-off | "Best wishes" or "With warm wishes", then a first name (six in seven) | "Thanks, and best wishes" |
+
+So the prompt asks for the answer first, directions that name what is on the screen, one question
+when the cause is not known, one short apology only when something went wrong, and "Best wishes" as
+the last line. The helper cannot pass a fault on, so a draft never says that it has: the analysis
+tells the volunteer, who adds the line. Those rules (`REPLY_VOICE`) are shared with the first pass.
+
+A reply to a member has more (`MEMBER_REPLY_SHAPE`): 30 to 80 words, "Hi" and a first name on its
+own line (no time of day, as nobody knows when it will be sent), what happened and what to do
+without how Freegle works inside, and three made-up replies as examples of length and shape. The
+first pass writes to a moderator, who needs the cause, so its draft opens "Hi" with no name and
+runs to about 100 words. The few volunteer replies over 170 words in the sample were helper drafts
+that had been pasted.
+
+To measure again, sample `in:sent` in both mailboxes read-only (the reader in `mail-history.js`
+opens with EXAMINE and fetches with BODY.PEEK), cut each mail at the quoted trail and count
+words. Keep the mail out of the repository.
 
 **The review pass.** When an answer contains a **Suggested reply**, `support-agent.js` makes a
 second model turn before the volunteer sees anything (`reviewPrompt()` in `prompt.js`). It
 resumes the same session, so every tool result the draft relied on is still in front of the
 model, and asks it to list each factual claim, confirm each against what the tools returned
 (querying again if unsure), remove or turn into a question anything it cannot support, drop
-promises of fixes, dates or refunds, and rewrite the tone if it is off. The answer comes back
+promises of fixes, dates or refunds, rewrite the tone if it is off, and cut a reply of over 80
+words. The answer comes back
 with a short **Fact check** section outside the blockquote. The second turn's tokens are added to
 the run. If the pass fails or returns no reply, the first draft is shown with **Not fact-checked**
 under it, so the volunteer knows to check it by hand.
@@ -487,19 +550,23 @@ another time.
 ## First pass on a referral
 
 When a moderator refers a chat to Support, the helper makes one bounded "first pass" before a person
-looks at it. The batch asks for it; nobody in a browser can. The whole flow, including the case, the mail
-and what each person sees, is in [support-cases.md](support-cases.md). This section is the helper's part.
+looks at it. The batch asks for it; nobody in a browser can. The whole flow, including the mail
+Support gets, is in [refer-to-support.md](refer-to-support.md). This section is the helper's part.
 
 - **The route.** `POST /internal/support-first-pass` in `server.js`, behind the same guard, queue and
   429 as the survey routes above. The body limit is 20 MB, because up to five chat images travel in it.
   `cleanFirstPassRequest` in `first-pass.js` validates and trims the request. A picture that fails the
   checks in `images.js` is dropped and counted as skipped rather than refusing the pass. A Group chat is
-  accepted, though the Go API does not open cases for one.
+  accepted, though the Go API does not let one be referred.
 - **An investigation, not a form.** `runFirstPass` runs the helper's own agent headless, with the same
   read-only tools as the interactive helper (the member's dump in key mode, the live read-only database,
   logs, the error tracker, the forum and the code) and its playbook. Added to that is a first-pass method:
-  find the one question the moderator needs answered, look at recent cases first, investigate only that
-  question, and stop after about twelve tool calls. No facts are built by code; the agent looks at what
+  find the one question the moderator needs answered, investigate only that
+  question, and stop after about twelve tool calls. For a question about something not working it must find the
+  cause before it explains: read the evidence exactly, find the step where it breaks, ask what changed, compare
+  with a case that works, hold one explanation at a time and check what could prove it wrong, and keep what a
+  check showed apart from what only fits. Confidence is High only for the first. With no cause found it says so,
+  and suggests no fix. No facts are built by code; the agent looks at what
   the question needs. The answer is forced into a fixed shape (`first-pass-prompt.js`) and the chat
   images travel with the prompt. There is no review turn.
 - **The shared options.** `agent-options.js` builds the `query()` options for both the interactive agent
@@ -512,8 +579,8 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   seconds longer (`SUPPORT_FIRST_PASS_TIMEOUT`). A pass that hits the deadline ends with `DEADLINE`, and one that
   hits the turn limit with `TOO_MANY_STEPS`, rather than a partial brief.
 - **The brief, version 2.** The pass returns the question, the answer, a classification (Bug, Usage,
-  Suggestion, Incident or Other), confidence with a reason, the checks made, up to three open questions,
-  the related recent cases and a draft written to the referring moderator. Every link in the draft is
+  Suggestion, Incident or Other), confidence with a reason, the checks made, up to three open questions
+  and a draft written to the referring moderator. Every link in the draft is
   checked, and any that is not a known Freegle page is listed under "Check before sending", as are bare
   domains (a name ending in a common top-level domain, with no scheme) and email addresses that are not
   Freegle's. A credit or usage-limit error that the SDK returns as an error result is read as `CREDIT`.
@@ -522,10 +589,10 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   lockdown stops the run at once; the agent does not work round it with other tools. `ux-internal.js`
   adds the code only when the route attached one, and the message is always the route's own fixed text,
   never upstream text. The batch turns each code into a plain reason.
-- **Dump key mode.** `fetchUserDump` in `tools.js` takes a `key`, sent as `X-Dump-Key` with the case id in
-  `X-Freegle-Case`, never in the URL. The Go API accepts `USERDUMP_INTERNAL_KEY` by header only
-  (`validDumpKey` in `iznik-server-go/userdump/userdump.go`) and puts the case in its log line. A lockdown
-  refuses it like any other download. The dump is private to the run: not put in or taken from the shared cache, reused if asked for twice, and deleted when the pass ends. The first pass may dump only the member in the case.
+- **Dump key mode.** `fetchUserDump` in `tools.js` takes a `key`, sent as `X-Dump-Key` with the referral id in
+  `X-Freegle-Referral`, never in the URL. The Go API accepts `USERDUMP_INTERNAL_KEY` by header only
+  (`validDumpKey` in `iznik-server-go/userdump/userdump.go`) and puts the referral in its log line. A lockdown
+  refuses it like any other download. The dump is private to the run: not put in or taken from the shared cache, reused if asked for twice, and deleted when the pass ends. The first pass may dump only the member in the referral.
 - **The key is not in the agent's environment.** `agentEnv()` passes the agent's CLI an allowlist, not the
   helper's whole environment, and the dump keys are never in it. File reads (Read, Grep, Glob) go through a
   PreToolUse hook in `agent-options.js` for the interactive helper and the first pass alike. It resolves
@@ -536,9 +603,13 @@ and what each person sees, is in [support-cases.md](support-cases.md). This sect
   the agent. A first pass has no volunteer and reads member text, so its prompt says only the system prompt
   directs it, everything else is data, a request for another member's details is itself the finding, and no
   email, phone or postal address goes in the answer. Markdown images are stripped from the answer, and the
-  case page forbids images.
+  mail shows it as plain text.
+- **Past mail.** When the helper has the mailbox passwords it reads the member's past mail with support@
+  and info@ itself (see [Past mail with support](#past-mail-with-support)) and puts it in the prompt in
+  place of what the batch sent. Without them the batch's "not set up" stands. A reader that fails leaves
+  the pass running with the mail marked as not read.
 - **It never sends anything.** The pass returns data. It has no mail tool, and the batch alone decides what
-  is mailed. It is recorded in the audit trail as `first_pass`, with the case id.
+  is mailed. It is recorded in the audit trail as `first_pass`, with the referral id.
 
 Settings, by name only: `USERDUMP_INTERNAL_KEY`, `FIRST_PASS_MODEL` (falls back to `SUPPORT_AI_MODEL`) and
 `FIRST_PASS_MAX_TURNS` and `FIRST_PASS_DEADLINE_MS` in the helper's `environment:` block; `USERDUMP_INTERNAL_KEY` also on the Go API.
@@ -557,7 +628,7 @@ See [deployment-switches.md](deployment-switches.md).
 - **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
 - **Internal routes**: `claude-agent-sdk/ux-internal.js` (guard, queue, handler and JSON parser),
   `ux-themes.js` and `ux-groups.js` (the two coders), wired in `server.js`.
-- **First pass**: `claude-agent-sdk/first-pass.js` (route logic, validation, the headless investigation), `first-pass-prompt.js` (method, prompt and answer schema), `agent-options.js` (options shared with the interactive agent). The case flow around it is in [support-cases.md](support-cases.md).
+- **First pass**: `claude-agent-sdk/first-pass.js` (route logic, validation, the headless investigation), `first-pass-prompt.js` (method, prompt and answer schema), `agent-options.js` (options shared with the interactive agent), `mail-history.js` (past mail with support@ and info@, also behind the `support_mail_history` tool). The flow around it is in [refer-to-support.md](refer-to-support.md).
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
 - **Lockdown**: the user dump (`iznik-server-go/userdump/userdump.go`) is a download, so it is
   refused while a [lockdown](../../ops/runbooks/lockdown.md) holds `export`, for Support and Admin

@@ -80,7 +80,10 @@ export const useComposeStore = defineStore('compose', {
     storage: piniaPluginPersistedstate.localStorage(),
     // Transient upload state must not survive a reload - see
     // sanitiseRestoredAttachments() for what goes wrong when it does.
-    afterHydrate: (ctx) => ctx.store.sanitiseRestoredAttachments(),
+    afterHydrate: (ctx) => {
+      ctx.store.restoreMessagesAsArray()
+      ctx.store.sanitiseRestoredAttachments()
+    },
   },
   // We allow composing of multiple posts for the same location/email, so messages and attachments are indexed by
   // id.  The id is a client-only index; it becomes a real id once the items are posted.
@@ -668,6 +671,27 @@ export const useComposeStore = defineStore('compose', {
     // only a preview blob: URL, which died with the page that made it, so
     // there is nothing left to show and it goes.  One that did reach the
     // server is simply no longer uploading.
+    // Local storage has held `messages` as a plain object - always {} in the cases
+    // reported (Sentry NUXT3 "compose store messages is not an array", web and app,
+    // November 2026) - where an array is meant. Every reader then failed: the
+    // restore below threw "not iterable" on each page load and the drafts read as
+    // none. Put it back as an array, keeping any draft stored under a numeric key
+    // at that index, since a draft's id is its index.
+    restoreMessagesAsArray() {
+      const messages = this.messages
+      if (Array.isArray(messages)) {
+        return
+      }
+      const restored = []
+      if (messages && typeof messages === 'object') {
+        for (const [key, value] of Object.entries(messages)) {
+          if (/^\d+$/.test(key) && value && typeof value === 'object') {
+            restored[Number(key)] = value
+          }
+        }
+      }
+      this.messages = restored
+    },
     sanitiseRestoredAttachments() {
       let changed = false
       let dropped = 0

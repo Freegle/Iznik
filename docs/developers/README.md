@@ -73,6 +73,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Advertising | [./reference/ads.md](./reference/ads.md) |
 | Donations and Gift Aid | [./reference/donations-and-gift-aid.md](./reference/donations-and-gift-aid.md) |
 | Merging two accounts | [./reference/account-merge.md](./reference/account-merge.md) |
+| Waiting after failed logins | [./reference/login-backoff.md](./reference/login-backoff.md) |
 | The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
 | Impact figures on the stats pages (benefit, fly-tipping, inflation) | [./reference/impact-figures.md](./reference/impact-figures.md) |
@@ -95,7 +96,7 @@ Read these directly; the pages above link into them rather than copy them:
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
-| Support cases and the first pass on a referral | [./reference/support-cases.md](./reference/support-cases.md) |
+| Refer to Support: the mail and the first pass on a referral | [./reference/refer-to-support.md](./reference/refer-to-support.md) |
 | Contacting a community's volunteers (alerts) | [./reference/contact-group-alerts.md](./reference/contact-group-alerts.md) |
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |

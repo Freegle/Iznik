@@ -580,11 +580,13 @@ describe('ModSysAdminUxExperiments', () => {
       )
       expect(w.findAll('.ux-exp-row')).toHaveLength(25)
       expect(w.find('button.more').text()).toBe('Show 25 more')
+      // Wait for each page to be drawn: this passes alone every time but not always in a loaded
+      // full run, where 25 rows were still drawn one tick after the click.
       await w.find('button.more').trigger('click')
-      expect(w.findAll('.ux-exp-row')).toHaveLength(50)
+      await vi.waitFor(() => expect(w.findAll('.ux-exp-row')).toHaveLength(50))
       expect(w.find('button.more').text()).toBe('Show 10 more')
       await w.find('button.more').trigger('click')
-      expect(w.findAll('.ux-exp-row')).toHaveLength(60)
+      await vi.waitFor(() => expect(w.findAll('.ux-exp-row')).toHaveLength(60))
       expect(w.find('button.more').exists()).toBe(false)
     })
 

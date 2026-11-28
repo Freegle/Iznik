@@ -476,14 +476,12 @@ class UserManagementService
         UxPromptService::forgetAnswers(DB::table('ux_prompt_responses')->where('userid', $userId)->pluck('id')->all());
         DB::table('ux_prompt_responses')->where('userid', $userId)->delete();
 
-        // Support cases about this member: the brief and what the referrer said hold facts about them,
-        // and so do the case thread and the first pass and helper runs written for them.
-        // One UPDATE with a subquery, so the erasure reads nothing through the read connection and depends
-        // only on the node it writes to.
-        DB::table('support_case_messages')
-            ->whereIn('caseid', fn ($q) => $q->select('id')->from('support_cases')->where('userid', $userId))
-            ->update(['body' => '']);
-        DB::table('support_cases')->where('userid', $userId)->update(['brief' => NULL, 'reason' => NULL]);
+        // What the AI helper wrote about this member: the first pass and helper runs made for them.
+        // A referral to Support that has not been mailed yet still holds the moderator's reason, and
+        // perhaps a finished first pass, on its task row. Both go; the referral itself still reaches Support.
+        DB::table('background_tasks')->where('task_type', \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT)
+            ->where('data->memberid', $userId)
+            ->update(['data' => DB::raw("JSON_REMOVE(data, '$.reason', '$.brief', '$.reasonhash')")]);
         DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
 
         // Mark as forgotten and clear TN user ID.

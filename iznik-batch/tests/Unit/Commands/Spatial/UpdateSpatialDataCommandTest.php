@@ -11,21 +11,44 @@ class UpdateSpatialDataCommandTest extends TestCase
 {
     private string $dataDir;
 
+    /** Highway ways osmium reports per probe area; any area not named reports 50,000. */
+    private array $probeWays = [];
+
+    /** An osmium subcommand ("extract", ...) to fail, as osmium does on a file it cannot read. */
+    private ?string $failOsmium = null;
+
     protected function setUp(): void
     {
         parent::setUp();
-        // Don't actually shell out to osmium for the merge in unit tests.
-        Process::fake();
+        // Don't actually shell out to osmium in unit tests. The road check reads
+        // "Number of ways" from osmium fileinfo: report $probeWays for the area the
+        // command names, a healthy network otherwise. (Symfony quotes each argument,
+        // so the pattern matches the quoted word.)
+        Process::fake([
+            "*'fileinfo'*" => function ($process) {
+                $command = implode(' ', (array) $process->command);
+                foreach ($this->probeWays as $area => $ways) {
+                    if (str_contains($command, "probe-{$area}-highways")) {
+                        return Process::result("Number of ways: {$ways}\n");
+                    }
+                }
+
+                return Process::result("Number of ways: 50000\n");
+            },
+            '*' => function ($process) {
+                $command = (array) $process->command;
+                if ($this->failOsmium !== null && ($command[1] ?? null) === $this->failOsmium) {
+                    return Process::result('', "Could not detect file format for filename 'x.tmp'.", 1);
+                }
+
+                return Process::result();
+            },
+        ]);
         $this->dataDir = storage_path('tests/spatial');
         if (!is_dir($this->dataDir)) {
             mkdir($this->dataDir, 0755, true);
         }
         config(['freegle.spatial_data_dir' => $this->dataDir]);
-        // Pin the admin URL the reload signal targets so the test is deterministic
-        // regardless of the container's SPATIAL_KNN_URL env (from which
-        // spatial_admin_url is otherwise derived). The Http::fake() stubs and the
-        // reload-URL assertion below both expect localhost:8195.
-        config(['freegle.spatial_admin_url' => 'http://localhost:8195']);
     }
 
     protected function tearDown(): void
@@ -49,7 +72,7 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->expectsOutputToContain('no changes will be made')
             ->expectsOutputToContain('Would download: https://')
             ->expectsOutputToContain('Would run: DeprivationDataService')
-            ->expectsOutputToContain('Would signal: http://')
+            ->doesntExpectOutputToContain('Would signal')
             ->assertExitCode(0);
     }
 
@@ -88,13 +111,71 @@ class UpdateSpatialDataCommandTest extends TestCase
 
         $this->artisan('spatial:update-data')->assertExitCode(0);
 
-        $this->assertCount(2, $pbfOptions);
+        // Four extracts: GB, Ireland/NI, the Isle of Man, and Guernsey/Jersey.
+        $this->assertCount(4, $pbfOptions);
         foreach ($pbfOptions as $options) {
             $this->assertSame(UpdateSpatialDataCommand::PBF_DOWNLOAD_TIMEOUT, $options['timeout']);
             $this->assertGreaterThanOrEqual(3600, $options['timeout']);
             $this->assertSame(UpdateSpatialDataCommand::PBF_CONNECT_TIMEOUT, $options['connect_timeout']);
             $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_BYTES_PER_SEC, $options['curl'][CURLOPT_LOW_SPEED_LIMIT]);
             $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_SECONDS, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
+        }
+    }
+
+    /**
+     * A merged map with no roads on an island must not be published: the routing graph
+     * would have nothing there and every reach result for it would be silently empty.
+     */
+    public function test_refuses_a_map_with_no_roads_on_an_island(): void
+    {
+        $this->probeWays = ['isle-of-man' => 12];
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('no road network in: isle-of-man (12)')
+            ->doesntExpectOutputToContain('Step 2')
+            ->assertExitCode(1);
+
+        // Every region was still checked, so the error names all that are missing.
+        Process::assertRan(fn ($process) => str_contains(implode(' ', (array) $process->command), 'probe-guernsey-CI-highways'));
+    }
+
+    /**
+     * An osmium failure in the road check is reported as one, not read as a region with
+     * no roads (the first live run read every region as 0 for exactly that reason).
+     */
+    public function test_road_check_reports_an_osmium_failure(): void
+    {
+        $this->failOsmium = 'extract';
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Road check for anglesey-GB failed: osmium extract')
+            ->doesntExpectOutputToContain('highway ways (need')
+            ->assertExitCode(1);
+    }
+
+    /**
+     * Every region's roads are checked after the merge, from the merged file.
+     */
+    public function test_checks_roads_in_every_region(): void
+    {
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Checking every region has a road network')
+            ->assertExitCode(0);
+
+        foreach (['anglesey-GB', 'cork-IE', 'isle-of-man', 'jersey-CI', 'guernsey-CI'] as $region) {
+            Process::assertRan(function ($process) use ($region) {
+                $command = (array) $process->command;
+
+                // -F pbf: the merged file is still named .tmp, which names no format.
+                return in_array('extract', $command, true)
+                    && in_array('-F', $command, true)
+                    && in_array($this->dataDir . "/probe-{$region}.osm.pbf", $command, true)
+                    && in_array($this->dataDir . '/uk-latest.osm.pbf.tmp', $command, true);
+            });
         }
     }
 
@@ -180,6 +261,35 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
+     * Data zones in the Central Belt (Glasgow 55.86, Edinburgh 55.95) are Scotland. They
+     * used to count as England and Wales, which left real Scotland at 2,615 of 6,976 rows
+     * and failed the check.
+     */
+    public function test_csv_validation_counts_central_belt_as_scotland(): void
+    {
+        $lines = ['lat,lng,quintile'];
+        for ($i = 0; $i < 34000; $i++) {
+            $lines[] = '52.0,-1.5,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 4000; $i++) {
+            $lines[] = '55.86,-4.25,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 2600; $i++) {
+            $lines[] = '57.15,-2.1,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 890; $i++) {
+            $lines[] = '54.6,-5.9,' . (($i % 5) + 1);
+        }
+
+        Http::fake($this->buildFakeHttpResponses(implode("\n", $lines) . "\n"));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Scotland rows: 6600')
+            ->expectsOutputToContain('NI rows: 890')
+            ->assertExitCode(0);
+    }
+
+    /**
      * Test successful CSV generation and validation.
      */
     public function test_valid_csv_passes_validation(): void
@@ -193,19 +303,18 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
-     * Test reload signal is sent after successful update.
+     * The routing server has no reload endpoint (monit restarts it when the PBF changes),
+     * so a successful run makes no reload call, which used to fail every run with a 404.
      */
-    public function test_sends_reload_signal_to_server(): void
+    public function test_makes_no_reload_call(): void
     {
         Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Spatial data update complete')
             ->assertExitCode(0);
 
-        Http::assertSent(function ($request) {
-            return $request->url() === 'http://localhost:8195/v1/reload' &&
-                $request->method() === 'POST';
-        });
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/v1/reload'));
     }
 
     /**
@@ -250,7 +359,7 @@ class UpdateSpatialDataCommandTest extends TestCase
 
     /**
      * Build Http::fake() responses that stub the OSM download, all DeprivationDataService
-     * external calls, and the reload signal — returning the given CSV content from
+     * external calls — returning the given CSV content from
      * a combined IMD+geometry response that produces exactly those rows.
      *
      * Rather than constructing realistic multi-page ArcGIS payloads, we stub the
@@ -285,14 +394,15 @@ class UpdateSpatialDataCommandTest extends TestCase
         return [
             'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response($pbf, 200),
             'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf' => Http::response($pbf, 200),
-            'http://localhost:8195/v1/reload' => Http::response(['status' => 'ok'], 200),
+            'https://download.geofabrik.de/europe/isle-of-man-latest.osm.pbf' => Http::response($pbf, 200),
+            'https://download.geofabrik.de/europe/guernsey-jersey-latest.osm.pbf' => Http::response($pbf, 200),
         ];
     }
 
     /**
      * Generate a valid UK deprivation CSV (40000 rows) meeting all validation criteria:
      * - Total rows >= 40000
-     * - E&W rows (lat 49-56, lng -6 to 2) >= 30000
+     * - E&W rows (lat 49-55.3, lng -6 to 2) >= 30000
      * - Scotland rows (lat > 55.3, lng < 0) >= 5000
      * - NI rows (lat 54-55.3, lng -8.5 to -5.3) >= 800
      * - Each quintile ~20% (within 15-30% range)

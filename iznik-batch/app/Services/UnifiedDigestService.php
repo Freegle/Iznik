@@ -817,13 +817,19 @@ class UnifiedDigestService
      * Drain the member side of reach mail: members queued in rippling_reach_member_pending
      * because they joined a group, moved, returned after a long absence or switched to
      * immediate mail (see ReachMemberQueueService and iznik-server-go's reachqueue). For
-     * each, find the live posts whose reach might cover them and ask mailNewlyReachedForPost
-     * about that one member - the same containment test and the same ledger the post side
-     * uses, so there is one definition of "in reach" and nobody is mailed twice.
+     * each, find the live posts whose reach changed in the last hour and might cover them, and
+     * ask mailNewlyReachedForPost about that one member - the same containment test and the
+     * same ledger the post side uses, so there is one definition of "in reach" and nobody is
+     * mailed twice.
      *
      * Candidates are posts on a group the member belongs to with immediate mail, whose stored
      * outer bound contains the member's point (the spatial index does that), plus any post
-     * whose overflow ring admits the point per the ring index. mailNewlyReachedForPost then
+     * whose overflow ring admits the point per the ring index. Both are limited to reaches
+     * that changed no earlier than freegle.ripple.reach_member_window_minutes before the
+     * member was queued: every open post that covers a member of a dozen busy communities is
+     * over a thousand posts, and each is its own mail. The look-back is measured from the
+     * queue row, so a drain that runs late covers the same posts, and never reaches further
+     * back than twice the setting. mailNewlyReachedForPost then
      * applies the exact label test, so a candidate the bound admits but the label does not
      * is simply not mailed.
      *
@@ -835,6 +841,7 @@ class UnifiedDigestService
     private function drainMemberQueue(array &$stats, bool $dryRun, int $shard, int $shards, ?callable $shouldStop): void
     {
         $srid = (int) config('freegle.srid', 3857);
+        $windowMinutes = (int) config('freegle.ripple.reach_member_window_minutes', 60);
 
         // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
         // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
@@ -843,13 +850,33 @@ class UnifiedDigestService
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
 
-        foreach ($pending->limit(500)->get(['id', 'userid']) as $row) {
+        foreach ($pending->limit(500)->get(['id', 'userid', 'reason', 'added']) as $row) {
             if ($shouldStop && $shouldStop()) {
                 $stats['stopped'] = true;
                 break;
             }
 
             try {
+                // When the member became eligible, for every later pass: reach mail does not
+                // tell them about a post that arrived before then (mailNewlyReachedForPost).
+                // The latest time wins. A join is not recorded here: it is about one
+                // community, and the membership's own `added` already says when. A dry run
+                // writes nothing; the recipient query reads the queue row as well, so its
+                // preview is limited the same way.
+                // keep-raw: GREATEST over the existing value has no upsert equivalent.
+                if (! $dryRun && $row->reason !== \App\Services\Ripple\ReachMemberQueueService::REASON_JOINED && $this->reachMemberSinceReady()) {
+                    DB::statement(
+                        'INSERT INTO rippling_reach_member_since (userid, since) VALUES (?, ?)
+                         ON DUPLICATE KEY UPDATE since = GREATEST(since, VALUES(since))',
+                        [$row->userid, $row->added]
+                    );
+                }
+
+                // From the queue row, but never further back than twice the look-back: a row
+                // that waited days would otherwise bring days of posts at once.
+                $changedSince = \Illuminate\Support\Carbon::parse($row->added)->subMinutes($windowMinutes)
+                    ->max(now()->subMinutes(2 * $windowMinutes))
+                    ->toDateTimeString();
                 $user = User::find($row->userid);
                 $point = $user ? $this->resolveUserLatLng($user) : null;
 
@@ -858,6 +885,7 @@ class UnifiedDigestService
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
+                        ->where('mr.updated_at', '>=', $changedSince)
                         ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
                         ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
                         ->whereExists(function ($q) use ($row) {
@@ -878,6 +906,15 @@ class UnifiedDigestService
                     $settings = is_string($user->settings) ? (json_decode($user->settings, true) ?: []) : (array) $user->settings;
                     $band = $settings['browseDensityBand'] ?? null;
                     $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
+                    if ($ringAdmitted !== []) {
+                        $ringAdmitted = DB::table('rippling_reach')
+                            ->whereIn('msgid', $ringAdmitted)
+                            ->whereIn('status', ['expanding', 'done'])
+                            ->where('updated_at', '>=', $changedSince)
+                            ->pluck('msgid')
+                            ->map(fn ($id) => (int) $id)
+                            ->all();
+                    }
 
                     foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
                         $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid, true);
@@ -900,6 +937,8 @@ class UnifiedDigestService
                 }
 
                 if (! $dryRun) {
+                    // `added` is also what the look-back is measured from, so a row sent to the
+                    // back is measured from now.
                     DB::table('rippling_reach_member_pending')->where('id', $row->id)->update(['added' => now()]);
                 }
             }
@@ -1158,6 +1197,25 @@ class UnifiedDigestService
         return $lanes;
     }
 
+    /**
+     * Whether rippling_reach_member_since is there to read and write. Production tables are
+     * created by hand before a deploy; without this, a deploy that got ahead of the table
+     * would fail every reach mail query and move the pass's mark past the posts it could not
+     * mail. Only a yes is remembered, so a long-running pass picks the table up without a
+     * restart. Remove this once the table is on production.
+     */
+    private function reachMemberSinceReady(): bool
+    {
+        // keep-raw: the check Schema::hasTable makes, answered by the write node. The read
+        // node can be behind a table that was only just created.
+        return self::$reachMemberSinceReady
+            || (self::$reachMemberSinceReady = DB::connection()->selectFromWriteConnection(
+                "select 1 from information_schema.tables where table_schema = schema() and table_name = 'rippling_reach_member_since' limit 1"
+            ) !== []);
+    }
+
+    private static bool $reachMemberSinceReady = false;
+
     private function srid(): int
     {
         return (int) config('freegle.srid', 3857);
@@ -1267,6 +1325,27 @@ class UnifiedDigestService
             $onlySql = $onlyUserid !== null ? ' AND u.id = ?' : '';
             $onlyParams = $onlyUserid !== null ? [$onlyUserid] : [];
 
+            // A member who became eligible after the post arrived on their community is not
+            // told about it: joining, moving, returning or switching to immediate mail is not
+            // a reason to hear about every open post, at once or as each one's reach next
+            // changes. A join is per community and is read from the membership's own `added`.
+            // The other three are about the member: rippling_reach_member_since holds the
+            // time once the queue has been drained, rippling_reach_member_pending until then.
+            // A post that arrived inside the look-back before that time is still theirs, and
+            // so is one that arrives on another of their communities later, since arrival is
+            // per community.
+            $eligibleWindow = (int) config('freegle.ripple.reach_member_window_minutes', 60);
+            $sinceSql = '';
+            $sinceParams = [];
+            if ($this->reachMemberSinceReady()) {
+                $sinceSql = '
+                   AND NOT EXISTS (
+                         SELECT 1 FROM rippling_reach_member_since s
+                         WHERE s.userid = u.id AND s.since > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )';
+                $sinceParams = [$eligibleWindow];
+            }
+
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
             // would be the one surface still pushing a post that is under review. Nobody is lost by
@@ -1298,6 +1377,12 @@ class UnifiedDigestService
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND u.bouncing = 0
                    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.simplemail')), '') <> 'None'$onlySql
+                   AND m.added <= DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                   AND NOT EXISTS (
+                         SELECT 1 FROM rippling_reach_member_pending p
+                         WHERE p.userid = u.id AND p.reason <> 'joined'
+                           AND p.added > DATE_ADD(mg.arrival, INTERVAL ? MINUTE)
+                       )$sinceSql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1307,6 +1392,8 @@ class UnifiedDigestService
                     $primaryParams,
                     [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subSeconds(365 * 12 * 3600)],
                     $onlyParams,
+                    [$eligibleWindow, $eligibleWindow],
+                    $sinceParams,
                     [$srid],
                     $overflowParams,
                     $itemCopies

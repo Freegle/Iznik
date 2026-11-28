@@ -159,18 +159,18 @@ func TestUserDumpInternalKeyHeaderOnly(t *testing.T) {
 	defer os.Setenv("USERDUMP_API_KEY", oldAPI)
 	url := fmt.Sprintf("/api/modtools/user/%d/dump?format=raw&include=db", target)
 
-	// The header works, with or without a case header, and the dump is the real thing.
+	// The header works, with or without a referral header, and the dump is the real thing.
 	req := httptest.NewRequest("GET", url, nil)
 	req.Header.Set("X-Dump-Key", "internal-dump-key")
-	req.Header.Set("X-Freegle-Case", "123")
+	req.Header.Set("X-Freegle-Referral", "123")
 	resp, _ := getApp().Test(req, 10000)
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, 1, tableRowCount(t, writeTempDB(t, rsp(resp)), "users"))
 
-	// A forged case header cannot break the log line, and is still accepted.
+	// A forged referral header cannot break the log line, and is still accepted.
 	req = httptest.NewRequest("GET", url, nil)
 	req.Header.Set("X-Dump-Key", "internal-dump-key")
-	req.Header.Set("X-Freegle-Case", "12\nFAKE")
+	req.Header.Set("X-Freegle-Referral", "12\nFAKE")
 	resp, _ = getApp().Test(req, 10000)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -274,7 +274,7 @@ func TestUserDumpRedactsSecrets(t *testing.T) {
 	db := writeTempDB(t, rsp(resp))
 
 	if !tableExists(db, "users_logins") {
-		t.Skip("users_logins absent in this schema")
+		t.Fatal("the dump has no users_logins table, so the redaction cannot be checked")
 	}
 	var cred string
 	err := db.QueryRow("SELECT credentials FROM users_logins LIMIT 1").Scan(&cred)

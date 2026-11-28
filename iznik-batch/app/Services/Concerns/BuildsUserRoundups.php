@@ -142,4 +142,64 @@ trait BuildsUserRoundups
             ['lastsent' => now()]
         );
     }
+
+    /**
+     * Key that is equal for two postings of the same thing: the same member
+     * posted them with the same title and the same remaining parts (place, and
+     * start for an event). Case and spacing are ignored.
+     *
+     * An organiser who posts to each nearby community creates one row per
+     * community, so matching on id alone shows a member of several of them the
+     * same entry several times. The poster is part of the key so that the
+     * mail's about() still names everyone whose content is in it.
+     */
+    protected function samePostingKey(?int $userId, ?string ...$parts): string
+    {
+        $norm = fn (?string $s): string => mb_strtolower(trim(preg_replace('/\s+/u', ' ', $s ?? '')));
+
+        return implode("\x1f", [$userId ?? '', ...array_map($norm, $parts)]);
+    }
+
+    /**
+     * Fold repeated postings into one entry each and attach the group details.
+     *
+     * Each item carries a 'samePostingKey' and is paired with the ids of the
+     * user's groups it was posted on. Items sharing a key become one entry, at
+     * the position of the first seen: the lowest id is the copy kept, so its
+     * link is the same in every mail, and it lists the groups of all the copies.
+     *
+     * @param iterable<array{0: array, 1: array<int>}> $items [item data, group ids] pairs
+     * @param array<int,array{name:string,url:string}> $eligibleGroups group id => display name + /explore link
+     * @return array<int,array>
+     */
+    protected function foldSamePostings(iterable $items, array $eligibleGroups): array
+    {
+        $position = [];
+        $groupIdsAt = [];
+        $out = [];
+
+        foreach ($items as [$data, $groupIds]) {
+            $key = $data['samePostingKey'];
+            unset($data['samePostingKey']);
+
+            if (!isset($position[$key])) {
+                $position[$key] = count($out);
+                $groupIdsAt[$key] = [];
+                $out[] = $data;
+            } elseif ($data['id'] < $out[$position[$key]]['id']) {
+                $out[$position[$key]] = $data;
+            }
+
+            $groupIdsAt[$key] = array_values(array_unique(array_merge($groupIdsAt[$key], $groupIds)));
+        }
+
+        foreach ($position as $key => $i) {
+            $out[$i]['groups'] = array_values(array_filter(array_map(
+                fn ($gid) => $eligibleGroups[$gid] ?? null,
+                $groupIdsAt[$key]
+            )));
+        }
+
+        return $out;
+    }
 }

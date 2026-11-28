@@ -9,8 +9,8 @@ use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Moves one Trash Nothing member out of a Freegle account that holds two, onto a new account
- * with their TN user id. Reports only, unless --commit. See SharedAccountSplitter for the
- * evidence each row is moved on.
+ * with their TN user id, or the one they already have. Reports only, unless --commit. See
+ * SharedAccountSplitter for the evidence each row is moved on.
  *
  * Prints ids and counts only: never a name, username or address.
  */
@@ -42,7 +42,7 @@ class TNSplitSharedAccountCommand extends Command
         }
 
         if ($plan['state'] === 'done') {
-            $this->info("Already split: TN user {$tnUserId} is on account {$plan['newAccount']} and account {$account} holds none of its addresses. Nothing to move.");
+            $this->info("Already split: TN user {$tnUserId} is on account {$plan['newAccount']} and nothing of theirs is left on account {$account} to move.");
 
             return Command::SUCCESS;
         }
@@ -59,7 +59,7 @@ class TNSplitSharedAccountCommand extends Command
             ?: storage_path("app/tn-splits/split-{$account}-{$tnUserId}-" . now()->format('Ymd-His') . '.sql');
         $new = $splitter->apply($plan, $path);
 
-        $this->info("Split done: new account {$new} holds TN user {$tnUserId}. Rollback SQL: {$path}");
+        $this->info("Split done: account {$new} holds TN user {$tnUserId}. Rollback SQL: {$path}");
 
         return Command::SUCCESS;
     }
@@ -69,7 +69,10 @@ class TNSplitSharedAccountCommand extends Command
         $ids = fn (array $list) => $list === [] ? '' : ' (' . implode(',', $list) . ')';
         $pairs = fn (array $list) => array_map(fn ($pair) => $pair[0], $list);
 
-        $this->line("Account {$plan['account']}: moving one Trash Nothing member out to a new account for TN user {$plan['tnUserId']}.");
+        $to = $plan['target'] === NULL
+            ? "a new account for TN user {$plan['tnUserId']}"
+            : "account {$plan['target']}, which already holds TN user {$plan['tnUserId']}";
+        $this->line("Account {$plan['account']}: moving one Trash Nothing member out to {$to}.");
         $this->line('users_emails: ' . count($plan['emails']) . ' to move' . $ids($plan['emails']) . ' - addresses with that username');
         $this->line('messages: ' . count($plan['messages']) . ' to move' . $ids($plan['messages']) . ' - posts sent from those addresses');
         $this->line(sprintf(
@@ -96,6 +99,14 @@ class TNSplitSharedAccountCommand extends Command
 
         if ($plan['membershipsUnattributed'] !== []) {
             $this->line('Memberships with no evidence stay on the account' . $ids($plan['membershipsUnattributed']) . '.');
+        }
+        if ($plan['leftBehind'] !== []) {
+            $rows = array_map(
+                fn (string $table, array $list) => $table . ' ' . implode(',', $list),
+                array_keys($plan['leftBehind']),
+                $plan['leftBehind']
+            );
+            $this->line('Already on the account they have, so staying: ' . implode('; ', $rows) . '.');
         }
         if ($plan['chatsUndecided'] !== []) {
             $this->line("Undecided chats stay on account {$plan['account']} unless named in --move-chats:");

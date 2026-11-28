@@ -282,17 +282,11 @@ class UserManagementServiceTest extends TestCase
         $this->assertSame(1, DB::table('ux_prompt_responses')->where('userid', $other->id)->count());
     }
 
-    public function test_forget_user_clears_their_support_case_and_run_data_and_no_ones_else(): void
+    public function test_forget_user_clears_their_ai_run_data_and_no_ones_else(): void
     {
         $user = $this->createTestUser();
         $other = $this->createTestUser();
         $mod = $this->createTestUser();
-        $mine = DB::table('support_cases')->insertGetId(['userid' => $user->id, 'referrerid' => $mod->id, 'reason' => 'about them', 'brief' => '{"answer":"x"}']);
-        $theirs = DB::table('support_cases')->insertGetId(['userid' => $other->id, 'referrerid' => $mod->id, 'reason' => 'other', 'brief' => '{"answer":"y"}']);
-        DB::table('support_case_messages')->insert([
-            ['caseid' => $mine, 'userid' => $mod->id, 'role' => 'Referrer', 'body' => 'about the member'],
-            ['caseid' => $theirs, 'userid' => $mod->id, 'role' => 'Referrer', 'body' => 'about another'],
-        ]);
         $run = fn (int $uid, string $kind) => DB::table('support_ai_runs')->insertGetId(['userid' => $uid, 'kind' => $kind, 'query' => 'q', 'analysis' => 'facts', 'transcript' => 'talk', 'status' => 'Success']);
         $r1 = $run($user->id, 'FirstPass');
         $r2 = $run($user->id, 'Interactive');
@@ -300,20 +294,12 @@ class UserManagementServiceTest extends TestCase
 
         $this->service->forgetUser($user->id, 'Test reason');
 
-        $case = DB::table('support_cases')->where('id', $mine)->first();
-        $this->assertNull($case->brief);
-        $this->assertNull($case->reason);
-        $this->assertSame('', DB::table('support_case_messages')->where('caseid', $mine)->value('body'));
         foreach ([$r1, $r2] as $id) {
             $row = DB::table('support_ai_runs')->where('id', $id)->first();
             $this->assertNull($row->analysis);
             $this->assertNull($row->transcript);
         }
 
-        $otherCase = DB::table('support_cases')->where('id', $theirs)->first();
-        $this->assertSame('{"answer":"y"}', $otherCase->brief);
-        $this->assertSame('other', $otherCase->reason);
-        $this->assertSame('about another', DB::table('support_case_messages')->where('caseid', $theirs)->value('body'));
         $this->assertSame('facts', DB::table('support_ai_runs')->where('id', $r3)->value('analysis'));
     }
 

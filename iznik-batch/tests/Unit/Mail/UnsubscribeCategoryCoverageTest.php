@@ -40,6 +40,7 @@ class UnsubscribeCategoryCoverageTest extends TestCase
         \App\Mail\Chat\ChaseupModsMail::class => null,
         \App\Mail\Chat\ChatNotification::class => UnsubscribeService::TYPE_CHAT,
         \App\Mail\Chat\ChatReviewPendingMail::class => null,
+        \App\Mail\Chat\ReferToSupportMail::class => null,
         \App\Mail\Chat\ChatReviewSummaryMail::class => null,
         \App\Mail\Chat\SpamWarningMail::class => null,
         // Sent once after a provider stops accepting our mail, in place of the

@@ -335,6 +335,75 @@ class MembershipsProcessingServiceTest extends TestCase
         );
     }
 
+    /**
+     * A member past the threshold who joins one more group, with an existing membership on a
+     * group whose moderator marked them OK $reviewedDaysAgo days ago. Returns the reviewed
+     * membership and the new one, after processing.
+     */
+    private function joinOneMoreGroupAfterReview(int $reviewedDaysAgo): array
+    {
+        $user = $this->createTestUser();
+        $reviewedGroup = $this->createTestGroup();
+        $newGroup = $this->createTestGroup();
+
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $reviewedGroup->id,
+            'collection' => 'Approved',
+            'reviewrequestedat' => null,
+            'reviewedat' => now()->subDays($reviewedDaysAgo),
+            'reviewreason' => 'Seen on many groups',
+        ]);
+        DB::table('memberships')->insertOrIgnore([
+            'userid' => $user->id,
+            'groupid' => $newGroup->id,
+            'collection' => 'Approved',
+        ]);
+
+        for ($i = 0; $i < 36; $i++) {
+            DB::table('logs')->insert([
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $user->id,
+                'groupid' => 900000 + $i,
+                'timestamp' => now()->subDays(30),
+            ]);
+        }
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $newGroup->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $this->service->processAll();
+
+        $find = fn ($groupId) => DB::table('memberships')
+            ->where('userid', $user->id)->where('groupid', $groupId)->first();
+
+        return [$find($reviewedGroup->id), $find($newGroup->id)];
+    }
+
+    public function test_seen_on_many_groups_leaves_a_group_that_marked_the_member_ok_recently(): void
+    {
+        [$reviewed, $new] = $this->joinOneMoreGroupAfterReview(5);
+
+        $this->assertNull($reviewed->reviewrequestedat,
+            'a group that marked the member OK 5 days ago must not be flagged again by one more join');
+        $this->assertNotNull($new->reviewrequestedat, 'the group just joined is still flagged');
+        $this->assertEquals('Seen on many groups', $new->reviewreason);
+    }
+
+    public function test_seen_on_many_groups_flags_again_once_the_ok_is_older_than_the_quiet_period(): void
+    {
+        [$reviewed, $new] = $this->joinOneMoreGroupAfterReview(MembershipsProcessingService::REVIEW_QUIET_DAYS + 5);
+
+        $this->assertNotNull($reviewed->reviewrequestedat,
+            'an OK older than the quiet period does not stop the group being flagged again');
+        $this->assertNotNull($new->reviewrequestedat);
+    }
+
     public function test_rippled_joins_do_not_count_toward_seen_on_many_groups(): void
     {
         // A single far-reaching post can ripple the poster into dozens of groups (Group/Joined

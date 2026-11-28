@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -16,6 +16,7 @@ covers:
   - iznik-server-go/test/message_edit_and_message_test.go
   - iznik-nuxt3/tests/e2e/test-modtools-edit-message.spec.js
   - iznik-server-go/test/modtools_searchmemb_test.go
+  - iznik-server-go/test/search_by_msgid_moderated_test.go
   - iznik-server-go/test/multigroup_moderation_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
@@ -272,7 +273,9 @@ shows these with an old-to-new difference, and you **Accept Edit** or **Reject E
 
 **Messages > Approved** (`/messages/approved`) lets you browse posts that are already
 live, search by id, subject or member, and mark OFFERs and WANTEDs as **Taken**,
-**Received** or **Withdrawn** on the member's behalf when needed. A search by member
+**Received** or **Withdrawn** on the member's behalf when needed. A search by id finds
+the post on your communities even after it has been taken, received or withdrawn. A
+search by member
 matches the community's current members by name or email address and lists their
 posts; somebody who has since left is found by their member id instead. You can also
 move a post **Back to Pending** for another look. Tick **Only this group's own posts (hide

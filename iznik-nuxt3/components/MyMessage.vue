@@ -344,6 +344,15 @@
                 </button>
               </div>
 
+              <!-- Auto-repost hint (desktop). It sits here, not under the
+                   card, so the card stays the height of the photo. -->
+              <p
+                v-if="!replies?.length && willAutoRepost"
+                class="desktop-no-replies"
+              >
+                No replies yet. Will auto-repost {{ canrepostatago }}.
+              </p>
+
               <!-- Action buttons at bottom -->
               <div v-if="!rejected" class="desktop-actions">
                 <button
@@ -581,7 +590,7 @@
               </div>
             </Transition>
           </div>
-          <div v-else-if="willAutoRepost" class="no-replies">
+          <div v-else-if="willAutoRepost" class="no-replies d-lg-none">
             <p class="text-muted small">
               No replies yet. Will auto-repost {{ canrepostatago }}.
             </p>
@@ -1251,10 +1260,14 @@ onMounted(async () => {
   overflow: hidden;
 }
 
+/* At lg+ the photo is as tall as the details beside it, and never less than a
+   square. A fixed height left a blank strip under the photo whenever the
+   details wrapped onto more lines. */
 .photo-section {
   @include media-breakpoint-up(lg) {
+    display: flex;
     width: 200px;
-    height: 200px;
+    min-height: 200px;
     flex-shrink: 0;
   }
 }
@@ -1276,7 +1289,8 @@ onMounted(async () => {
 
   @include media-breakpoint-up(lg) {
     width: 200px;
-    height: 200px;
+    height: auto;
+    min-height: 200px;
     padding-bottom: 0;
   }
 }
@@ -1291,7 +1305,7 @@ onMounted(async () => {
 
   @include media-breakpoint-up(lg) {
     width: 200px;
-    height: 200px;
+    height: 100%;
   }
 }
 
@@ -1313,7 +1327,7 @@ onMounted(async () => {
     top: 0;
     left: 0;
     width: 200px;
-    height: 200px;
+    height: 100%;
   }
 }
 
@@ -1456,6 +1470,12 @@ onMounted(async () => {
   border-radius: var(--radius-sm, 0.375rem);
   font-size: 0.85rem;
   color: $color-blue--1;
+}
+
+.desktop-no-replies {
+  margin: 0;
+  font-size: 0.85rem;
+  color: $color-gray--normal;
 }
 
 .desktop-actions {

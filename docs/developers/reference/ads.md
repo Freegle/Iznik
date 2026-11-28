@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -8,6 +8,9 @@ covers:
   - iznik-nuxt3/components/OurPrebidDa.vue
   - iznik-batch/app/Console/Commands/Donation/UpdateAdsTargetCommand.php
   - iznik-batch/app/Services/WhatJobsService.php
+  - iznik-batch/app/Services/WhatJobs
+  - iznik-batch/app/Console/Commands/Integrations/WhatJobsClicksCommand.php
+  - iznik-batch/app/Console/Commands/Integrations/WhatJobsClicksWeeklyCommand.php
   - iznik-nuxt3/components/JobsDaSlot.vue
   - iznik-nuxt3/stores/job.js
   - iznik-nuxt3/pages/job/[id].vue
@@ -80,9 +83,12 @@ Things to know before touching it:
   them, the Go API and the retired V1 code - and they must move together.
 - **Listings older than a week are dropped** (`MAX_AGE_DAYS`).
 - **The sync builds a new table and renames it into place**, and refuses to do so if the
-  new table has fewer than half the rows of the old one. This exists because a partial feed
-  failure once emptied the live table. If jobs go stale, look for that refusal in the logs
-  before assuming the feed is fine.
+  new table has fewer than a tenth of the rows of the old one (`MIN_SWAP_RATIO`). This exists
+  because a partial feed failure once emptied the live table. The limit is low because
+  WhatJobs publishes complete feeds of very different sizes through the day, sometimes a
+  quarter the size of the last one. A limit of one half refused all of them and left the table
+  unchanged for over a day. If jobs go stale, look for the refusal in the logs before assuming
+  the feed is fine.
 - **A gate skips the rebuild when the feed has not changed**, but never for more than
   ten hours (the syncs run at 04:40 and then every three hours from 09:00 to 21:00 UTC,
   so a limit near twenty leaves a day between forced rebuilds), so the freshness check that watches the `jobs` table still fires if the
@@ -105,6 +111,51 @@ Things to know before touching it:
   leaving cancels in-flight module loads and the reload that `error.vue` and `app.vue` do
   for a failed import would otherwise load the page again and send a second click. Our own
   `logs_jobs` records every tap, so it counts more clicks than WhatJobs bills.
+
+## Watching the job clicks
+
+WhatJobs report the clicks they bill us for on their partner dashboard, a day at a time, and
+nowhere else. `integrations:whatjobs-clicks` (daily, 07:10 UTC) logs in, copies the current and
+previous month into `whatjobs_clicks_daily`, records our own figures for the same days, and mails
+an alert when a day or a week changes suddenly. `integrations:whatjobs-clicks-weekly` (Wednesday
+07:40 UTC) mails a summary of the last Monday to Sunday with a trend chart. Both go to
+`freegle.whatjobs.clicks_report_to` (cto@ by default). The code is in
+`iznik-batch/app/Services/WhatJobs/`.
+
+- **The dashboard has no API.** `PartnerDashboardClient` posts the login form and reads the
+  month page's table. WhatJobs give no session to a client that does not call itself
+  `Mozilla/5.0`, so the login "works" and every page after it goes back to the login; the client
+  fails rather than reading that as no clicks. The login is `WHATJOBS_PARTNER_USERNAME` and
+  `WHATJOBS_PARTNER_PASSWORD` in `.env.background`; without them both commands do nothing.
+- **WhatJobs publish a day at 00:00 UTC the next day and revise it for 48 hours**, and say so on
+  the dashboard. Every run refreshes the stored figures, `first_billable_clicks` keeps the first
+  one, and a day is judged once, three days after it. The weekly summary therefore runs on
+  Wednesday, when Sunday is final. A recent day with no clicks of any kind is taken as not yet
+  published, and a cell that is not a count fails the run rather than reading as 0.
+- **The table is the long history.** The dashboard shows about a year, `logs_jobs` keeps 31 days
+  and `users_active` two years, so our figures are copied in daily and nothing prunes the table.
+  `--months=12 --no-mail` fills in history. Days more than 35 days old are judged without an
+  alert, so days missed while the dashboard could not be read are still judged once it can.
+- **What counts as a sudden change** was measured on January to November 2026 (the reasoning is in
+  `ClickMonitorService`). Our own logged clicks follow billable clicks closely from day to day
+  (r 0.80), and WhatJobs bill about two thirds of them. Active members hardly move the clicks
+  from day to day, and over 2026 they rose while clicks fell, so activity only excuses a change
+  the whole site shared. A day is flagged under half or over 1.6 times the 28-day median, a week
+  under 0.75 or over 1.3 times the four weeks before, and a billed share under 0.7 or over 1.4
+  times usual. Active members only excuse a change when they moved between 0.6 and 1.5 times
+  usual; beyond that the activity log is more likely broken than the site. Run against 2026 those rules fired 15 times in ten months, each on a real event:
+  the feed import failing (11 to 14 May), fewer jobs showing (16 to 25 June, 26 to 28 August),
+  or a one-day spike.
+- **The alert says which side moved.** Clicks in our own log down too, with the site as busy as
+  usual, is our side: adverts not showing, or a stale feed. Our clicks as usual but a smaller share
+  billed is WhatJobs' side, and their Invalid, Duplicate, Foreign and Latent columns say where
+  the clicks went.
+- **The chart is a PNG** drawn with GD and embedded in the message, because mail clients run
+  no scripts and Gmail shows no SVG. The batch image has no font files, so the labels use GD's
+  built-in font.
+- **A failure turns the SysAdmin Cron Jobs tab red**: a refused login, a page that has changed,
+  no figures for the newest day that should be final, or an alert that could not be sent (its days
+  are judged again next run). The weekly summary still goes, and lists the days with no figures.
 
 ## The email job page does not open the advert for mail scanners
 

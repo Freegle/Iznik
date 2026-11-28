@@ -20,7 +20,33 @@ const SCAN = [
   'stores',
 ]
 const SKIP = new Set(['node_modules', '.nuxt', '.output', 'dist', 'tests'])
-const BARE = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)['"]leaflet['"]/
+// Includes the side-effect form, `import 'leaflet'`, which has no `from`.
+const BARE =
+  /(?:from\s*|import\s*\(\s*|require\s*\(\s*|^\s*import\s+)['"]leaflet['"]/m
+
+// Old-style scripts that read the global L while they load. window.L is only set by
+// loadLeaflet() and the vue-leaflet plugin, both at run time, so one of these as a static import
+// runs before either and throws "L is not defined" ("Can't find variable: L" in Safari), which
+// takes the whole page to the error view. That broke the ModTools map in November 2026.
+// A deeper path into one of these packages counts too, unless it is a stylesheet.
+const NEEDS_GLOBAL_L =
+  /['"](?:@geoman-io\/leaflet-geoman-free|wicket\/wicket-leaflet|leaflet-draw|leaflet-gesture-handling|leaflet\.markercluster|leaflet\.heat)(?:\/(?![^'"]*\.css['"])[^'"]*|\.js)?['"]/
+const STATIC_IMPORT = new RegExp(
+  '^\\s*import\\s+(?:[^\'"()]*\\sfrom\\s*)?' + NEEDS_GLOBAL_L.source,
+  'm'
+)
+const DYNAMIC_IMPORT = new RegExp(
+  'import\\s*\\(\\s*' + NEEDS_GLOBAL_L.source + '\\s*\\)'
+)
+
+// Source text with comments removed, so a commented-out import or a call named in a comment
+// neither trips a check nor satisfies one.
+function code(file) {
+  return readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
 
 function sources(dir) {
   const out = []
@@ -54,6 +80,67 @@ describe('single Leaflet instance', () => {
       for (const file of sources(join(ROOT, dir))) {
         if (BARE.test(readFileSync(file, 'utf8'))) {
           offenders.push(relative(ROOT, file))
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('the bare-import check sees every form of the import', () => {
+    expect(BARE.test("import L from 'leaflet'")).toBe(true)
+    expect(BARE.test("const L = await import('leaflet')")).toBe(true)
+    expect(
+      BARE.test("import { nextTick } from 'vue'\n\nimport 'leaflet'\n")
+    ).toBe(true)
+    expect(BARE.test("import 'leaflet/dist/leaflet.css'")).toBe(false)
+    expect(BARE.test("import('leaflet/dist/leaflet-src.esm')")).toBe(false)
+  })
+
+  it('no app source statically imports a script that reads the global L as it loads', () => {
+    expect(STATIC_IMPORT.test("import '@geoman-io/leaflet-geoman-free'")).toBe(
+      true
+    )
+    expect(
+      STATIC_IMPORT.test(
+        "import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'"
+      )
+    ).toBe(false)
+    expect(
+      STATIC_IMPORT.test("  await import('@geoman-io/leaflet-geoman-free')")
+    ).toBe(false)
+    expect(
+      STATIC_IMPORT.test(
+        'import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.min.js"'
+      )
+    ).toBe(true)
+    expect(STATIC_IMPORT.test("import 'wicket/wicket-leaflet.js'")).toBe(true)
+    expect(STATIC_IMPORT.test("import Wkt from 'wicket'")).toBe(false)
+
+    const offenders = []
+    for (const dir of SCAN) {
+      for (const file of sources(join(ROOT, dir))) {
+        if (STATIC_IMPORT.test(code(file))) {
+          offenders.push(relative(ROOT, file))
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('a script that reads the global L is only loaded after the code that sets it', () => {
+    // loadLeaflet() itself is where window.L is assigned, so its own imports are in order by
+    // construction; every other file has to call it first.
+    const offenders = []
+    for (const dir of SCAN) {
+      for (const file of sources(join(ROOT, dir))) {
+        const name = relative(ROOT, file)
+        if (name === join('composables', 'useMap.js')) continue
+        const text = code(file)
+        const load = text.match(DYNAMIC_IMPORT)
+        if (!load) continue
+        const pinned = text.indexOf('await loadLeaflet()')
+        if (pinned === -1 || pinned > load.index) {
+          offenders.push(name)
         }
       }
     }

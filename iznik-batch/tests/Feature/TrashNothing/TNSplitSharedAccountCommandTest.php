@@ -269,6 +269,231 @@ class TNSplitSharedAccountCommandTest extends TestCase
         $this->assertFileDoesNotExist($this->rollbackFile . '.second');
     }
 
+    /**
+     * A member can have an account of their own before anyone splits them out: the posts API makes
+     * one at their first post, and a partner call at their next join. The split moves what is theirs
+     * onto it.
+     */
+    public function test_moves_the_member_onto_the_account_they_already_have(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $preferred = DB::table('users_emails')->where('userid', $own)->where('preferred', 1)->value('id');
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+        ])
+            ->expectsOutputToContain("to account {$own}, which already holds TN user")
+            ->expectsOutputToContain('Dry run: nothing written')
+            ->assertExitCode(0);
+
+        $this->commit($f);
+
+        $this->assertSame(1, User::where('tnuserid', $f['tnUserId'])->count(), 'no second account');
+        foreach ($f['moveAliases'] as $id) {
+            $this->assertSame($own, (int) DB::table('users_emails')->where('id', $id)->value('userid'));
+        }
+        $this->assertSame($preferred, DB::table('users_emails')->where('userid', $own)->where('preferred', 1)->value('id'), 'their preferred address stays');
+        $this->assertSame(1, (int) DB::table('users_emails')->where('userid', $own)->sum('preferred'));
+        $this->assertSame($own, (int) DB::table('messages')->where('id', $f['pMove1'])->value('fromuser'));
+        $this->assertSame($own, (int) DB::table('memberships')->where('id', $f['memG2'])->value('userid'));
+        $this->assertSame(1, DB::table('memberships')->where('userid', $own)->where('groupid', $f['g1'])->count(), 'the shared community is copied');
+        $this->assertSame($f['account'], (int) DB::table('messages')->where('id', $f['pOther1'])->value('fromuser'));
+    }
+
+    /** Partner calls move addresses one at a time, and move nothing else, so posts are left behind. */
+    public function test_a_split_after_every_alias_has_moved_still_moves_the_rest(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        DB::table('users_emails')->whereIn('id', $f['moveAliases'])->update(['userid' => $own, 'preferred' => 0]);
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+        ])
+            ->doesntExpectOutputToContain('Already split')
+            ->expectsOutputToContain('messages: 2 to move')
+            ->assertExitCode(0);
+
+        $this->commit($f);
+
+        $this->assertSame($own, (int) DB::table('messages')->where('id', $f['pMove2'])->value('fromuser'));
+        $this->assertSame($own, (int) DB::table('memberships')->where('id', $f['memG2'])->value('userid'));
+        $this->assertSame($own, (int) DB::table('memberships_history')->where('id', $f['histG2'])->value('userid'));
+    }
+
+    public function test_a_second_run_onto_the_account_they_already_have_finds_nothing_to_move(): void
+    {
+        $f = $this->buildSharedAccount();
+        $this->accountTheyAlreadyHave($f);
+        $this->commit($f);
+        $after = $this->snapshot();
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+            '--commit' => true,
+            '--rollback-file' => $this->rollbackFile . '.second',
+        ])
+            ->expectsOutputToContain('Already split')
+            ->assertExitCode(0);
+
+        $this->assertSame($after, $this->snapshot());
+        $this->assertFileDoesNotExist($this->rollbackFile . '.second');
+    }
+
+    /** An address move elsewhere can take the account's preferred address when nothing else is left to move. */
+    public function test_a_run_with_only_a_preferred_address_to_fix_is_not_already_split(): void
+    {
+        $f = $this->buildSharedAccount();
+        $this->accountTheyAlreadyHave($f);
+        $this->commit($f);
+        DB::table('users_emails')->where('userid', $f['account'])->update(['preferred' => 0]);
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+            '--commit' => true,
+            '--rollback-file' => $this->rollbackFile . '.second',
+        ])
+            ->doesntExpectOutputToContain('Already split')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, (int) DB::table('users_emails')->where('userid', $f['account'])->sum('preferred'));
+        $this->assertSame($f['otherAliasG1'], (int) DB::table('users_emails')->where('userid', $f['account'])->where('preferred', 1)->value('id'), 'the latest TN address left is preferred');
+    }
+
+    public function test_the_rollback_keeps_the_account_they_already_have(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $before = $this->snapshot();
+
+        $this->commit($f);
+        $this->assertNotSame($before, $this->snapshot());
+
+        $sql = collect(file($this->rollbackFile, FILE_IGNORE_NEW_LINES))
+            ->reject(fn ($line) => in_array(trim($line), ['START TRANSACTION;', 'COMMIT;'], true))
+            ->implode("\n");
+        DB::unprepared($sql);
+
+        $this->assertSame($before, $this->snapshot(), 'the rollback puts every row back');
+        $this->assertSame($own, (int) User::where('tnuserid', $f['tnUserId'])->value('id'));
+    }
+
+    /** memberships has a unique key on the pair, so the row cannot move. It must not stop the split. */
+    public function test_a_membership_the_member_already_has_stays_and_is_reported(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $this->createMembership(User::find($own), Group::find($f['groups'][1]));
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+        ])
+            ->expectsOutputToContain('Already on the account they have, so staying: memberships ' . $f['memG2'])
+            ->assertExitCode(0);
+
+        $this->commit($f);
+
+        $this->assertSame($f['account'], (int) DB::table('memberships')->where('id', $f['memG2'])->value('userid'));
+        $this->assertSame($own, (int) DB::table('messages')->where('id', $f['pMove2'])->value('fromuser'), 'the rest of the split goes ahead');
+    }
+
+    /** chat_rooms has a unique key on the pair too, and a person has two chats to read, not one. */
+    public function test_a_chat_with_someone_the_member_already_chats_with_stays_and_is_reported(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $other = (int) DB::table('chat_rooms')->where('id', $f['chatX'])->value('user1');
+        ChatRoom::create(['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $own, 'user2' => $other, 'created' => now()]);
+
+        $this->commit($f);
+
+        $this->assertSame($f['account'], (int) DB::table('chat_rooms')->where('id', $f['chatX'])->value('user2'));
+    }
+
+    public function test_naming_a_chat_the_member_already_has_is_refused(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $other = (int) DB::table('chat_rooms')->where('id', $f['chatZ'])->value('user2');
+        ChatRoom::create(['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $other, 'user2' => $own, 'created' => now()]);
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+            '--move-chats' => (string) $f['chatZ'],
+        ])
+            ->expectsOutputToContain('is not undecided')
+            ->assertExitCode(1);
+    }
+
+    /** ratings has a unique key on the pair as well, and a clash would abort the whole split. */
+    public function test_a_rating_the_member_already_has_stays(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        $rater = (int) DB::table('ratings')->where('id', $f['ratingY'])->value('rater');
+        DB::table('ratings')->insert(['rater' => $rater, 'ratee' => $own, 'rating' => 'Up', 'timestamp' => now()]);
+
+        $this->commit($f);
+
+        $this->assertSame($f['account'], (int) DB::table('ratings')->where('id', $f['ratingY'])->value('ratee'));
+    }
+
+    public function test_refuses_when_a_deleted_account_holds_the_tn_user_id(): void
+    {
+        $f = $this->buildSharedAccount();
+        $own = $this->accountTheyAlreadyHave($f);
+        DB::table('users')->where('id', $own)->update(['deleted' => now()]);
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+        ])
+            ->expectsOutputToContain('deleted account')
+            ->assertExitCode(1);
+    }
+
+    /** The account's own username, so this would be moving a whole account: that is a merge. */
+    public function test_refuses_when_the_username_is_the_accounts_only_one_and_they_have_an_account(): void
+    {
+        $f = $this->buildSharedAccount();
+        $this->accountTheyAlreadyHave($f);
+        DB::table('users_emails')->whereIn('id', $f['otherAliases'])->delete();
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+        ])
+            ->expectsOutputToContain('only TN username')
+            ->assertExitCode(1);
+    }
+
+    /** @return int the account, holding the member's TN id and their bare address */
+    private function accountTheyAlreadyHave(array $f): int
+    {
+        $own = $this->createTestUser(['fullname' => 'Their Own Account', 'tnuserid' => $f['tnUserId']]);
+        $email = "{$f['moveName']}@user.trashnothing.com";
+        DB::table('users_emails')->insert([
+            'userid' => $own->id, 'email' => $email, 'backwards' => strrev($email), 'preferred' => 0, 'added' => now(),
+        ]);
+
+        return (int) $own->id;
+    }
+
     private function commit(array $f, array $options = []): void
     {
         $this->artisan('tn:split-shared-account', array_merge([

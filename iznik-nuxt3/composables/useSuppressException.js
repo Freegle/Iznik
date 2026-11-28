@@ -55,12 +55,38 @@ export function thrownByThirdParty(event) {
 // exception is reconstructed before beforeSend sees it). A frame whose filename
 // is ftUtils.js AND whose function is one of Freestar's known null-property
 // sites is a narrow Freestar signature — won't mask real bugs in our own code.
+// A frame filed under a page's own URL rather than a script's: inline or
+// injected script.
+function isPageUrlFrame(frame) {
+  const url = frame.abs_path || frame.filename || ''
+  if (!/^https?:\/\//.test(url)) {
+    return false
+  }
+  const path = url.replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '')
+  return !path.includes('/_nuxt/') && !/\.(m?js|vue|ts)$/.test(path)
+}
+
 export function suppressSentryEvent(event) {
   if (!event?.exception?.values) {
     return false
   }
   for (const ex of event.exception.values) {
     const frames = ex.stacktrace?.frames || []
+
+    // A stack overflow whose every frame is filed under a page URL, which is how a
+    // browser labels inline or injected script: the ad stack recursing during
+    // header bidding (19 events, Chrome on iOS 26.5, 2026-11-14; minified yk/Ak,
+    // breadcrumbs the Prebid SSP calls). Our own code is either a /_nuxt/ script
+    // or, source-mapped, a .vue/.js/.ts path, so a recursion of ours is still
+    // reported.
+    if (
+      frames.length > 0 &&
+      (ex.type === 'RangeError' ||
+        (ex.value || '').includes('Maximum call stack')) &&
+      frames.every(isPageUrlFrame)
+    ) {
+      return true
+    }
     for (const frame of frames) {
       const isFtUtilsFrame =
         frame.filename?.includes('/ftUtils.js') ||

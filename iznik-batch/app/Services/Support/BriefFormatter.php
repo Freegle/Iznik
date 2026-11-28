@@ -39,27 +39,37 @@ class BriefFormatter
         return 'AI credit pool at run time: '.$part($pool['fiveHour'] ?? null, '5-hour').', '.$part($pool['sevenDay'] ?? null, '7-day');
     }
 
-    /** Case ids from the brief's related_cases, as positive integers only. @return array<int, int> */
-    private static function caseIds(mixed $value): array
+    /**
+     * The brief's fields, cleaned, for the referral mail's template. Every value is a string or a
+     * list of strings, and anything missing is empty.
+     *
+     * @param  array<string, mixed>  $brief
+     * @return array{question: string, answer: string, classification: string, confidence: string, confidenceReason: string, open: array<int, string>, draft: string, warnings: array<int, string>, checks: array<int, string>, pool: string}
+     */
+    public static function parts(array $brief): array
     {
-        $out = [];
-        foreach (is_array($value) ? $value : [] as $v) {
-            if (is_numeric($v) && (int) $v > 0) {
-                $out[] = (int) $v;
-            }
-        }
+        $conf = is_array($brief['confidence'] ?? null) ? $brief['confidence'] : [];
+        $draft = is_array($brief['draft'] ?? null) ? $brief['draft'] : [];
+        $draftText = self::str($draft['text'] ?? '');
 
-        return array_values(array_unique($out));
-    }
-
-    private static function caseLink(int $id): string
-    {
-        return rtrim((string) config('freegle.sites.mod'), '/')."/support/cases/{$id}";
+        return [
+            'question' => self::str($brief['question'] ?? ''),
+            'answer' => self::str($brief['answer'] ?? ''),
+            'classification' => self::str($brief['classification'] ?? ''),
+            'confidence' => self::str($conf['level'] ?? ''),
+            // The reason is a sentence the model wrote; its own full stop would double up in brackets.
+            'confidenceReason' => rtrim(self::str($conf['reason'] ?? ''), '. '),
+            'open' => self::strings($brief['open_questions'] ?? []),
+            'draft' => $draftText,
+            'warnings' => $draftText !== '' ? self::strings($draft['link_warnings'] ?? []) : [],
+            'checks' => self::strings($brief['checks'] ?? []),
+            'pool' => self::poolLine($brief['pool'] ?? null),
+        ];
     }
 
     /**
      * The first pass as plain text, in the order a reader needs it: the question, the answer, the
-     * classification and confidence, open questions, related cases, the draft and its link
+     * classification and confidence, open questions, the draft and its link
      * warnings, what was checked, then the pool line.
      *
      * @param  array<string, mixed>  $brief
@@ -99,15 +109,6 @@ class BriefFormatter
             $out[] = 'Open questions';
             foreach ($open as $q) {
                 $out[] = "  - {$q}";
-            }
-        }
-
-        $related = self::caseIds($brief['related_cases'] ?? []);
-        if ($related) {
-            $out[] = '';
-            $out[] = 'Related cases';
-            foreach ($related as $id) {
-                $out[] = '  - '.self::caseLink($id);
             }
         }
 
@@ -168,10 +169,6 @@ class BriefFormatter
         $open = self::strings($brief['open_questions'] ?? []);
         if ($open) {
             $out[] = "## Open questions\n\n".implode("\n", array_map(fn ($q) => "- {$q}", $open));
-        }
-        $related = self::caseIds($brief['related_cases'] ?? []);
-        if ($related) {
-            $out[] = "## Related cases\n\n".implode("\n", array_map(fn ($id) => '- ['."#{$id}".'](' . self::caseLink($id) . ')', $related));
         }
         $draft = is_array($brief['draft'] ?? null) ? $brief['draft'] : [];
         $draftText = self::str($draft['text'] ?? '');

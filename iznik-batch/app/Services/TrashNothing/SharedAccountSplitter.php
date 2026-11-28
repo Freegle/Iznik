@@ -13,6 +13,11 @@ use RuntimeException;
  * Moves one Trash Nothing member out of a Freegle account that holds two, onto a new account
  * with that member's TN user id. tn:split-shared-account is the way in.
  *
+ * The member may have an account already: the posts API makes one at their first post, and a
+ * partner call at their next join. Then everything moves onto that one instead. A row it already
+ * has the twin of stays where it is and is reported, because the table's unique key would refuse
+ * it, and that would stop the whole split.
+ *
  * plan() only reads, and says for every row which member the evidence gives it to. apply()
  * writes that plan in one transaction of single-row updates, each re-asserting the current
  * owner, and writes the SQL that undoes it before committing.
@@ -61,31 +66,38 @@ class SharedAccountSplitter
         $aliases = $this->tnAddresses($accountId);
         $moving = array_filter($aliases, fn ($a) => $a['username'] === $username);
 
-        $holder = DB::table('users')->where('tnuserid', $tnUserId)->where('id', '!=', $accountId)->value('id');
+        $holder = DB::table('users')->where('tnuserid', $tnUserId)->where('id', '!=', $accountId)->first(['id', 'deleted']);
+        $target = $holder ? (int) $holder->id : NULL;
+        $targetAliases = [];
         if ($holder) {
-            $holderHasIt = collect($this->tnAddresses((int) $holder))->contains(fn ($a) => $a['username'] === $username);
-            if ($holderHasIt && $moving === []) {
-                return ['state' => 'done', 'account' => $accountId, 'newAccount' => (int) $holder];
+            if ($holder->deleted) {
+                throw new SplitRefused("TN user id {$tnUserId} is held by deleted account {$target}.");
             }
 
-            throw new SplitRefused("TN user id {$tnUserId} is already held by account {$holder}.");
+            $targetAliases = array_values(array_filter($this->tnAddresses($target), fn ($a) => $a['username'] === $username));
+            if ($targetAliases === []) {
+                throw new SplitRefused("TN user id {$tnUserId} is already held by account {$target}, which does not hold that TN username.");
+            }
         }
 
-        if ($moving === []) {
+        if ($moving === [] && $target === NULL) {
             throw new SplitRefused("Account {$accountId} does not hold that TN username.");
         }
 
+        // With no addresses left to move, what is left is their posts. Otherwise it needs another member.
         $usernames = array_values(array_unique(array_map(fn ($a) => $a['username'], $aliases)));
-        if (count($usernames) < 2) {
+        if ($moving !== [] && count($usernames) < 2) {
             throw new SplitRefused("That is account {$accountId}'s only TN username, so there is nothing to split.");
         }
 
         $plan = [
             'state' => 'ready',
             'account' => $accountId,
+            'target' => $target,
             'username' => $username,
             'tnUserId' => $tnUserId,
             'emails' => array_values(array_map(fn ($a) => $a['id'], $moving)),
+            'leftBehind' => [],
         ];
 
         // Posts by sender address.
@@ -100,14 +112,23 @@ class SharedAccountSplitter
             ->get(['id', 'groupid', 'added', 'rippled', 'collection', 'emailfrequency', 'eventsallowed', 'volunteeringallowed', 'ourPostingStatus']);
         $history = DB::table('memberships_history')->where('userid', $accountId)->get(['id', 'groupid', 'added', 'rippled']);
 
-        [$firstSeen, $rippledInto] = $this->communitiesByMember($aliases, $posts, $postOwner, $memberships, $history);
+        // An alias already moved to the member's account is still evidence of when they joined.
+        $evidence = array_merge($aliases, $targetAliases);
 
-        $this->planMemberships($plan, $memberships, $aliases, $firstSeen, $rippledInto);
-        $this->planHistory($plan, $history, $aliases, $rippledInto);
+        [$firstSeen, $rippledInto] = $this->communitiesByMember($evidence, $posts, $postOwner, $memberships, $history);
+
+        $this->planMemberships($plan, $memberships, $evidence, $firstSeen, $rippledInto);
+        $this->planHistory($plan, $history, $evidence, $rippledInto);
         $this->planChats($plan, $accountId, $postOwner, $firstSeen, $moveChats);
         $this->planFollowers($plan, $accountId);
-        $this->planLogs($plan, $accountId, $moving);
+        $this->planLogs($plan, $accountId, array_merge($moving, $targetAliases));
         $this->planPreferred($plan, $aliases, $moving);
+
+        if ($target !== NULL) {
+            return $this->nothingToMove($plan)
+                ? ['state' => 'done', 'account' => $accountId, 'newAccount' => $target]
+                : $plan;
+        }
 
         $movedPostDates = $posts->whereIn('id', $plan['messages'])->pluck('arrival')->all();
         $chatDates = DB::table('chat_messages')->whereIn('id', $plan['chatMessages'])->pluck('date')->all();
@@ -126,7 +147,7 @@ class SharedAccountSplitter
      * all of it. The rollback SQL is written before the commit, so a split that commits always
      * has one.
      *
-     * @return int the new account's id
+     * @return int the id of the account the member is now on
      */
     public function apply(array $plan, string $rollbackPath): int
     {
@@ -134,14 +155,17 @@ class SharedAccountSplitter
             $a = $plan['account'];
             $undo = [];
 
-            $n = (int) DB::table('users')->insertGetId([
-                'fullname' => $plan['newUser']['fullname'],
-                'added' => $plan['newUser']['added'],
-                'lastaccess' => $plan['newUser']['lastaccess'],
-                'systemrole' => User::SYSTEMROLE_USER,
-                'tnuserid' => $plan['tnUserId'],
-            ]);
-            $undo[] = "DELETE FROM users WHERE id = {$n} AND tnuserid = {$plan['tnUserId']};";
+            $n = $plan['target'];
+            if ($n === NULL) {
+                $n = (int) DB::table('users')->insertGetId([
+                    'fullname' => $plan['newUser']['fullname'],
+                    'added' => $plan['newUser']['added'],
+                    'lastaccess' => $plan['newUser']['lastaccess'],
+                    'systemrole' => User::SYSTEMROLE_USER,
+                    'tnuserid' => $plan['tnUserId'],
+                ]);
+                $undo[] = "DELETE FROM users WHERE id = {$n} AND tnuserid = {$plan['tnUserId']};";
+            }
 
             $move = function (string $table, string $column, int $id, int $from, int $to) use (&$undo) {
                 $changed = DB::table($table)->where('id', $id)->where($column, $from)->update([$column => $to]);
@@ -301,7 +325,11 @@ class SharedAccountSplitter
             if ($owners === []) {
                 $plan['membershipsUnattributed'][] = (int) $m->id;
             } elseif ($owners === [$u]) {
-                $plan['membershipsMove'][] = (int) $m->id;
+                if (!$this->staysBehind($plan, 'memberships', (int) $m->id, ['userid' => $plan['target'], 'groupid' => $g])) {
+                    $plan['membershipsMove'][] = (int) $m->id;
+                }
+            } elseif (in_array($u, $owners, TRUE) && !$m->rippled && $this->targetHas($plan, 'memberships', ['userid' => $plan['target'], 'groupid' => $g])) {
+                $plan['membershipsStay'][] = (int) $m->id;
             } elseif (in_array($u, $owners, TRUE) && !$m->rippled) {
                 $plan['membershipsCopy'][] = [
                     'source' => (int) $m->id,
@@ -386,8 +414,11 @@ class SharedAccountSplitter
                 }
             }
             $candidates = array_values(array_unique($candidates));
+            $theOtherMembers = $candidates !== [] && !in_array($u, $candidates, TRUE) && !in_array(self::UNKNOWN, $candidates, TRUE);
 
-            if (in_array(self::UNKNOWN, $candidates, TRUE)) {
+            if (!$theOtherMembers && $this->targetHasChat($plan, $room, $others[$id])) {
+                $plan['leftBehind']['chat_rooms'][] = $id;
+            } elseif (in_array(self::UNKNOWN, $candidates, TRUE)) {
                 $plan['chatsUndecided'][$id] = 'a post in it was not sent from a TN address';
             } elseif ($candidates === []) {
                 $plan['chatsUndecided'][$id] = 'nothing ties it to either member';
@@ -426,7 +457,16 @@ class SharedAccountSplitter
     private function planFollowers(array &$plan, int $a): void
     {
         $refs = $plan['movedChatRefs'] ?: [0];
-        $pluck = fn (string $table) => DB::table($table)->where('userid', $a)->whereIn('msgid', $refs)->pluck('id')->map(fn ($i) => (int) $i)->all();
+        $pluck = function (string $table) use (&$plan, $a, $refs): array {
+            $ids = [];
+            foreach (DB::table($table)->where('userid', $a)->whereIn('msgid', $refs)->get(['id', 'msgid']) as $row) {
+                if (!$this->staysBehind($plan, $table, (int) $row->id, ['userid' => $plan['target'], 'msgid' => $row->msgid])) {
+                    $ids[] = (int) $row->id;
+                }
+            }
+
+            return $ids;
+        };
         $plan['promises'] = $pluck('messages_promises');
         $plan['takenBy'] = $pluck('messages_by');
         $plan['reneged'] = $pluck('messages_reneged');
@@ -434,10 +474,17 @@ class SharedAccountSplitter
         // Between the account and someone it now only chats with as the moved member.
         $onlyMoved = array_values(array_diff($plan['movedParties'], $plan['stayingParties'])) ?: [0];
         $plan['ratings'] = $plan['trysts'] = $plan['expected'] = [];
-        foreach ([['ratings', 'rater', 'ratee'], ['trysts', 'user1', 'user2']] as [$table, $c1, $c2]) {
+        foreach ([['ratings', 'rater', 'ratee', []], ['trysts', 'user1', 'user2', ['arrangedfor']]] as [$table, $c1, $c2, $alsoUnique]) {
             foreach ([[$c1, $c2], [$c2, $c1]] as [$mine, $theirs]) {
-                foreach (DB::table($table)->where($mine, $a)->whereIn($theirs, $onlyMoved)->pluck('id') as $id) {
-                    $plan[$table][] = [(int) $id, $mine];
+                foreach (DB::table($table)->where($mine, $a)->whereIn($theirs, $onlyMoved)->get() as $row) {
+                    $twin = [$mine => $plan['target'], $theirs => $row->$theirs];
+                    foreach ($alsoUnique as $column) {
+                        $twin[$column] = $row->$column;
+                    }
+
+                    if (!$this->staysBehind($plan, $table, (int) $row->id, $twin)) {
+                        $plan[$table][] = [(int) $row->id, $mine];
+                    }
                 }
             }
         }
@@ -471,7 +518,7 @@ class SharedAccountSplitter
     /**
      * Each account keeps exactly one preferred address: the moved one that was preferred, or
      * the latest moved alias; and for the account, if its preferred one moved, the latest TN
-     * address left on it.
+     * address left on it. An account the member already has keeps the one it has.
      */
     private function planPreferred(array &$plan, array $aliases, array $moving): void
     {
@@ -479,9 +526,12 @@ class SharedAccountSplitter
         $movingIds = array_column($moving, 'id');
         $latest = fn (array $rows) => collect($rows)->sortBy([['added', 'desc'], ['id', 'desc']])->first();
 
-        $keep = collect($moving)->firstWhere('preferred', 1) ?? $latest($moving);
+        $keep = NULL;
+        if ($moving !== [] && !$this->targetHas($plan, 'users_emails', ['userid' => $plan['target'], 'preferred' => 1])) {
+            $keep = collect($moving)->firstWhere('preferred', 1) ?? $latest($moving);
+        }
         foreach ($moving as $alias) {
-            $want = $alias['id'] === $keep['id'] ? 1 : 0;
+            $want = $alias['id'] === ($keep['id'] ?? NULL) ? 1 : 0;
             if ($alias['preferred'] !== $want) {
                 $plan['preferred'][] = [$alias['id'], $alias['preferred'], $want];
             }
@@ -493,6 +543,63 @@ class SharedAccountSplitter
             $choice = $left ? $latest($left)['id'] : (int) $remaining->max('id');
             $plan['preferred'][] = [$choice, 0, 1];
         }
+    }
+
+    /** Whether the account the member already has holds a row like this. */
+    private function targetHas(array $plan, string $table, array $row): bool
+    {
+        return $plan['target'] !== NULL && DB::table($table)->where($row)->exists();
+    }
+
+    /** A row whose twin the member's account holds cannot move. It stays, and the report says so. */
+    private function staysBehind(array &$plan, string $table, int $id, array $twin): bool
+    {
+        if (!$this->targetHas($plan, $table, $twin)) {
+            return FALSE;
+        }
+
+        $plan['leftBehind'][$table][] = $id;
+
+        return TRUE;
+    }
+
+    /**
+     * Whether the member's account already chats with the same person, in either order, as the
+     * unique key does not see the reverse. A person has to read two chats, which a split cannot do.
+     * A chat between the two accounts cannot move either: it would be a chat with oneself.
+     */
+    private function targetHasChat(array $plan, object $room, ?int $other): bool
+    {
+        $target = $plan['target'];
+        if ($target === NULL) {
+            return FALSE;
+        }
+
+        if ($other === $target) {
+            return TRUE;
+        }
+
+        $rooms = DB::table('chat_rooms')->where('chattype', $room->chattype);
+
+        return $other === NULL
+            ? $rooms->where('user1', $target)->where('groupid', $room->groupid)->exists()
+            : $rooms->where(fn ($q) => $q->where(['user1' => $target, 'user2' => $other])->orWhere(fn ($r) => $r->where(['user1' => $other, 'user2' => $target])))->exists();
+    }
+
+    /**
+     * Undecided chats and rows left behind do not count: neither moves unless a person acts.
+     * A preferred-address fix does, as it can be wanted when nothing else moves: an address
+     * move elsewhere can take the account's preferred one and leave it with none.
+     */
+    private function nothingToMove(array $plan): bool
+    {
+        foreach (['emails', 'preferred', 'messages', 'membershipsMove', 'membershipsCopy', 'historyMove', 'chatsMove'] as $key) {
+            if ($plan[$key] !== []) {
+                return FALSE;
+            }
+        }
+
+        return TRUE;
     }
 
     private function sameMoment(string $a, string $b): bool
@@ -507,7 +614,7 @@ class SharedAccountSplitter
             throw new RuntimeException("Cannot create {$dir} for the rollback file; nothing written");
         }
 
-        $sql = "-- Undoes tn:split-shared-account of account {$a} into new account {$n}, run " . now()->toDateTimeString() . ".\n"
+        $sql = "-- Undoes tn:split-shared-account of account {$a} into account {$n}, run " . now()->toDateTimeString() . ".\n"
             . "-- Every statement re-asserts the state the split left, so one that changes no row means\n"
             . "-- something has changed since: stop and look.\n"
             . "START TRANSACTION;\n" . implode("\n", $statements) . "\nCOMMIT;\n";

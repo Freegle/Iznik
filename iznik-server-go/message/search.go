@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
@@ -352,16 +353,62 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 		Limit(1).
 		Scan(&results)
 
+	return asIDMatch(results, msgid)
+}
+
+// SearchModeratedByMsgID finds a post by its id for a moderator when SearchByMsgID cannot.
+// messages_spatial holds live posts only: a post leaves it once it is withdrawn or expires,
+// and a taken one once it ages out. The ModTools Approved page still lists those posts, and
+// it is where moderators search by id, so a withdrawn post found nothing there at all. This
+// looks the id up on the post's own groups instead: approved on a group the caller moderates
+// (any group for admin and support), and within groupids when they are given. A member gets
+// nothing from it, so search on the site still finds live posts only.
+func SearchModeratedByMsgID(db *gorm.DB, myid uint64, msgid uint64, groupids []uint64) []SearchResult {
+	if myid == 0 {
+		return nil
+	}
+
+	// The same rows the Approved listing shows: a live post by a poster who still exists.
+	q := db.Table("messages_groups mg").
+		Select("mg.msgid, mg.groupid, mg.arrival, m.type AS type, COALESCE(m.lat, 0) AS lat, COALESCE(m.lng, 0) AS lng").
+		Joins("INNER JOIN messages m ON m.id = mg.msgid").
+		Joins("INNER JOIN users u ON u.id = m.fromuser").
+		Where("mg.msgid = ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL",
+			msgid, utils.COLLECTION_APPROVED)
+
+	if len(groupids) > 0 {
+		q = q.Where("mg.groupid IN (?)", groupids)
+	}
+
+	if !auth.IsAdminOrSupport(myid) {
+		q = q.Where("mg.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?))",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER)
+	}
+
+	// The group it was posted on, rather than one it rippled into.
+	var results []SearchResult
+	q.Order("mg.rippled_in, mg.arrival").Limit(1).Scan(&results)
+
+	return asIDMatch(results, msgid)
+}
+
+// asIDMatch labels results as a match on the id and blurs their location. A post with
+// no location comes back as 0,0 and is left there rather than blurred as a real point.
+func asIDMatch(results []SearchResult, msgid uint64) []SearchResult {
 	// Protect the anonymity of the poster: expose the same blurred point as the
 	// message record, the feed and the vector search.
 	blurCoords := make([][2]float64, 0, len(results))
 	for _, r := range results {
-		blurCoords = append(blurCoords, [2]float64{r.Lat, r.Lng})
+		if r.Lat != 0 || r.Lng != 0 {
+			blurCoords = append(blurCoords, [2]float64{r.Lat, r.Lng})
+		}
 	}
 	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 
 	for i := range results {
-		results[i].Lat, results[i].Lng = roadblur.RoadBlur(results[i].Lat, results[i].Lng, utils.BLUR_USER)
+		if results[i].Lat != 0 || results[i].Lng != 0 {
+			results[i].Lat, results[i].Lng = roadblur.RoadBlur(results[i].Lat, results[i].Lng, utils.BLUR_USER)
+		}
 		results[i].Matchedon = Matchedon{Type: "id", Word: strconv.FormatUint(msgid, 10)}
 	}
 

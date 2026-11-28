@@ -102,4 +102,37 @@ class EmailSpoolerRetryTest extends TestCase
         $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
         Queue::assertNothingPushed();
     }
+
+    /**
+     * A mailable that names its recipient only in build() has to be built to
+     * find it. That built message is the one spooled; it is not built again.
+     */
+    public function test_mailable_addressed_in_build_is_built_once_when_spooled_without_to(): void
+    {
+        Queue::fake();
+
+        $id = $this->spooler->spool(new RetryableTestMailable(['id' => 3], 'built-once@example.com'));
+
+        $this->assertNotEmpty($id);
+        $this->assertSame(1, RetryableTestMailable::$builds);
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertSame('built-once@example.com', $data['to'][0]['address']);
+        Queue::assertNothingPushed();
+    }
+
+    /**
+     * Reading the recipient from envelope() must not let an envelope() failure
+     * escape spool(): a retryable mailable still gets its durable retry.
+     */
+    public function test_envelope_failure_without_to_still_dispatches_retry(): void
+    {
+        Queue::fake();
+        RetryableTestMailable::$throwOnEnvelope = true;
+
+        $result = $this->spooler->spool(new RetryableTestMailable(['id' => 9]), null, 'test_type');
+
+        $this->assertSame('', $result);
+        Queue::assertPushed(SpoolMail::class, fn (SpoolMail $job) => $job->descriptor === ['id' => 9]);
+    }
 }

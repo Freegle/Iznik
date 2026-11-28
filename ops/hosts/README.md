@@ -32,6 +32,12 @@ monit/
   db-node/             db1, db2, db3 - byte-identical on all three
     monitrc.settings
     conf.d/
+  mail-host/           the outbound mail relay (two postfix instances)
+    monitrc.settings
+    conf.d/
+    scripts/
+  lb/                  the load balancer
+    monitrc.settings
 ```
 
 `monitrc.settings` holds only the lines that differ from the stock Debian
@@ -70,12 +76,38 @@ Two monit gotchas worth knowing before you touch this:
   (services stuck "Initializing" across cycles). `systemctl restart monit`
   fixes it and restarts only the daemon, not the monitored processes.
 
+## A host that starts monit at boot needs a start delay
+
+On the Docker host, the mail relay and the load balancer, systemd starts monit at
+the same moment as the services it watches. Without a delay, monit's first check
+runs a second or two after boot, finds Redis, postfix or HAProxy not yet running,
+starts them itself and sends a "does not exist" alert for each. postfix is not up
+yet either, so the alerts wait in monit's event queue and arrive a minute later,
+for services that systemd had running by then. Every patch reboot did this.
+
+`with start delay` on the `set daemon` line holds monit's first check back for
+that long after the daemon starts. It applies only when the daemon starts, not
+after a `monit reload`. Keep it well under freegle-maint's `MAINT_MONIT_TIMEOUT`
+(300 seconds): the maintenance checks after a reboot wait for every service to
+read OK, and none does until the first check has run.
+
+monit also leaves its http interface closed until the delay is over, so for that
+long every `monit` command on the host fails with "Cannot connect to
+[localhost]:2812". freegle-maint waits for the daemon to answer before it sends
+`monit monitor` or `unmonitor` (`monit_ready` in `scripts/maintenance/lib/common.sh`).
+
+The database nodes do not need one. db2 and db3 do not start monit at boot, since
+the maintenance script starts it once the node has rejoined, and db1's services
+are up before monit's first check.
+
 ## Cycle length differs by role — check before reading any grace period
 
 | host | `set daemon` | so "for 15 cycles" means |
 |---|---|---|
 | batch host | 120s | 30 minutes |
 | db1/2/3 | 60s | 15 minutes |
+| mail relay | 60s | 15 minutes |
+| load balancer | 120s | 30 minutes |
 
 Every `if ... for N cycles` in these files is in cycles, not minutes. The same
 number means different things on the two roles, which is easy to get wrong when
@@ -83,8 +115,8 @@ copying a check from one to the other.
 
 ## Deliberately NOT here
 
-- **Secrets, credentials, private IPs, personal addresses.** `__ALERT_EMAIL__`
-  and `__NODE_FQDN__` are placeholders; fill them in at restore time.
+- **Secrets, credentials, private IPs, personal addresses.** `__ALERT_EMAIL__`,
+  `__MAIL_DOMAIN__` and `__NODE_FQDN__` are placeholders; fill them in at restore time.
 - **Anything already in git** — container images, `docker-compose*.yml`,
   supervisor config (that is image-baked from `iznik-batch/docker/supervisor.conf`).
 - **TLS certificates and private keys, DNS zones, firewall rules, package sets,

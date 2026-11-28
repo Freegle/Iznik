@@ -19,7 +19,6 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
-	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
@@ -569,6 +568,11 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error {
 	db := database.DBConn
 
+	// The address is checked before anything is looked up, the account once we know whose it is.
+	if held, err := loginHeldBack(c, ""); held {
+		return err
+	}
+
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
 	var userID uint64
@@ -580,13 +584,24 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		Scan(&userID)
 
 	if userID == 0 {
+		loginFailed(c, "")
+
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "We don't know that email address.",
 		})
 	}
 
+	// Counted against the member, not the address typed, so each of a member's addresses and their
+	// login link share one count, and two spellings the database treats as one address do too.
+	accountKey := loginUserKey(userID)
+	if held, err := loginHeldBack(c, accountKey); held {
+		return err
+	}
+
 	if !auth.VerifyPassword(userID, password) {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "The password is wrong.",
@@ -597,6 +612,8 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
+
+	loginSucceeded(accountKey)
 
 	return c.JSON(fiber.Map{
 		"ret":        0,
@@ -609,6 +626,11 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 // handleLinkLogin authenticates via userid + link key.
 func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	db := database.DBConn
+
+	accountKey := loginUserKey(uid)
+	if held, err := loginHeldBack(c, accountKey); held {
+		return err
+	}
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
@@ -625,6 +647,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	}
 
 	if target.ID == 0 {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -637,6 +661,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		Limit(1).Scan(&storedKey)
 
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(storedKey), []byte(key)) != 1 {
+		loginFailed(c, accountKey)
+
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "Invalid key.",
@@ -660,6 +686,8 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
+
+	loginSucceeded(accountKey)
 
 	return c.JSON(fiber.Map{
 		"ret":        0,
@@ -1158,7 +1186,6 @@ func GetSession(c *fiber.Ctx) error {
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
-		var supportCases int64
 
 		var wg2 sync.WaitGroup
 
@@ -1531,17 +1558,6 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Support cases waiting for Support (Support and Admin) ---
-		// The Cases tab of Support Tools, which only Support and Admin see. A referring moderator
-		// follows their own case by mail and the case link, so they get no count for it.
-		if userRow.Systemrole == utils.SYSTEMROLE_SUPPORT || userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
-			wg2.Add(1)
-			go func() {
-				defer wg2.Done()
-				supportCases, _ = casestore.CountAwaitingSupport(db)
-			}()
-		}
-
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1582,7 +1598,7 @@ func GetSession(c *fiber.Ctx) error {
 				// contains a space, so a parenthesized UNION subquery can be given as the
 				// "table name" with its own bind args in Table()'s variadic args.
 				// Counted on the same terms as the Related Members list, which leaves out a
-				// pair across the TrashNothing line because the merge would be refused.
+				// pair with a TrashNothing account because the merge would be refused.
 				mergeable := user.MergeableSidesSQL("u1", "u2")
 				db.Table("(SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user1 "+
@@ -1671,7 +1687,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated + supportCases + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
+			emailin + emailout + helperEscalated + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
 
 		work = fiber.Map{
 			"pending":                  pending,
@@ -1692,7 +1708,6 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreviewother":          chatreviewother,
 			"newsletterstories":        newsletterstories,
 			"helperEscalated":          helperEscalated,
-			"supportcases":             supportCases,
 			"giftaid":                  giftaid,
 			"happiness":                happiness,
 			"relatedmembers":           relatedmembers,
@@ -2086,6 +2101,18 @@ func PatchSession(c *fiber.Ctx) error {
 			})
 		}
 
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so confirming one moves nothing and merges nothing, wherever it is. Adding one is
+		// refused below; this catches a key mailed before that was. The key is spent.
+		for _, mail := range emails {
+			if user.IsTNAddress(mail.Email) {
+				db.Table("users_emails").Where("id = ?", mail.ID).Update("validatekey", gorm.Expr("NULL"))
+				stdlog.Printf("User %d tried to confirm TrashNothing address row %d, held by user %d: refused", myid, mail.ID, mail.UserID)
+
+				return fiber.NewError(fiber.StatusForbidden, user.MsgTNAddressRefused)
+			}
+		}
+
 		for _, mail := range emails {
 			if mail.UserID != 0 && mail.UserID != myid {
 				// The address belongs to another account, so the member has
@@ -2277,6 +2304,15 @@ func PatchSession(c *fiber.Ctx) error {
 		// Queue verification email. Return ret=10 so the frontend shows the
 		// "check your mailbox" modal.
 		wg.Wait()
+
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so nobody adds one here. Refused before any mail is sent, with a reason to show.
+		if user.IsTNAddress(*req.Email) {
+			return c.JSON(fiber.Map{
+				"ret":    12,
+				"status": user.MsgTNAddressRefused,
+			})
+		}
 
 		if err := queue.QueueTask(queue.TaskEmailVerify, map[string]interface{}{
 			"user_id": myid,

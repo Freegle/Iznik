@@ -386,6 +386,21 @@ describe('ModSettingsPersonal', () => {
         expect(wrapper.vm.showEmailConfirmModal).toBe(true)
       })
 
+      it('says why a TrashNothing address is refused (ret 12)', async () => {
+        mockAuthStore.saveEmail.mockResolvedValue({
+          ret: 12,
+          status: 'That is a TrashNothing address.',
+        })
+        mockMe.email = 'someone-g1@user.trashnothing.com'
+        const wrapper = mountComponent()
+        const callback = vi.fn()
+        await wrapper.vm.saveEmail(callback)
+        await flushPromises()
+        expect(wrapper.vm.showEmailConfirmModal).toBe(false)
+        expect(wrapper.text()).toContain('That is a TrashNothing address.')
+        expect(callback).toHaveBeenCalled()
+      })
+
       it('does not show confirm modal when ret is not 10', async () => {
         mockAuthStore.saveEmail.mockResolvedValue({ ret: 0 })
         mockMe.email = 'new@example.com'

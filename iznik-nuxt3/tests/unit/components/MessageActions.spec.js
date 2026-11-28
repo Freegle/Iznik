@@ -127,7 +127,11 @@ describe('MessageActions', () => {
         .findAll('button')
         .find((b) => b.text().includes('Share'))
       await shareButton.trigger('click')
-      expect(wrapper.find('.share-modal').exists()).toBe(true)
+      // The modal is a defineAsyncComponent: under a loaded full run its import can still be
+      // in flight one tick after the click, so wait for it rather than assert at once.
+      await vi.waitFor(() =>
+        expect(wrapper.find('.share-modal').exists()).toBe(true)
+      )
     })
 
     it('does not show share modal initially', () => {
@@ -145,7 +149,10 @@ describe('MessageActions', () => {
         .findAll('button')
         .find((b) => b.text().includes('Report'))
       await reportButton.trigger('click')
-      expect(wrapper.find('.report-modal').exists()).toBe(true)
+      // Async component, as for the share modal above.
+      await vi.waitFor(() =>
+        expect(wrapper.find('.report-modal').exists()).toBe(true)
+      )
     })
   })
 

@@ -28,6 +28,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const execFileP = util.promisify(execFile)
+const { mailboxesFromEnv, mailHistoryFor } = require('./mail-history')
 
 // ---------------------------------------------------------------------------
 // Read-only MySQL pool.
@@ -254,16 +255,16 @@ const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
 // more concurrent builds onto the server.
 //
 // Key mode (the support first pass, which has no moderator session): pass `key` and the dump is
-// requested with the key in the X-Dump-Key header and the case id in X-Freegle-Case, never in the URL,
+// requested with the key in the X-Dump-Key header and the referral id in X-Freegle-Referral, never in the URL,
 // so it cannot reach an access log. `signal` stops the fetch when the caller's deadline passes. A refused
 // dump throws an error carrying `status`.
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, caseId, signal }) {
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, referralId, signal }) {
   const base = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(include)}&since=${encodeURIComponent(since)}`
   const url = key ? base : `${base}&jwt=${encodeURIComponent(jwt || '')}`
   const headers = { 'accept-encoding': 'identity' }
   if (key) {
     headers['X-Dump-Key'] = key
-    if (caseId) headers['X-Freegle-Case'] = String(caseId)
+    if (referralId) headers['X-Freegle-Referral'] = String(referralId)
   }
 
   // Inactivity-based abort, not a fixed overall deadline: a healthy framed
@@ -457,7 +458,7 @@ async function prefetchDump({ userId, jwt, since = '90d', fetchDump } = {}) {
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
   // ctx: { jwt, userId (selected member or 0), progress }, plus for the first pass, which has no login:
-  // { dumpKey, caseId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
+  // { dumpKey, referralId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
   // deadline, and a refused key or a held export is reported rather than worked around.
   const state = { dumpFile: null, privateDumps: {} }
   const p = ctx.progress || (() => {})
@@ -573,7 +574,7 @@ function buildTools(ctx) {
           p('tool', `Downloading full snapshot for user ${id}…`)
           let file
           try {
-            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since })
+            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, referralId: ctx.referralId, signal: ctx.signal, since })
           } catch (e) {
             // A refused key or a held export is not something to work around: the first pass stops.
             if (e && [401, 403, 409].includes(e.status) && ctx.onDumpRefused) ctx.onDumpRefused(e.status)
@@ -880,10 +881,38 @@ function buildTools(ctx) {
     { annotations: { readOnlyHint: true } }
   )
 
+  const support_mail_history = tool(
+    'support_mail_history',
+    'Past mail between a member and the support@ and info@ mailboxes, two years back, newest first: date, ' +
+      'mailbox, direction (in = from the member, out = to them), subject and a short excerpt of the new text. ' +
+      "Matched on the member's own email addresses. Use it to see whether they have written in before, about " +
+      'what, and what they were told.',
+    { userid: z.number().optional().describe('Member id; defaults to the selected member') },
+    async (a) => {
+      try {
+        const id = a.userid || ctx.userId
+        if (!id) return err('No member selected/provided')
+        // The first pass may read only the member in its case, as with get_user_dump.
+        if (!ctx.jwt && ctx.dumpKey && id !== ctx.userId) return err('In this run support_mail_history may only look at the member in the case')
+        audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'support_mail_history' })
+        p('tool', `Reading past mail with support and info for user ${id}…`)
+        return text(await mailHistoryFor(id, { signal: ctx.signal }))
+      } catch (e) {
+        return err(e.message)
+      }
+    },
+    { annotations: { readOnlyHint: true } }
+  )
+
+  // The mail tool is offered only where the mailbox passwords are set, so a run never spends a step on it
+  // for nothing.
+  const withMail = mailboxesFromEnv().length > 0
+
   return {
     tools: [
       identify_user, get_user_dump, query_dump, db_query, loki_search, sentry_search,
       discourse_search, code_history_search, git_fixed_already,
+      ...(withMail ? [support_mail_history] : []),
     ],
     names: [
       'identify_user',
@@ -895,6 +924,7 @@ function buildTools(ctx) {
       'discourse_search',
       'code_history_search',
       'git_fixed_already',
+      ...(withMail ? ['support_mail_history'] : []),
     ],
     cleanup() {
       // Cached dumps are owned by dumpCache (swept on TTL) so a follow-up

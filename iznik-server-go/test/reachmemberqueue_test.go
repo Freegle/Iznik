@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,6 +80,49 @@ func TestReachQueue_SwitchingToImmediateQueuesTheMember(t *testing.T) {
 	reason, count := queuedReason(t, userID)
 	assert.Equal(t, int64(1), count, "switching to immediate queues the member")
 	assert.Equal(t, "frequency", reason)
+}
+
+// Saving immediate again is not a change. The batch records the time a member switched and
+// leaves out posts from before it, so a save that changed nothing must not move that time.
+func TestReachQueue_SavingImmediateAgainDoesNotQueue(t *testing.T) {
+	prefix := uniquePrefix("rq_freq_same")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	database.DBConn.Exec("UPDATE memberships SET emailfrequency = -1 WHERE userid = ? AND groupid = ?", userID, groupID)
+	clearQueue(userID)
+	defer clearQueue(userID)
+
+	body, _ := json.Marshal(map[string]interface{}{"userid": userID, "groupid": groupID, "emailfrequency": -1})
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	_, count := queuedReason(t, userID)
+	assert.Equal(t, int64(0), count, "immediate saved over immediate does not queue")
+}
+
+// A join is about one community. A return, a move or a switch to immediate mail is about the
+// member, and the batch records it, so a join that follows one before the drain keeps it.
+func TestReachQueue_AJoinDoesNotReplaceAnEarlierReason(t *testing.T) {
+	prefix := uniquePrefix("rq_keep")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	clearQueue(userID)
+	defer clearQueue(userID)
+
+	reachqueue.QueueMember(database.DBConn, userID, reachqueue.ReasonReturned)
+	reachqueue.QueueMember(database.DBConn, userID, reachqueue.ReasonJoined)
+
+	reason, count := queuedReason(t, userID)
+	assert.Equal(t, int64(1), count)
+	assert.Equal(t, "returned", reason)
+
+	reachqueue.QueueMember(database.DBConn, userID, reachqueue.ReasonMoved)
+	reason, _ = queuedReason(t, userID)
+	assert.Equal(t, "moved", reason, "any other reason still replaces the last")
 }
 
 func TestReachQueue_ChangingPostcodeQueuesTheMember(t *testing.T) {

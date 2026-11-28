@@ -228,6 +228,11 @@ describe('LayoutCommon', () => {
     it.each([
       ['/', false, false, false],
       ['/', true, false, true],
+      // The pages that ask for a donation to turn ads off do not show ads.
+      ['/adsoff', true, false, false],
+      ['/adsoff/', false, false, false],
+      ['/donate', true, false, false],
+      ['/donated', true, false, false],
       ['/partnerships', false, false, false],
       ['/partnerships/', false, false, false],
       ['/together', false, false, false],

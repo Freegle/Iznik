@@ -52,4 +52,40 @@ class ReachMemberQueueServiceTest extends TestCase
             DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('reason')
         );
     }
+
+    /**
+     * A join is about one community and needs nothing recorded against the member. A move, a
+     * return or a switch to immediate mail does, so a join that follows one before the drain
+     * must not take its place.
+     */
+    public function test_a_join_does_not_replace_an_earlier_reason(): void
+    {
+        $user = $this->createTestUser();
+
+        ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_RETURNED);
+        ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_JOINED);
+
+        $this->assertSame(
+            'returned',
+            DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('reason')
+        );
+    }
+
+    /**
+     * A change found late is queued with the time it happened. It must not move a waiting
+     * row's time backwards.
+     */
+    public function test_an_older_time_does_not_move_a_waiting_row_back(): void
+    {
+        $user = $this->createTestUser();
+        $now = now()->startOfSecond();
+
+        ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_FREQUENCY, $now);
+        ReachMemberQueueService::enqueue($user->id, ReachMemberQueueService::REASON_MOVED, $now->copy()->subHours(6));
+
+        $this->assertSame(
+            $now->toDateTimeString(),
+            DB::table('rippling_reach_member_pending')->where('userid', $user->id)->value('added')
+        );
+    }
 }

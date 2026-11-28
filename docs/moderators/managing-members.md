@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
+  - iznik-batch/app/Services/MembershipsProcessingService.php
   - iznik-nuxt3/modtools/pages/chats/**
   - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/pages/spammers.vue
@@ -13,7 +14,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
   - iznik-nuxt3/modtools/components/ModChatFooter.vue
-  - iznik-nuxt3/modtools/pages/support/cases/[[id]].vue
+  - iznik-nuxt3/modtools/components/ModChatFooter.vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -44,9 +45,8 @@ From here you can:
   added this way: you are told so, and nothing happens. They join communities through TrashNothing.
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
-  survives). You can merge two members of your communities, and one of them can be your own
-  account. You cannot merge an account that has a higher system role than you: ask Support to
-  do that.
+  survives). A TrashNothing account can't be merged, with another TrashNothing account or with a
+  Freegle one, so the Related Members list never suggests it. Add a note to each account instead.
 - Change a member's **role** (Member, Moderator, Owner).
 
 ### How far a search reaches
@@ -107,6 +107,11 @@ The count beside **Member Review** in the menu is red for members nobody has dea
 and blue for members who are held by a moderator or flagged in a community where you are not
 an active moderator. Once you have reviewed or held everything, the red count goes and only
 blue is left.
+
+When you mark a member as OK, that is your community's decision. A member flagged for being
+on many communities does not come back to your queue each time they join another one: they
+come back only if they join another more than 31 days after you looked at them. Other kinds
+of flag, such as a note flagged to other communities, still show straight away.
 
 Treat these as prompts to look, not verdicts. There is no rule against joining several
 communities or posting enthusiastically. Ban only with clear evidence of harm, and prefer
@@ -193,7 +198,8 @@ Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
 
 When someone replies to an OFFER of a child car seat, Freegle asks them what to check and
-whether they still want it before their reply is passed on. Only they see the question until
+whether they still want it before their reply is passed on. The same happens for an offer whose
+photo looks damaged, or too big to carry home when no delivery is offered. Only they see the question until
 they answer. After a Yes the person offering sees the question and the answer with the reply.
 A reply they said no to, or never answered within three days, is not delivered, and the message
 shows why when you look at it. If their reply is held for your review, the question is held
@@ -304,22 +310,21 @@ If a chat needs more help than you can give, refer it to Support.
 
 1. Open the member's chat and press **Refer to Support**.
 2. If you like, say what you need help with in the box. It is optional, but it helps.
-3. Confirm. You will see a link to your case.
+3. Confirm. You will see a note that it has gone.
 
-Support will look at the chat and reply in the case. You also get an email to say there is a reply. Open
-the case from the link and reply there. Replying to the email does not reach Support.
+Support get an email from your community's volunteers address. They look at the chat and reply by
+email. Their reply arrives in ModTools **Chats**, like any other email to your volunteers address, so
+every moderator of the community can see it and answer.
 
-The case shows its status, what you asked and the replies. Support's own notes, including the AI's, are
-for Support only, and you will not see them. Nothing is sent to the member. If they need to be told
-something, Support will tell you and you can tell them.
+Nothing is sent to the member. If they need to be told something, Support will tell you and you can
+tell them.
 
-If you refer the same chat again while the case is open, your new note is added to the same case.
+If you refer the same chat again, Support get another email. Say what has changed in the box.
 
-For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
-Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
-when Support replies, and counts again if the moderator writes back. When the AI helper has written a
-reply, it is already in the reply box, marked as a suggestion: check it, change what you need, then send.
-It goes to the moderator, not the member.
+For Support volunteers: each referral is one email in the Support mailbox. It says who referred
+which chat and why, links to the chat and the member, and holds what the AI helper found when it
+looked into the question, with a suggested reply. Check it before relying on it. Reply to the email
+to answer the volunteers. Your reply goes to the moderators, not the member.
 
 ## Banning and removing
 

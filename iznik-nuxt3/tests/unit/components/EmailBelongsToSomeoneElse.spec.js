@@ -88,6 +88,22 @@ describe('EmailBelongsToSomeoneElse', () => {
       expect(wrapper.text()).toContain('spam folder')
     })
 
+    it('says why a TrashNothing address is refused instead of claiming a mail went', async () => {
+      mockAuthStore.saveEmail.mockResolvedValueOnce({
+        ret: 12,
+        status: 'That is a TrashNothing address.',
+      })
+      const wrapper = createWrapper({
+        theirs: 'someone-g1@user.trashnothing.com',
+      })
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('That is a TrashNothing address.')
+      expect(wrapper.text()).not.toContain('verification mail')
+      expect(wrapper.text()).not.toContain('Request merge')
+    })
+
     it('hides Request merge button after clicking', async () => {
       const wrapper = createWrapper()
       const button = wrapper.find('button')

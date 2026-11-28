@@ -87,6 +87,33 @@ is a partner's member, not a volunteer. It must not hold Owner or Moderator on a
 When a volunteer has both a Freegle account and a TrashNothing account, do not merge them.
 They stay separate; remove the role from the TrashNothing one instead.
 
+Two TrashNothing accounts are not merged either, even a member's who renamed on TrashNothing, or
+a stamped account and a twin holding the same username. `users.tnuserid` is unique, so no two
+accounts can hold the same id, and nothing else proves two accounts are one member. The
+TrashNothing address goes to the account holding the id TrashNothing names for it, and the other
+keeps its posts and chats. `MergeUsersTx` and `User::merge` refuse any merge with a TrashNothing
+account in it, forced or not, and the Related Members list leaves such a pair out.
+
+That address move goes ahead even off an account holding another TN id: TrashNothing's word on
+whose address it is stands. Do not refuse it; it is reported, and the report flags that case.
+
+## Only a TN user id says who a TrashNothing member is
+
+`users.tnuserid` is the only source of truth. A username or an address never decides who someone
+is, who owns a post, or which account to merge or link. TN does not promise a username is unique,
+a released one can be taken by someone else, and an address can sit on the wrong account. An
+account with no TN id proves nothing either way, whatever it holds.
+
+A username may only refuse something, as `MergeUsersTx` and `User::merge` refuse two different
+ones. Do not add a rule that treats a matching username or address as the same member.
+
+The email integration breaks this, deliberately. Posts and chat by email both match on the address,
+and `IncomingMailService` is left alone because it is production's source of truth and is being
+replaced: do not change it for this rule. Its replacement goes by TN user id. The one exception is
+`handleSubscribe`, which gives an account it creates the id from the `x-trash-nothing-user-id`
+header, because partner calls and API posts would otherwise split the member from it. It matches
+nobody by the id. Anything reading that header needs TN's secret as well, because anyone can write it.
+
 ## A TrashNothing member is dealt with through their membership
 
 Every TrashNothing member Freegle deals with has a membership of the community concerned, and

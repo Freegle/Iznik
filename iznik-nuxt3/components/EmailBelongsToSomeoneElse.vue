@@ -1,6 +1,9 @@
 <template>
   <NoticeMessage>
-    <div v-if="showConfirm">
+    <div v-if="refused">
+      <p>{{ refused }}</p>
+    </div>
+    <div v-else-if="showConfirm">
       <p>We've sent you a verification mail.</p>
       <p>Don't forget to check your spam folder!</p>
       <p>
@@ -44,11 +47,18 @@ const props = defineProps({
 const authStore = useAuthStore()
 const me = computed(() => authStore.user)
 const showConfirm = ref(false)
+// Why the server refused the address, e.g. a TrashNothing one (ret 12), which is never merged.
+const refused = ref(null)
 
 async function requestMerge() {
   const data = await authStore.saveEmail(props.theirs)
 
   console.log('Merge data', data)
+
+  if (data?.ret === 12) {
+    refused.value = data.status
+    return
+  }
 
   showConfirm.value = true
 }

@@ -128,7 +128,9 @@ community statistics and so you always have a record of what you gave or receive
 
 - **Change your email or password**, add a second email, or update your home postcode
   under Account settings. If Freegle cannot deliver to your email (it is "bouncing") you
-  will see a warning and can fix it here.
+  will see a warning and can fix it here. A TrashNothing address (one ending
+  `@user.trashnothing.com`) can't be added here: only TrashNothing links one to an account,
+  so use your own email address.
 - **Address book**: save one or more addresses to share quickly in chat when arranging
   collection.
 - **Download your data** (`/mydata`): see everything Freegle holds about you and download

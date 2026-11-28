@@ -28,6 +28,10 @@
         </b-input-group>
       </div>
 
+      <NoticeMessage v-if="emailRefused" variant="warning" class="mb-2">
+        {{ emailRefused }}
+      </NoticeMessage>
+
       <div
         v-if="otherEmails.length"
         :key="JSON.stringify(otherEmails) + emailLocal"
@@ -111,6 +115,8 @@ const { me, myid } = useMe()
 // State
 const pc = ref(null)
 const emailLocal = ref('')
+// Why the server refused the address, e.g. a TrashNothing one (ret 12).
+const emailRefused = ref(null)
 
 // Computed properties
 const otherEmails = computed(() => {
@@ -133,6 +139,8 @@ const clearPostcode = () => {
 const saveEmail = async (callback) => {
   if (emailLocal.value) {
     const data = await authStore.saveEmail(emailLocal.value)
+
+    emailRefused.value = data?.ret === 12 ? data.status : null
 
     if (data && data.ret === 10) {
       emit('show-email-confirm-modal')

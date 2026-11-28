@@ -3,6 +3,7 @@
 # lines are live, so restore by editing the packaged file rather than replacing it.
 
 set daemon  120             # CYCLE LENGTH. Every "for N cycles" in conf.d/ is N*120s here.
+    with start delay 120    # first check 2 min after monit starts - see ops/hosts/README.md
 set log /var/log/monit.log
 set idfile /var/lib/monit/id
 set statefile /var/lib/monit/state

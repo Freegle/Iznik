@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\Mime\Email;
 use Tests\TestCase;
 
@@ -152,9 +153,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider intervalProvider
-     */
+    #[DataProvider('intervalProvider')]
     public function test_sendNotification_interval(?int $offsetSeconds, bool $force, bool $expectSent): void
     {
         $this->captureMail();
@@ -222,9 +221,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider subjectProvider
-     */
+    #[DataProvider('subjectProvider')]
     public function test_sendNotification_subject(string $classification, string $subject): void
     {
         $this->captureMail();
@@ -296,9 +293,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider commitCountProvider
-     */
+    #[DataProvider('commitCountProvider')]
     public function test_sendNotification_commit_list(int $count, bool $expectAll, bool $expectTruncated, int $expectListed): void
     {
         $this->captureMail();
@@ -330,9 +325,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider footerProvider
-     */
+    #[DataProvider('footerProvider')]
     public function test_sendNotification_manual_promote_footer(string $classification, bool $expected): void
     {
         $this->captureMail();
@@ -363,9 +356,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider missingTokenProvider
-     */
+    #[DataProvider('missingTokenProvider')]
     public function test_triggerManualPromotion_token_not_configured(?string $token): void
     {
         Http::fake();
@@ -405,9 +396,7 @@ class AppReleaseClassifierServiceCoverageTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider failureStatusProvider
-     */
+    #[DataProvider('failureStatusProvider')]
     public function test_triggerManualPromotion_non_2xx(int $status): void
     {
         config(['freegle.app_release.circleci_token' => 'tok', 'freegle.app_release.circleci_project' => 'gh/Org/repo']);

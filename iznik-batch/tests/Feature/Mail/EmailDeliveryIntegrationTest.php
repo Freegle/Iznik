@@ -111,9 +111,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_admin_mail_delivered_with_cta_link(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('admin');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
@@ -156,9 +154,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_deadline_reached_delivered_with_action_urls(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('deadline');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
@@ -202,9 +198,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_donation_thank_you_delivered_with_site_link(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('donthank');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
@@ -235,9 +229,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_ask_for_donation_delivered_with_donate_url(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('askdon');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
@@ -270,9 +262,7 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_mod_std_message_delivered_with_body_content(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('modstd');
         $user = $this->createTestUser(['email_preferred' => $recipientEmail]);
@@ -311,21 +301,24 @@ class EmailDeliveryIntegrationTest extends TestCase
 
     public function test_refer_to_support_delivered_with_reply_to(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $supportEmail = $this->uniqueEmail('support');
         $replyToEmail = $this->uniqueEmail('modreply');
 
         $mail = new ReferToSupportMail(
-            userName: 'Alice Tester',
-            userId: 111,
+            referrerName: 'Alice Tester',
+            referrerId: 111,
             chatId: 222,
-            otherUserName: 'Bob Helper',
-            otherUserId: 333,
+            chatType: 'User2Mod',
+            memberName: 'Bob Helper',
+            memberId: 333,
+            groupName: 'Test Community',
+            fromAddress: $replyToEmail,
+            fromName: 'Test Community Volunteers',
             replyToAddress: $replyToEmail,
-            replyToName: 'Alice Tester',
+            replyToName: 'Test Community Volunteers',
+            reason: 'Why can they not post?',
         );
         Mail::to($supportEmail)->send($mail);
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-16
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -197,11 +197,11 @@ Schema in the migration above.
 
 | Table | From | Notes |
 |---|---|---|
-| `ux_flow_daily` | flow events | `entered` counts `step_enter` with `first_visit`; `reentered` the rest. `completed`, `backed`, `abandoned` and `help_sought` count once per visit, so rates over them divide by `entered + reentered` |
+| `ux_flow_daily` | flow events | `entered` counts `step_enter` with `first_visit`; `reentered` the rest. `completed`, `backed`, `abandoned` and `help_sought` count once per visit, so rates over them divide by `entered + reentered`. `people_entered` and `people_completed` count distinct people (below) |
 | `ux_flow_outcome_daily` | flow events | per flow |
 | `ux_field_daily` | `field_revisit`, `validation_failed`, `choice_switched` | per field |
 | `ux_flow_signal_daily` | `step_enter`, `step_back`, `help_sought`, the three field events, `flow_complete` | Separate visits (flow instances) with each sign of second thoughts, and how many of them also sent `flow_complete`: signal `reached` (entered the step, the base), `backed`, `help`, and `field` (with the field). Loki joins on `flow_instance_id` in one query (`and on (flow_instance_id)`), so no raw line is paged. A visit that goes back on one day and finishes after midnight UTC counts as not finished, a small undercount that is the same for every row. The same visit can split in two where `logged_in` changes at the step. Rows exist only from the day the table was added. The job skips the table, with a warning, when it does not exist yet |
-| `ux_component_daily` | `interaction`, `impressions` | impressions scaled by `1/sample_rate`; dead click = click with `interactive=false` |
+| `ux_component_daily` | `interaction`, `impressions` | impressions scaled by `1/sample_rate`; dead click = click with `interactive=false`. `people` is the distinct people who clicked the component, `people_trouble` those with a dead, rage or repeated click on it |
 | `ux_feature_adoption_daily` | `page_view` for the routes in `config('freegle.ux.features')`, `users.lastaccess` | |
 | `ux_search_daily` | `source="vector_search"` lines, `browse_scroll_depth` | `re_searched_60s` is a floor: only logged-in searches can be linked |
 | `ux_regret_daily` | MySQL | `withdrawn_24h`, `duplicate_10m`, `promise_reneged`, `reply_after_taken`; `base` is the denominator |
@@ -252,14 +252,46 @@ outcomes (started, finished) cannot be cut by it: a signed-in rate of finished o
 The **UX** sub-tab of ModTools SysAdmin. It is a row of sections: Overview (the Data health row and
 one row for each funnel), Funnels (one funnel at a time) and Pages and features. What each shows, the
 address keys, the filters and how to read Biggest loss are on its own page. `ux:weekly-report` mails
-the five week-on-week changes that touched the most events to `config('freegle.ux.report_to')` every Monday. A table whose week has fewer than 7 rollup days is not compared; the mail says how many days each week has. Event-metric alarms are only listed once they have the 7-day like-for-like baseline above.
+the five clearest week-on-week changes to `config('freegle.ux.report_to')` every Monday. A table whose week has fewer than 7 rollup days is not compared; the mail says how many days each week has. Event-metric alarms are only listed once they have the 7-day like-for-like baseline above.
+
+The mail gives **rates and relative changes, never counts**. How many people came in a week is set by
+things outside the site (the weather, a news story, a scraper), so a count says nothing about the
+site. A rate does, with how much each side of it moved.
+
+**People, not events.** A rate is over distinct people: a member id when the line has one, else the
+client address, else the session (`UxRollupService::person`). A person is counted once a day in each
+row, so one stuck page or one member clicking in anger is one person. The week adds the days up, so
+"people" in the mail are person-days. Arrivals at the join form are told apart by address and the
+people who finish by member id, so a rate is capped at 100%. Loki cannot count them (a
+distinct count is one series per person and its cap is 500), so the rollup pages the raw
+`step_enter`, `step_complete` and click lines. A row written before the people columns existed has
+them NULL, and a table with any NULL in the fortnight is compared in events; the mail says so at the
+top. Loki keeps seven days, so the old rows cannot be filled in: the first report in people is the one
+two full weeks after the migration and this code are live.
+
+**Which side moved.** Each change says how much the people finishing moved, and how much the people
+arriving moved. At a funnel step, on a device with at least 50 people in both weeks, where the
+arrivals rose by half or fell by a third and the people finishing stayed within a tenth, the cause is
+probably traffic (a scraper, a campaign) and not the page. That device is named under PROBABLY
+TRAFFIC, NOT THE PAGE (the five biggest moves) and left out of the comparison. It is a judgement, not
+a proof: a campaign that brings people who do not join looks the same. Clicks
+get no such rule: a scraper does not click, and the same trouble among more clicks is a real change
+in the rate. Counting people by address does not catch a
+scraper that comes from a new address each time (15 November 2026: one browser string, about 2,700
+addresses an hour, opening the join form and leaving); this rule does, when the arrivals move that far.
 
 | Part of the mail | What it says |
 |---|---|
-| TELEMETRY CHANGED | each health row outside 0.7 to 1.3, and whether events rose or fell |
-| WHO IS COUNTED CHANGED | a device class whose clicks moved by half or more from at least 1,000, flagged as new when it had under 100. An app release that starts sending telemetry is the usual cause (the iOS app, early November 2026) |
-| FIVE LARGEST CHANGES | step conversion, click friction and regret, each compared device by device on devices with 20 events in both weeks and 50 in all, ranked by the events the change touched at this week's volume. Each lists its devices, any device new this week, and a link to the place on the tab for the same week (`ux_period=custom`) |
-| Under a friction change | from Loki: how many people clicked it ("more than 500" when that is over Loki's series cap, and then there is no two-person check), whether two of them made half the clicks or more (then the change is theirs, not everyone's), and the three elements with the most trouble clicks, by tag and the first 40 characters of their label. Loki not answering is said, not skipped |
+| WHAT WE MEASURE CHANGED | each health row outside 0.7 to 1.3, as a multiple of the usual amount |
+| WHO IS COUNTED CHANGED | a device class whose clicks moved by half or more from at least 1,000, as a relative change, or "new this week" when it had under 100. An app release that starts sending telemetry is the usual cause (the iOS app, early November 2026) |
+| PROBABLY TRAFFIC, NOT THE PAGE | a funnel step, on one device, where only the arrivals moved |
+| FIVE CLEAREST CHANGES | finishing a step, trouble clicking and second thoughts, each compared device by device on devices with 20 people in both weeks and 50 in all. Ranked by how unlikely the change is to be chance (a two-proportion z score, not printed), and listed only at 2 or more. Each gives the rate now and before, how much each side moved, its devices, any device new this week, and a link to the place on the tab for the same week (`ux_period=custom`) |
+| Under a trouble-clicking change | from Loki: whether two people made half the clicks or more (then the change is theirs, not everyone's), and the three elements with the most trouble clicks, by tag and the first 40 characters of their label, each as a share of the trouble. Loki not answering is said, not skipped |
+| COUNTED IN EVENTS, NOT PEOPLE | at the top: the tables compared in events because a week has no people counts yet |
+
+Names are the ones staff use: the funnel titles of the UX tab, a few step and page names
+(`STEP_TITLES`, `PAGE_TITLES` in the command), and a sentence for each regret signal. Anything
+without a name prints as its key.
 
 - [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
 - [UX experiments](ux-experiments.md): how a change is shown to some members, read every hour and

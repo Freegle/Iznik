@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Sleep;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -118,9 +119,7 @@ class MobileNetworkServiceTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider ipv6AndBlankProvider
-     */
+    #[DataProvider('ipv6AndBlankProvider')]
     public function test_mobile_skips_ipv6_and_blank_prefixes(array $input, array $expected): void
     {
         Http::fake([
@@ -235,9 +234,7 @@ class MobileNetworkServiceTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider emptyPrefixesProvider
-     */
+    #[DataProvider('emptyPrefixesProvider')]
     public function test_empty_prefixes_write_no_mobile_rows(array $body): void
     {
         Http::fake([

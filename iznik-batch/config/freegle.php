@@ -934,6 +934,10 @@ return [
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
         'enabled' => (bool) EnvSetting::env('RIPPLE_ENABLED', true),
+        // How far back reach mail looks for a member who has just become eligible (joined,
+        // moved, returned, or switched to immediate mail): they are told about posts whose
+        // reach changed in this many minutes, not about every open post that covers them.
+        'reach_member_window_minutes' => (int) EnvSetting::env('RIPPLE_REACH_MEMBER_WINDOW_MINUTES', 60),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
@@ -1778,6 +1782,13 @@ return [
         // The newest job may be at most this old before integrations:check-whatjobs-freshness
         // fails and the SysAdmin Cron Jobs tab goes red.
         'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
+        // The partner dashboard login, read daily by integrations:whatjobs-clicks. Unset, the
+        // command does nothing.
+        'partner_url' => EnvSetting::env('WHATJOBS_PARTNER_URL', 'https://partner.whatjobs.com'),
+        'partner_username' => EnvSetting::env('WHATJOBS_PARTNER_USERNAME', ''),
+        'partner_password' => EnvSetting::env('WHATJOBS_PARTNER_PASSWORD', ''),
+        // Who gets the sudden-change alerts and the weekly summary.
+        'clicks_report_to' => EnvSetting::env('WHATJOBS_CLICKS_REPORT_TO', 'cto@ilovefreegle.org'),
     ],
 
     'reach_volunteering' => [
@@ -1945,18 +1956,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Support case first pass
+    | Referrals to Support: the AI first pass
     |--------------------------------------------------------------------------
     |
     | When a moderator refers a chat to Support, support:first-pass runs one bounded AI pass over
-    | the member's data and writes a brief, which the referral mail carries. The helper's address
+    | the member's data and writes a brief, which the one mail to Support carries. The helper's address
     | and shared secret are the UX helper's (freegle.ux.prompts). Off unless
     | SUPPORT_FIRST_PASS_ENABLED is 1 or true; while off, the referral mail goes out without a brief.
     |
     | timeout: the helper's own deadline is 480 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
     | per_referrer_per_day: model passes one moderator may use a day, so one person cannot spend the pool.
-    | max_age_minutes: a case still waiting this long gets the plain mail and is never run late.
-    | run_minutes: one support:first-pass run stops claiming new cases after this long.
+    | max_age_minutes: a referral still waiting this long is mailed without a brief and is never run late.
+    | run_minutes: one support:first-pass run stops taking new referrals after this long.
     |
     */
     'support' => [
@@ -2124,7 +2135,6 @@ return [
             'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
             'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
             'hosting_ad_click' => \App\Services\Ux\Sources\HostingAdClickSource::class,
-            'confirm_reply_post' => \App\Services\Ux\Sources\ConfirmReplyPostSource::class,
         ],
     ],
 

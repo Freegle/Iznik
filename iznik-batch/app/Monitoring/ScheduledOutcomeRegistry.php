@@ -280,35 +280,27 @@ class ScheduledOutcomeRegistry
                 'background_tasks',
                 'created_at',
                 (int) config('freegle.monitoring.background_tasks_max_age_minutes', 10),
-                fn ($q) => $q->whereNull('processed_at')->whereNull('failed_at')->where('attempts', '<', 3),
+                // A referral to Support waits for support:first-pass, which has its own check below.
+                fn ($q) => $q->whereNull('processed_at')->whereNull('failed_at')->where('attempts', '<', 3)
+                    ->where('task_type', '!=', \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT),
                 (int) config('freegle.monitoring.background_tasks_backlog_threshold', 0),
             ))
                 ->describedAs('Go-API background task queue not backing up')
                 ->inCategory('cursor-staleness'),
 
-            // support:first-pass runs the AI first pass for each referred support case and is the
-            // only thing that mails the referral to Support. A case that has reached a final state
-            // and is still unmailed after 15 minutes means the mailer is stuck; a case still Pending
-            // or Running after 70 minutes means the pass is stuck (the command fails an aged Pending
-            // case after 60 and reaps a Running one after about 13).
+            // support:first-pass runs the AI first pass for each chat referred to Support and sends
+            // Support its one mail. The command mails a referral that has waited 60 minutes whatever
+            // the helper is doing, so one still unprocessed after 70 means the command is stuck and
+            // Support has not been told.
             (new BacklogCheck(
                 'support:first-pass',
-                'support_cases',
-                'created_at',
-                15,
-                fn ($q) => $q->whereIn('firstpass_status', ['Done', 'Failed', 'Skipped'])->whereNull('mailed_at'),
-            ))
-                ->describedAs('Support case referral mails not backing up')
-                ->inCategory('cursor-staleness'),
-
-            (new BacklogCheck(
-                'support:first-pass stuck',
-                'support_cases',
+                'background_tasks',
                 'created_at',
                 70,
-                fn ($q) => $q->whereIn('firstpass_status', ['Pending', 'Running']),
+                fn ($q) => $q->where('task_type', \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT)
+                    ->whereNull('processed_at')->whereNull('failed_at'),
             ))
-                ->describedAs('Support case first passes not stuck')
+                ->describedAs('Referrals to Support being mailed')
                 ->inCategory('cursor-staleness'),
 
             // ripple:expand (every minute) advances rippling_reach rows whose

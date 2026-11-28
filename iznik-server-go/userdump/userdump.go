@@ -90,13 +90,13 @@ func GetUserDump(c *fiber.Ctx) error {
 	// Audit trail: who dumped whom.
 	if viaKey && internal {
 		log.Printf("userdump: internal-key client generated a data dump for user %d (include=%s)%s",
-			targetID, includeString(include), caseSuffix(c))
+			targetID, includeString(include), referralSuffix(c))
 	} else if viaKey {
 		log.Printf("userdump: API-key client generated a data dump for user %d (include=%s)%s",
-			targetID, includeString(include), caseSuffix(c))
+			targetID, includeString(include), referralSuffix(c))
 	} else {
 		log.Printf("userdump: support user %d generated a data dump for user %d (include=%s)%s",
-			myid, targetID, includeString(include), caseSuffix(c))
+			myid, targetID, includeString(include), referralSuffix(c))
 	}
 
 	if c.Query("format", "framed") == "raw" {
@@ -138,10 +138,10 @@ func validDumpKey(c *fiber.Ctx) (valid bool, internal bool) {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1, false
 }
 
-// caseSuffix is the support case the dump is for, from the X-Freegle-Case header, as a log suffix.
+// referralSuffix is the Support referral the dump is for, from the X-Freegle-Referral header, as a log suffix.
 // Only digits are kept so a header cannot write anything else into the log.
-func caseSuffix(c *fiber.Ctx) string {
-	v := c.Get("X-Freegle-Case")
+func referralSuffix(c *fiber.Ctx) string {
+	v := c.Get("X-Freegle-Referral")
 	if v == "" {
 		return ""
 	}
@@ -154,7 +154,7 @@ func caseSuffix(c *fiber.Ctx) string {
 	if len(digits) == 0 {
 		return ""
 	}
-	return " case=" + string(digits)
+	return " referral=" + string(digits)
 }
 
 func parseInclude(s string) map[string]bool {

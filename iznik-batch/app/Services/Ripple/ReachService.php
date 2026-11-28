@@ -43,7 +43,7 @@ class ReachService
      */
     public const PARTITION_FP_CONFIG_KEY = 'reach_partition_fp';
 
-    /** @var array{at:float, fp:?int}|null process-local memo of the pairing record */
+    /** @var array{at:float, fp:?string}|null process-local memo of the pairing record */
     private static ?array $partitionFpMemo = null;
 
     /**
@@ -55,15 +55,35 @@ class ReachService
      */
     public static function livePartitionFp(): ?int
     {
+        $fp = self::livePartitionFingerprint();
+
+        return $fp === null ? null : (int) $fp;
+    }
+
+    /**
+     * The same fingerprint as its digits. It is a 64-bit hash, and half of all values are above what a
+     * PHP integer holds: read as an integer, such a value becomes the largest integer and matches no
+     * stamp. The label choice below therefore compares the digits.
+     */
+    public static function livePartitionFingerprint(): ?string
+    {
         $now = microtime(true);
         if (self::$partitionFpMemo !== null && $now - self::$partitionFpMemo['at'] < 60) {
             return self::$partitionFpMemo['fp'];
         }
         $raw = DB::table('config')->where('key', self::PARTITION_FP_CONFIG_KEY)->value('value');
-        $fp = ($raw !== null && preg_match('/^\d{1,20}$/', (string) $raw)) ? (int) $raw : null;
+        $fp = ($raw !== null && preg_match('/^\d{1,20}\z/', trim((string) $raw))) ? self::fingerprintDigits(trim((string) $raw)) : null;
         self::$partitionFpMemo = ['at' => $now, 'fp' => $fp];
 
         return $fp;
+    }
+
+    /** A fingerprint's digits with no leading zeros, so two spellings of one number compare equal. */
+    private static function fingerprintDigits(string $digits): string
+    {
+        $digits = ltrim($digits, '0');
+
+        return $digits === '' ? '0' : $digits;
     }
 
     /** Tests only. */
@@ -86,7 +106,7 @@ class ReachService
      */
     public static function liveLabelsSql(string $prefix = ''): string
     {
-        $fp = self::livePartitionFp();
+        $fp = self::livePartitionFingerprint();
         if ($fp === null) {
             return "{$prefix}reach_labels";
         }
@@ -103,10 +123,10 @@ class ReachService
         if ($row === null) {
             return null;
         }
-        $fp = self::livePartitionFp();
+        $fp = self::livePartitionFingerprint();
         if ($fp !== null
             && isset($row->reach_labels_next_fp, $row->reach_labels_next)
-            && (int) $row->reach_labels_next_fp === $fp) {
+            && self::fingerprintDigits((string) $row->reach_labels_next_fp) === $fp) {
             return (string) $row->reach_labels_next;
         }
 

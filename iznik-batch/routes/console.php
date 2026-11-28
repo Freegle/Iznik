@@ -326,7 +326,7 @@ Schedule::command('ripple:proximity-notes')
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
 Schedule::command('spatial:update-data')
-    ->monthlyOn(1, '03:00')
+    ->weeklyOn(3, '03:00')
     ->withoutOverlapping(360)
     ->appendOutputTo(cronLog('spatial:update-data'))
     ->runInBackground();
@@ -722,9 +722,9 @@ Schedule::command('purge:chats')
     ->appendOutputTo(cronLog('purge:chats'))
     ->runInBackground();
 
-// Support case first pass: runs the AI first pass for referred chats and mails Support. Every
-// minute, because the case row is the queue and a referral should reach Support promptly. A run
-// stops claiming cases after ten minutes, but the last one can wait up to 510 seconds for the helper,
+// Referrals to Support: runs the AI first pass for each referred chat and mails Support. Every
+// minute, because the queued task is all there is and a referral should reach Support promptly. A run
+// stops taking referrals after ten minutes, but the last one can wait up to 510 seconds for the helper,
 // so withoutOverlapping (25 minutes) is longer than the longest run.
 Schedule::command('support:first-pass')
     ->everyMinute()
@@ -732,12 +732,12 @@ Schedule::command('support:first-pass')
     ->appendOutputTo(cronLog('support:first-pass'))
     ->runInBackground();
 
-// Retention for support cases (2 years for handled cases, 1 year for briefs). 02:40 is clear of
-// the backup drain window.
-Schedule::command('support:purge-cases')
+// Retention for first pass runs: what a run found is cleared after a year. 02:40 is clear of the
+// backup drain window.
+Schedule::command('support:purge-runs')
     ->dailyAt('02:40')
     ->withoutOverlapping(60)
-    ->appendOutputTo(cronLog('support:purge-cases'))
+    ->appendOutputTo(cronLog('support:purge-runs'))
     ->runInBackground();
 
 // Daily log/bounce/likes purge.
@@ -750,8 +750,10 @@ Schedule::command('purge:logs')
 
 // Daily syntactic email validation (last 30 days only).
 // V1: cron/email_validate.php
+// 05:20, after the Tuesday data-node maintenance gives the scheduler back (see
+// BackupDrainWindowTest::test_no_once_a_day_job_fires_while_data_node_maintenance_holds_the_scheduler).
 Schedule::command('emails:validate')
-    ->dailyAt('04:50')
+    ->dailyAt('05:20')
     ->withoutOverlapping(360)
     ->appendOutputTo(cronLog('emails:validate'))
     ->runInBackground();
@@ -817,10 +819,11 @@ Schedule::command('chats:update-expected')
     ->runInBackground();
 
 // The nightly backstop: re-check every waiting message, catching anything the two
-// triggers above cannot see. 04:50 sits in the quiet gap after the purge/stats cluster
-// and clear of the backup drain window (BackupDrainWindowTest keeps it there).
+// triggers above cannot see. 05:25 is clear of the backup drain window and of the hold
+// the Tuesday data-node maintenance puts on the scheduler (BackupDrainWindowTest keeps
+// it out of both).
 Schedule::command('chats:update-expected --full')
-    ->dailyAt('04:50')
+    ->dailyAt('05:25')
     ->withoutOverlapping(60)
     ->appendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
@@ -1688,6 +1691,21 @@ Schedule::command('integrations:check-whatjobs-freshness')
     ->withoutOverlapping(30)
     ->appendOutputTo(cronLog('integrations:check-whatjobs-freshness'));
 
+// WhatJobs click figures from their partner dashboard, beside our own, with an alert mail on a
+// sudden change. WhatJobs update the dashboard at 00:00 UTC; this runs well after that and
+// clear of the backup drain window (03:50-04:35 UTC).
+Schedule::command('integrations:whatjobs-clicks')
+    ->dailyAt('07:10')
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('integrations:whatjobs-clicks'));
+
+// The weekly WhatJobs clicks summary with the trend chart. Wednesday, because WhatJobs publish a
+// day at midnight and take 48 hours more to finalise it, so the Sunday before is final by then.
+Schedule::command('integrations:whatjobs-clicks-weekly')
+    ->weeklyOn(3, '07:40')
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('integrations:whatjobs-clicks-weekly'));
+
 // Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
 // the previous run's jobs table, so a tuple that was ever resolved wrongly
 // stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
@@ -2212,6 +2230,16 @@ Schedule::command('lockdown:report')
     ->hourly()
     ->withoutOverlapping(15)
     ->appendOutputTo(cronLog('lockdown:report'))
+    ->runInBackground();
+
+// Chat scam-wave detector (docs/ops/runbooks/chat-scam-wave.md): looks at the last 30
+// minutes of delivered chat for the same text coming from many senders, and mails geeks@
+// the text when it finds a cluster. Read-only. Each run overlaps the one before, so a
+// wave is reported twice rather than missed at a boundary.
+Schedule::command('chat:scam-wave-detect')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('chat:scam-wave-detect'))
     ->runInBackground();
 
 // =============================================================================

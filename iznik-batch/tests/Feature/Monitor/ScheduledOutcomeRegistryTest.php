@@ -260,31 +260,30 @@ class ScheduledOutcomeRegistryTest extends TestCase
         );
     }
 
-    public function test_support_first_pass_checks_watch_unmailed_and_stuck_cases(): void
+    public function test_support_first_pass_check_watches_referrals_left_unmailed(): void
     {
         Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
-        $mailed = $this->check('support:first-pass');
-        $stuck = $this->check('support:first-pass stuck');
-        $user = $this->createTestUser();
-        $make = fn (string $status, int $minutes, ?string $mailedAt = null) => DB::table('support_cases')->insertGetId([
-            'userid' => $user->id, 'source' => 'Mail', 'firstpass_status' => $status,
-            'mailed_at' => $mailedAt, 'created_at' => Carbon::now()->subMinutes($minutes),
-        ]);
+        $check = $this->check('support:first-pass');
+        $general = $this->check('queue:background-tasks');
+        DB::table('background_tasks')->where('task_type', \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT)->delete();
+        $make = fn (int $minutes, array $over = []) => DB::table('background_tasks')->insertGetId(array_merge([
+            'task_type' => \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT, 'data' => '{}',
+            'created_at' => Carbon::now()->subMinutes($minutes),
+        ], $over));
 
-        // A fresh unmailed case, an old mailed one and a young pending one are all fine.
-        $make('Done', 5);
-        $make('Failed', 500, '2026-06-12 10:00:00');
-        $make('Pending', 30);
-        $this->assertTrue($mailed->evaluate(Carbon::now())->isOk());
-        $this->assertTrue($stuck->evaluate(Carbon::now())->isOk());
+        // A referral still waiting for its pass, an old one that was mailed and an old one that
+        // failed are all fine. None of them is the general queue's to worry about.
+        $make(30);
+        $make(500, ['processed_at' => Carbon::now()]);
+        $make(500, ['failed_at' => Carbon::now()]);
+        $this->assertTrue($check->evaluate(Carbon::now())->isOk());
+        $generalBefore = $general->evaluate(Carbon::now())->isBreach();
 
-        $old = $make('Skipped', 20);
-        $this->assertTrue($mailed->evaluate(Carbon::now())->isBreach());
-        DB::table('support_cases')->where('id', $old)->update(['mailed_at' => Carbon::now()]);
-        $this->assertTrue($mailed->evaluate(Carbon::now())->isOk());
-
-        $make('Running', 71);
-        $this->assertTrue($stuck->evaluate(Carbon::now())->isBreach());
+        $stuck = $make(71);
+        $this->assertTrue($check->evaluate(Carbon::now())->isBreach());
+        $this->assertSame($generalBefore, $general->evaluate(Carbon::now())->isBreach(), 'a referral waits for support:first-pass, not for the general queue');
+        DB::table('background_tasks')->where('id', $stuck)->update(['processed_at' => Carbon::now()]);
+        $this->assertTrue($check->evaluate(Carbon::now())->isOk());
     }
 
     /**

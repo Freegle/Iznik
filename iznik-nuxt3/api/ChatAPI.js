@@ -116,7 +116,7 @@ export default class ChatAPI extends BaseAPI {
     return this.$postv2('/chatrooms', { id: chatid, action: 'Typing' })
   }
 
-  // Resolves with { ret, status, caseid }.
+  // Queues the referral: Support gets one mail, from the community's volunteers address.
   referToSupport(chatid, reason) {
     const data = { id: chatid, action: 'ReferToSupport' }
     if (reason) data.reason = reason

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -152,6 +152,9 @@ A job-listing feed, shown on Freegle as a small revenue stream (see
   `freegle.whatjobs.max_feed_age_hours` (48) old, which turns the SysAdmin Cron Jobs tab red, and
   its message gives the date WhatJobs last changed the feed. The feed stopped on 20 October 2026
   and nobody noticed for days.
+- Clicks: `integrations:whatjobs-clicks` (daily) copies the billed clicks from the WhatJobs
+  partner dashboard and mails an alert on a sudden change; `integrations:whatjobs-clicks-weekly`
+  mails the weekly trend. See [ads.md](ads.md#watching-the-job-clicks).
 - A feed file that will not open is logged as a warning and skipped, so one bad feed
   does not stop the other one
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-13
+last_reviewed: 2026-11-25
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -107,10 +107,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux-experiments.spec.js
   - iznik-server-go/message/interested.go
   - iznik-batch/app/Services/Ux/Sources/InterestedReplySource.php
-  - iznik-batch/app/Services/Ux/Sources/ConfirmReplyPostSource.php
-  - iznik-batch/tests/Feature/Ux/ConfirmReplyPostSourceTest.php
   - iznik-server-go/chat/replyconfirm.go
-  - iznik-server-go/test/confirmreplypost_test.go
+  - iznik-server-go/test/replyconfirmoffer_test.go
   - iznik-batch/app/Console/Commands/Message/InterestedChaseUpCommand.php
   - iznik-batch/app/Mail/Message/InterestedChaseUp.php
   - iznik-nuxt3/components/MessageInterested.vue
@@ -1144,7 +1142,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply-post`, `interested-button` and `krystal-hosting-ad`, described below.
+switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `interested-button` and `krystal-hosting-ad`, described below.
 
 **No experiment code in the app build.** An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly. Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on the server per member can be an experiment (`push-posts-title` was stopped on 2026-10-19 because this was misread as "no experiments that reach app members"). See `.claude/rules/conventions.md`.
 
@@ -1212,7 +1210,7 @@ wrote the row, and `UxArm::retract` deletes the row of a member and subject, for
 | `bell` | `users_notifications.id` |
 | `promise` | `messages_promises.id` |
 | `view` | `messages.id` |
-| `post` | `messages.id`: a new post the member was, or in control would have been, told about; or, for `confirm-reply-post`, the poster's own eligible offer whose repliers were, or in control would have been, asked |
+| `post` | `messages.id`: a new post the member was, or in control would have been, told about; or, in the rows `confirm-reply-post` left, the poster's own eligible offer |
 | `hosting_ad` | `domain_hosting.id`: the member's email domain, when the hosting ad was, or in control would have been, shown |
 
 `detail` holds ids and numbers only. No text, address or copy is ever stored, and a value longer than its
@@ -1231,14 +1229,13 @@ no row, so an experiment that changes both mail and the site is measured from it
 counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
 probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
 counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
-are. Five ship.
+are. Four ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
 | `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
 | `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
-| `confirm_reply_post` | `primary` `no_dead_reply`: the poster saw no dead reply on the post within the window. A dead reply was passed on to the poster and its replier was not promised the item or recorded as taking it by the end of the window. A reply dropped before the poster saw it (a no, or no answer in 3 days) is not dead | `not_taken`, the post not taken within the window, margin 5 points. `nothing_passed_on`, the poster given no reply at all within the window, is shown for information only |
 | `hosting_ad_click` | the member pressed the hosting ad's button within the window (`detail.clicked` on the exposure, written by `POST /user/hostingad`) | `not_back`, the share of members whose last access is not at least an hour after the exposure, margin 2 points |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
@@ -1367,34 +1364,14 @@ reply nobody answered was "wasted" though it cost the poster nothing. Neither me
 
 ### Confirming a reply, judged per poster
 
-`confirm-reply-post` runs the same question again, measured by what the poster saw.
+`confirm-reply-post` ran the same question again with the poster in the arm, measured by what the poster saw: the
+share of posters who saw no dead reply on their first eligible offer within 7 days. A dead reply was passed on and its
+replier was not promised the item or recorded as taking it.
 
-- **Unit.** The poster is in the arm (`ux.ExperimentArm(db, post.Fromuser, ...)` in `chat/replyconfirm.go`). In `ask`, every
-  replier to the poster's eligible offers is asked, on the website and in the app; in `control` nothing changes. A replier
-  is asked once per post, as before.
-- **Eligible.** An OFFER whose newest `messages_eee` row says damaged, or large or 20 kg and over with no delivery offered,
-  from a poster and to a replier who are not TrashNothing members, in their own chat, not held by rippling, with no outcome
-  yet. A child car seat is asked about as policy and is not in the experiment.
-- **Exposure.** One row per poster and post, subject `post`, written at the first eligible reply in both arms (in the
-  reply's transaction in `ask`, after it in `control`). `ConfirmReplyPostSource` counts each poster once, on their first
-  such post, once it is 7 days old. Strata are `damaged`, `car` and `both`.
-- **Primary, `no_dead_reply`.** The poster saw no dead reply on that post within 7 days of the exposure. A dead reply was
-  passed on (processed and delivered) and its replier was not promised the item or recorded as taking it
-  (`messages_promises`, `messages_by`) by the end of the window. A reply dropped before the poster saw it is not dead.
-- **Guardrail.** `not_taken`, the post not taken within 7 days, margin 5 points. It is the one that stops hiding replies
-  from scoring as a win: a poster with fewer replies has no dead reply, but if that costs items finding a home it shows here.
-- **For information only, `nothing_passed_on`.** The share of posters given no reply at all within 7 days, shown per
-  arm on the tab and in the result text, and never used to decide. Asking is meant to raise it: about a quarter of
-  asked replies were dropped in the first run, and 64% of these posts get only one reply, so about 16% of posters in
-  `ask` can be expected to have nothing passed on. As a guardrail it would revert the run for doing what it is meant
-  to do. It is shown so that over-hiding can be seen; `not_taken` is what decides whether that cost anything.
-- **Run.** Server channel, 7 days of intake and a 7-day window, 336 hours. On live in early November 2026 one week of
-  intake held about 348 posters (174 an arm); 12% of their posts had no dead reply and 56% were taken within 7 days. The
-  low base is because posters rarely record who took an item, so a reply that led to the item going often still counts as
-  dead, in both arms alike. `expected_points` 10 gives a power of 0.98 (5 points would give 0.72).
-
-
-The command that creates and starts it is in the Deploy section of the pull request that added it.
+It was adopted on 24 November 2026: 16.6% of 175 posters with the question saw no dead reply against 12.4% of 170
+without. The switch and its counting code are gone, and every replier to an eligible offer is now asked
+([chat-prompts.md](chat-prompts.md#confirming-a-reply)). The figures stay on its page in the Experiments section of the
+SysAdmin UX tab.
 
 ### An I'm interested button
 

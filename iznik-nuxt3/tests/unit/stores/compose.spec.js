@@ -381,6 +381,55 @@ describe('compose store', () => {
   // disk with nothing left running to clear it. On the mobile give flow that
   // permanently disabled Next, hid the delete control and hid Skip, locking
   // the member out of posting on that device until they cleared site data.
+  describe('restoreMessagesAsArray', () => {
+    it('turns an empty object restored from local storage into no drafts', () => {
+      const store = useComposeStore()
+      store.messages = {}
+
+      store.restoreMessagesAsArray()
+
+      expect(Array.isArray(store.messages)).toBe(true)
+      expect(store.messages).toEqual([])
+      // The restore that used to throw "not iterable" on it now runs.
+      expect(() => store.sanitiseRestoredAttachments()).not.toThrow()
+    })
+
+    it('keeps drafts stored under numeric keys at their index', () => {
+      const store = useComposeStore()
+      store.messages = {
+        0: { id: 0, type: 'Offer', item: 'chair' },
+        2: { id: 2, type: 'Wanted', item: 'lamp' },
+        junk: { id: 9 },
+      }
+
+      store.restoreMessagesAsArray()
+
+      expect(Array.isArray(store.messages)).toBe(true)
+      expect(store.messages[0].item).toBe('chair')
+      expect(store.messages[2].item).toBe('lamp')
+      expect(store.messages.filter(Boolean)).toHaveLength(2)
+    })
+
+    it('treats anything else that is not an array as no drafts', () => {
+      const store = useComposeStore()
+      store.messages = 'oops'
+
+      store.restoreMessagesAsArray()
+
+      expect(store.messages).toEqual([])
+    })
+
+    it('leaves an array alone', () => {
+      const store = useComposeStore()
+      const drafts = [{ id: 0, type: 'Offer' }]
+      store.messages = drafts
+
+      store.restoreMessagesAsArray()
+
+      expect(store.messages).toEqual(drafts)
+    })
+  })
+
   describe('sanitiseRestoredAttachments', () => {
     let store
 

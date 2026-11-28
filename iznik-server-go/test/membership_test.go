@@ -5013,9 +5013,9 @@ func TestGetMembershipsSearchWithFilterUsesHintedPath(t *testing.T) {
 }
 
 // Discourse 10238: ModTools suggested merging a LoveJunk account with a TrashNothing
-// account. A TrashNothing member can only be merged with another TrashNothing account,
-// so a pair across that line must not be listed, or counted on the moderator's badge.
-func TestGetRelatedMembersLeavesOutPairsAcrossTheTrashNothingLine(t *testing.T) {
+// account. TrashNothing accounts are never merged, with each other or with a Freegle
+// account, so a pair with one in it must not be listed, or counted on the moderator's badge.
+func TestGetRelatedMembersLeavesOutPairsWithATrashNothingAccount(t *testing.T) {
 	prefix := uniquePrefix("mem_rel_tn")
 	db := database.DBConn
 
@@ -5039,6 +5039,7 @@ func TestGetRelatedMembersLeavesOutPairsAcrossTheTrashNothingLine(t *testing.T) 
 	defer db.Exec("DELETE FROM users_logins WHERE uid LIKE ?", prefix+"_%_login")
 
 	freegler := member("fd")
+	otherFreegler := member("fd2")
 	tnA := member("tna")
 	tnB := member("tnb")
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 900000000+tnA%1000000, tnA)
@@ -5048,9 +5049,12 @@ func TestGetRelatedMembersLeavesOutPairsAcrossTheTrashNothingLine(t *testing.T) 
 
 	cross1, cross2 := ordered(freegler, tnA)
 	same1, same2 := ordered(tnA, tnB)
+	fd1, fd2 := ordered(freegler, otherFreegler)
 	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", cross1, cross2)
 	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", same1, same2)
-	defer db.Exec("DELETE FROM users_related WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", cross1, cross2, same1, same2)
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", fd1, fd2)
+	defer db.Exec("DELETE FROM users_related WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		cross1, cross2, same1, same2, fd1, fd2)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Related&groupid=%d&jwt=%s", groupID, modToken), nil)
 	resp, err := getApp().Test(req)
@@ -5065,7 +5069,8 @@ func TestGetRelatedMembersLeavesOutPairsAcrossTheTrashNothingLine(t *testing.T) 
 		listed[[2]uint64{uint64(entry["user1"].(float64)), uint64(entry["user2"].(float64))}] = true
 	}
 	assert.False(t, listed[[2]uint64{cross1, cross2}], "a Freegle account and a TrashNothing account must not be suggested for merging")
-	assert.True(t, listed[[2]uint64{same1, same2}], "two TrashNothing accounts can be merged, so their pair is still listed")
+	assert.False(t, listed[[2]uint64{same1, same2}], "two TrashNothing accounts are never merged either")
+	assert.True(t, listed[[2]uint64{fd1, fd2}], "two Freegle accounts can be merged, so their pair is listed")
 
 	work := getSessionWork(t, modToken)
 	assert.Equal(t, float64(1), work["relatedmembers"].(float64), "only the mergeable pair is counted")

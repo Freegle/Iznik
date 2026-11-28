@@ -98,9 +98,7 @@ class ChatNotificationIntegrationTest extends TestCase
 
     public function test_chat_notification_delivered_to_mailpit(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped("Mailpit is not available.");
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $sender = $this->createUniqueTestUser("sender");
         $recipient = $this->createUniqueTestUser("recipient");
@@ -154,9 +152,7 @@ class ChatNotificationIntegrationTest extends TestCase
 
     public function test_chat_notification_passes_spam_checks(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped("Mailpit is not available.");
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $sender = $this->createUniqueTestUser("sender_spam");
         $recipient = $this->createUniqueTestUser("recipient_spam");
@@ -240,9 +236,7 @@ class ChatNotificationIntegrationTest extends TestCase
 
     public function test_user2mod_notification_passes_spam_checks(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped("Mailpit is not available.");
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $user = $this->createUniqueTestUser("mod_user");
         $group = $this->createTestGroup();

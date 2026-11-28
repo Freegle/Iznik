@@ -6,6 +6,7 @@ use App\Services\Ripple\RippleEngagementService;
 use App\Services\TrashNothing\Sync\TnUserIdMergeConflict;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
+use App\Support\TransactionPolicy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -437,6 +438,92 @@ class User extends Model implements Auditable
         }
 
         return strtolower($m[1]);
+    }
+
+    /**
+     * The distinct TN usernames among this user's addresses. More than one is two members sharing
+     * the account or one member who renamed, and the account alone cannot say which.
+     *
+     * @return list<string>
+     */
+    public function tnUsernames(): array
+    {
+        return $this->emails()->pluck('email')
+            ->map(fn ($email) => self::tnUsernameFromEmail((string) $email))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Take a TN address from the account holding it, because TN's id says it is this member's.
+     * users_emails.email is unique, so it cannot be on both. Posts and chats already filed stay
+     * where they are. moveTNAlias in iznik-server-go/user/partner.go does the same.
+     *
+     * The address may have moved or gone since the caller looked. It is taken from whoever holds it
+     * now, or added when nobody does, so this member is never left without it.
+     *
+     * The account it is taken from may hold another TN id. TN's word on whose address it is still
+     * stands, so it moves, but the report says so: either TN has given the username to someone
+     * else, or one of the ids is wrong, and the other member has lost an address TN gave them
+     * before. It is that account's id that is read, not the one the caller checked.
+     */
+    public function takeTnAddress(string $email, int $fromUserId): void
+    {
+        $row = UserEmail::where('email', $email)->first();
+        if ($row === NULL) {
+            Logger::info("TN address {$email} was no longer on user {$fromUserId}, so it was added to user {$this->id}");
+            $this->addEmail($email);
+
+            return;
+        }
+
+        if ((int) $row->userid === (int) $this->id) {
+            return;
+        }
+
+        $fromUserId = (int) $row->userid;
+        $fromTnId = (int) DB::table('users')->where('id', $fromUserId)->value('tnuserid');
+
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$fromUserId} set=userid={$this->id}");
+
+        TransactionPolicy::atomic(function () use ($row, $fromUserId) {
+            $wasPreferred = (bool) $row->preferred;
+
+            $row->userid = $this->id;
+            $row->preferred = UserEmail::where('userid', $this->id)->where('preferred', 1)->exists() ? 0 : 1;
+            $row->save();
+
+            // isTN() reads the preferred address, so the account it left must keep one.
+            if ($wasPreferred) {
+                $next = UserEmail::where('userid', $fromUserId)->orderBy('id')->first();
+                if ($next !== NULL) {
+                    $next->preferred = 1;
+                    $next->save();
+                }
+            }
+        }, 'TN address move: the address and the preferred flag of the account it left go together');
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage(self::tnAddressMoveReport($fromUserId, $fromTnId, (int) $this->id, (int) $this->tnuserid));
+        }
+    }
+
+    /**
+     * The report of a moved TN address, flagging a move off an account that holds another TN id.
+     * It names ids, never the address. tnAliasMoveReport in iznik-server-go/user/partner.go words
+     * it the same.
+     */
+    private static function tnAddressMoveReport(int $from, int $fromTnId, int $to, int $toTnId): string
+    {
+        if ($fromTnId !== 0 && $fromTnId !== $toTnId) {
+            return "TN address moved from user {$from}, which holds another TN user id ({$fromTnId}), to user {$to}"
+                . " (TN user id {$toTnId}), the member Trash Nothing named: TN has given the username to someone"
+                . ' else, or one of the ids is wrong';
+        }
+
+        return "TN address moved from user {$from} to user {$to}, the member Trash Nothing named";
     }
 
     /**
@@ -1351,6 +1438,12 @@ class User extends Model implements Auditable
         return $role;
     }
 
+    /** How a merge refusal names an account's TN id. */
+    private static function tnIdDetail(self $user): string
+    {
+        return $user->tnuserid ? "tnuserid {$user->tnuserid}" : 'no tnuserid';
+    }
+
     /**
      * Merge two user accounts, consolidating $id2 into $id1.
      *
@@ -1363,8 +1456,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
-     *                         refusal (the latter is still reported)
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks. A TrashNothing account, or two
+     *                         TN usernames, are refused whatever this says
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1387,21 +1480,25 @@ class User extends Model implements Auditable
             return FALSE;
         }
 
-        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
-        // id1's and deletes id2 with its own, after which TN posts from the lost id
-        // resolve to nobody, and it cannot be undone. Refuse unless forced, and report to
-        // Sentry either way: a caller asking for this at all means something upstream
-        // decided that two TN accounts are one person.
-        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
-            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+        // TrashNothing accounts are never merged, with each other or with a Freegle account
+        // (.claude/rules/conventions.md), and forcing does not change that. Only a TN id says who a
+        // TN member is, and the merge below keeps id1 and deletes id2 with whatever it held.
+        // MergeUsersTx in iznik-server-go refuses the same. Reported, because a caller asking for
+        // this at all means something upstream decided a TN account is somebody else's too.
+        if ($u1->isTrashNothingAccount() || $u2->isTrashNothingAccount()) {
+            report(new TnUserIdMergeConflict('Refused merge of a Trash Nothing account: '
+                . "user {$id2} (" . self::tnIdDetail($u2) . ") into user {$id1} (" . self::tnIdDetail($u1) . "), reason: {$reason}"));
 
-            if (!$forceMerge) {
-                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
+            return FALSE;
+        }
 
-                return FALSE;
-            }
+        // Neither is a TrashNothing account, but either can still hold a TN address that is not its
+        // preferred one. Two different usernames may be two members, and nothing here can prove they
+        // are one who renamed. MergeUsersTx in iznik-server-go refuses the same.
+        if (count(array_unique([...$u1->tnUsernames(), ...$u2->tnUsernames()])) > 1) {
+            report(new TnUserIdMergeConflict("Refused merge of two TN usernames: user {$id2} into user {$id1}, reason: {$reason}"));
 
-            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
+            return FALSE;
         }
 
         try {
@@ -1770,22 +1867,7 @@ class User extends Model implements Auditable
                 $u1->save();
             }
 
-            // --- Merge TN user ID ---
-            $tnId1 = $u1->tnuserid;
-            $tnId2 = $u2->tnuserid;
-
-            if (!$tnId1 && $tnId2) {
-                $u2->tnuserid = NULL;
-                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set=tnuserid=NULL");
-                if (!$dryRun) {
-                    $u2->save();
-                }
-                $u1->tnuserid = $tnId2;
-                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=tnuserid={$tnId2}");
-                if (!$dryRun) {
-                    $u1->save();
-                }
-            }
+            // tnuserid never moves: an account holding one is a TrashNothing account, refused above.
 
             // --- Merge gift aid (keep most favourable declaration) ---
             $giftAids = GiftAid::whereIn('userid', [$id1, $id2])
