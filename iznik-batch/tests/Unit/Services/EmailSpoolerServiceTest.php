@@ -1240,4 +1240,79 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
         $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
     }
+
+    /**
+     * spool() without a $to reads the recipient from envelope(). It must not
+     * build the mailable to do that, because spool() builds it again.
+     */
+    public function test_spool_without_to_builds_the_mailable_once(): void
+    {
+        $recipientEmail = $this->uniqueEmail('recipient');
+
+        $mailable = new class($recipientEmail) extends Mailable {
+            public int $builds = 0;
+
+            public function __construct(private string $recipient)
+            {
+            }
+
+            public function envelope(): Envelope
+            {
+                return new Envelope(
+                    from: new \Illuminate\Mail\Mailables\Address('noreply@ilovefreegle.org', 'Freegle'),
+                    to: [new \Illuminate\Mail\Mailables\Address($this->recipient, 'Someone')],
+                    subject: 'Built once',
+                );
+            }
+
+            public function build(): static
+            {
+                $this->builds++;
+
+                return $this->html('<p>Test content</p>');
+            }
+        };
+
+        $id = $this->spooler->spool($mailable);
+
+        $this->assertNotEmpty($id);
+        $this->assertSame(1, $mailable->builds);
+
+        $data = json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
+        $this->assertSame($recipientEmail, $data['to'][0]['address']);
+    }
+
+    /**
+     * Community News starts its tracking in build() and is spooled without a
+     * $to. Each mail must leave exactly one email_tracking row, or half the
+     * rows are orphans that can never be opened or clicked.
+     */
+    public function test_spooled_community_news_mail_has_one_tracking_row(): void
+    {
+        $user = $this->createTestUser();
+        $recipientEmail = $this->uniqueEmail('news');
+
+        $id = $this->spooler->spool(new \App\Mail\CommunityNews\CommunityNewsMail(
+            userId: $user->id,
+            recipientName: 'Someone',
+            recipientEmail: $recipientEmail,
+            areaName: 'Testarea',
+            intro: 'Some news from near you.',
+            items: [[
+                'title' => 'A thing is happening',
+                'blurb' => 'It is happening soon.',
+                'url' => 'https://example.org/thing',
+                'source' => 'Example',
+                'image' => null,
+            ]],
+            askUrl: 'https://www.ilovefreegle.org/ask',
+            settingsUrl: 'https://www.ilovefreegle.org/settings',
+        ));
+
+        $this->assertNotEmpty($id);
+        $this->assertSame(1, DB::table('email_tracking')
+            ->where('email_type', 'CommunityNews')
+            ->where('recipient_email', $recipientEmail)
+            ->count());
+    }
 }

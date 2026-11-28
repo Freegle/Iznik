@@ -107,6 +107,21 @@ class RightsizeReportCommandTest extends TestCase
         Process::assertNothingRan();
     }
 
+    public function test_several_addresses_each_get_a_copy_and_the_review_is_asked_for_once(): void
+    {
+        $this->seedSamples('alpha', 21, 12, 1.0, 36000, 6144);
+        config(['freegle.servers.report_to' => 'one@example.org, two@example.org,,one@example.org']);
+
+        $this->artisan('servers:rightsize-report')
+            ->expectsOutputToContain('Sizing report sent to one@example.org, two@example.org.')
+            ->assertExitCode(0);
+
+        Mail::assertSent(ServerSizingReportMail::class, 2);
+        Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->hasTo('one@example.org') && ! $mail->hasTo('two@example.org'));
+        Mail::assertSent(ServerSizingReportMail::class, fn (ServerSizingReportMail $mail) => $mail->hasTo('two@example.org') && ! $mail->hasTo('one@example.org'));
+        Process::assertRanTimes(fn () => true, 1);
+    }
+
     public function test_notes_about_servers_and_the_week_s_late_jobs_reach_the_verdicts_and_the_invoice(): void
     {
         $this->seedSamples('alpha', 3, 12, 20.0, 36000, 6144);

@@ -131,7 +131,8 @@ All in `.env.background` on the batch host. The names are in
 [deployment-switches.md](../../developers/reference/deployment-switches.md).
 
 - `KATAPULT_API_TOKEN`: a Katapult API token. Without it there is no report.
-- `SERVERS_REPORT_TO`: who gets the report. Without it there is no report.
+- `SERVERS_REPORT_TO`: who gets the report. Several addresses are separated by commas, and
+  each gets its own copy. Without it there is no report.
 - `SERVERS_PRICE_DISCOUNT`: the share taken off Katapult's prices, for example `0.5`.
 - `SERVERS_EXTRA_HOSTS`: ssh targets to sample beside the monitored hosts.
 - `SERVERS_HOST_NOTES`: which servers are `bulk` or `keep`, and why.

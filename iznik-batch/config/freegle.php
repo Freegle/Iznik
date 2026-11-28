@@ -1618,7 +1618,7 @@ return [
         // Read-only access to what we rent and what is on offer. Empty: no report.
         'katapult_token' => EnvSetting::env('KATAPULT_API_TOKEN', ''),
         'katapult_api' => EnvSetting::env('KATAPULT_API_URL', 'https://api.katapult.io/core/v1'),
-        // Who the weekly report goes to. Empty: no report.
+        // Who the weekly report goes to: one address, or several separated by commas. Empty: no report.
         'report_to' => EnvSetting::env('SERVERS_REPORT_TO', ''),
         // More ssh targets to sample, beside FREEGLE_MONITORING_HOSTS: hosts whose size we want to
         // know but which the patch and monit checks do not cover. Comma-separated, environment only.
@@ -1822,6 +1822,13 @@ return [
         // The newest job may be at most this old before integrations:check-whatjobs-freshness
         // fails and the SysAdmin Cron Jobs tab goes red.
         'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
+        // The partner dashboard login, read daily by integrations:whatjobs-clicks. Unset, the
+        // command does nothing.
+        'partner_url' => EnvSetting::env('WHATJOBS_PARTNER_URL', 'https://partner.whatjobs.com'),
+        'partner_username' => EnvSetting::env('WHATJOBS_PARTNER_USERNAME', ''),
+        'partner_password' => EnvSetting::env('WHATJOBS_PARTNER_PASSWORD', ''),
+        // Who gets the sudden-change alerts and the weekly summary.
+        'clicks_report_to' => EnvSetting::env('WHATJOBS_CLICKS_REPORT_TO', 'cto@ilovefreegle.org'),
     ],
 
     'reach_volunteering' => [

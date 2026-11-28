@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-26
 owner: Freegle dev team
 covers:
   - iznik-server-go/alert/alert.go

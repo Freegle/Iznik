@@ -19,6 +19,12 @@ class RetryableTestMailable extends Mailable implements RetryableMailable
     /** Make build() throw, simulating a render/build failure. */
     public static bool $throwOnBuild = false;
 
+    /** Make envelope() throw, as a mail whose envelope reads a missing relation does. */
+    public static bool $throwOnEnvelope = false;
+
+    /** How many times build() has run since reset(). */
+    public static int $builds = 0;
+
     /** The message build() throws when $throwOnBuild is true. */
     public static string $throwMessage = 'simulated render failure';
 
@@ -37,6 +43,8 @@ class RetryableTestMailable extends Mailable implements RetryableMailable
     public static function reset(): void
     {
         static::$throwOnBuild = false;
+        static::$throwOnEnvelope = false;
+        static::$builds = 0;
         static::$throwMessage = 'simulated render failure';
         static::$rebuildResult = 'self';
         static::$lastRebuildDescriptor = [];
@@ -44,6 +52,10 @@ class RetryableTestMailable extends Mailable implements RetryableMailable
 
     public function envelope(): Envelope
     {
+        if (static::$throwOnEnvelope) {
+            throw new \RuntimeException("simulated envelope failure");
+        }
+
         // A From is required for the capturing transport to materialise the
         // Symfony Email (the manual capturing mailer doesn't apply Laravel's
         // global mail.from default the way the real mailers do).
@@ -55,6 +67,8 @@ class RetryableTestMailable extends Mailable implements RetryableMailable
 
     public function build(): static
     {
+        static::$builds++;
+
         if (static::$throwOnBuild) {
             throw new \RuntimeException(static::$throwMessage);
         }

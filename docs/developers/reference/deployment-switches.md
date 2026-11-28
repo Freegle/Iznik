@@ -74,7 +74,7 @@ variables like every other Freegle setting.
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `servers.katapult_token` | `KATAPULT_API_TOKEN` | empty | A Katapult API token, used read-only by `servers:rightsize-report` to list the servers we rent, the packages on offer and their prices. Empty: no report. See [server-right-sizing.md](../../ops/runbooks/server-right-sizing.md). |
-| `servers.report_to` | `SERVERS_REPORT_TO` | empty | Who gets the weekly server sizing report. Empty: no report. |
+| `servers.report_to` | `SERVERS_REPORT_TO` | empty | Who gets the weekly server sizing report: one address, or several separated by commas. Empty: no report. |
 | `servers.extra_hosts` | `SERVERS_EXTRA_HOSTS` | empty | More ssh targets for `servers:sample`, beside `FREEGLE_MONITORING_HOSTS`: hosts to size that the patch and monit checks do not cover. |
 | `servers.host_notes` | `SERVERS_HOST_NOTES` | empty | What the sizing rules are told about particular servers: `name=bulk\|why` for one meant to run flat out, judged on late jobs and not load; `name=keep\|why` for one kept on purpose and not judged. Entries separated by semicolons. |
 | `servers.other_monthly_cost` | `SERVERS_OTHER_MONTHLY_COST` | `0` | Monthly charges Katapult's API does not show, such as object storage, before the discount. Added to the expected invoice in the sizing report. |

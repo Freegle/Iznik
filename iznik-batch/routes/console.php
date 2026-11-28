@@ -1691,6 +1691,21 @@ Schedule::command('integrations:check-whatjobs-freshness')
     ->withoutOverlapping(30)
     ->appendOutputTo(cronLog('integrations:check-whatjobs-freshness'));
 
+// WhatJobs click figures from their partner dashboard, beside our own, with an alert mail on a
+// sudden change. WhatJobs update the dashboard at 00:00 UTC; this runs well after that and
+// clear of the backup drain window (03:50-04:35 UTC).
+Schedule::command('integrations:whatjobs-clicks')
+    ->dailyAt('07:10')
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('integrations:whatjobs-clicks'));
+
+// The weekly WhatJobs clicks summary with the trend chart. Wednesday, because WhatJobs publish a
+// day at midnight and take 48 hours more to finalise it, so the Sunday before is final by then.
+Schedule::command('integrations:whatjobs-clicks-weekly')
+    ->weeklyOn(3, '07:40')
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('integrations:whatjobs-clicks-weekly'));
+
 // Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
 // the previous run's jobs table, so a tuple that was ever resolved wrongly
 // stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
