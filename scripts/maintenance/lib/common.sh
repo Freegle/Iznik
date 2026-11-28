@@ -467,11 +467,36 @@ svc_snapshot() {  # <host> <file>
   [ -s "$2" ] || die "$1: could not list running services"
 }
 
+# A service that is not enabled itself and is started by a socket runs only once
+# something connects: ssh.service on Ubuntu 24.04 starts with the first login. It was
+# running before because somebody was logged in, and after a reboot it stays down until
+# the next login, which on the Docker host (checked locally, not over ssh) may be never
+# within the wait. Its socket listening is what "back" means for it. A service that is
+# enabled as well as socket-started (docker.service) is still expected to be running.
+svc_on_demand() {  # <host> <unit...>; prints those waiting behind an active socket
+  [ $# -gt 1 ] || return 0
+  local h=$1; shift
+  rq "$h" "for u in $*; do
+      [ \"\$(systemctl is-enabled \"\$u\" 2>/dev/null)\" = enabled ] && continue
+      for s in \$(systemctl show -p TriggeredBy --value \"\$u\"); do
+        case \"\$s\" in *.socket) [ \"\$(systemctl is-active \"\$s\")\" = active ] && { echo \"\$u\"; break; };; esac
+      done
+    done"
+}
+
 svc_compare() {  # <host> <before file> [timeout]; waits for missing services
-  local h=$1 before=$2 t=${3:-300} i now missing
+  local h=$1 before=$2 t=${3:-300} i now missing waiting
   for i in $(seq 1 $(( t / 15 ))); do
     now=$(rq "$h" "systemctl list-units --type=service --state=running --no-legend --plain | awk '{print \$1}'" | sort)
     missing=$(comm -23 "$before" <(printf '%s\n' "$now"))
+    if [ -n "$missing" ]; then
+      # shellcheck disable=SC2086
+      waiting=$(svc_on_demand "$h" $missing | sort)
+      if [ -n "$waiting" ]; then
+        missing=$(comm -23 <(printf '%s\n' "$missing") <(printf '%s\n' "$waiting"))
+        [ -z "$missing" ] && info "$h: not running, and started on demand by a listening socket: $(echo "$waiting" | tr '\n' ' ')"
+      fi
+    fi
     [ -z "$missing" ] && { info "$h: every service running before is running again"; return 0; }
     sleep 15
   done

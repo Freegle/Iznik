@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-25
+last_reviewed: 2026-11-27
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -87,7 +87,10 @@ mode). Whatever was running before a reboot must be running after it, checked ag
 a snapshot of the running systemd services and of `monit summary`. The service snapshot
 leaves out services that start only when something asks for them (for example upower,
 udisks2 and polkit, all D-Bus activated) and so may not be running after a clean boot;
-the list is `MAINT_SVC_IGNORE_RE` in `lib/common.sh`. Until monit has
+the list is `MAINT_SVC_IGNORE_RE` in `lib/common.sh`. A service that a socket starts and
+that is not enabled itself (ssh on Ubuntu 24.04, which starts with the first login) counts
+as back once its socket is listening, because nothing may connect to it within the wait.
+Until monit has
 completed a check cycle after boot it reports services it has not polled yet as "Does not
 exist" or "Initializing", so the check after a reboot keeps looking until every service is
 OK, and fails only if one is still not OK after `MAINT_MONIT_TIMEOUT` (300 seconds).
