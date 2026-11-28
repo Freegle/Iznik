@@ -18,7 +18,7 @@ func spatialRowCount(msgID uint64) int64 {
 // A post a moderator takes out of Approved is out of browse at once, not up to five minutes
 // later when the reconciler runs. Browse reads messages_spatial, so the row goes with the copy.
 func TestModeratorActionsRemoveTheSpatialRowWhenNoCopyIsApproved(t *testing.T) {
-	for _, action := range []string{"Spam", "Delete", "BackToPending"} {
+	for _, action := range []string{"Spam", "Delete", "BackToPending", "RejectToDraft"} {
 		t.Run(action, func(t *testing.T) {
 			prefix := uniquePrefix("spatial_rm_" + action)
 			groupID := CreateTestGroup(t, prefix)

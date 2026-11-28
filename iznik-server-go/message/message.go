@@ -4027,6 +4027,7 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	}
 
 	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
+	removeFromBrowseIfNotLive(db, req.ID)
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.

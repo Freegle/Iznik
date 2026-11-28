@@ -2361,7 +2361,9 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	// refuses the split state.
 	if result := db.Table("chat_messages").Where("id = ?", msgID).
 		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")}); result.Error != nil {
+		// Nothing below may run: the message is still waiting for review, so it is not logged as rejected.
 		stdlog.Printf("Failed to reject chat message %d: %v", msgID, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to reject message")
 	}
 
 	// Log the reject action
