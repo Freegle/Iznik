@@ -3809,21 +3809,23 @@ class UnifiedDigestService
     }
 
     /**
+     * Whether users_digests.held_back exists yet. Only a yes is remembered: a long-running
+     * process that started before the schema change must see the column once it is there.
+     */
+    protected static function heldBackColumnExists(): bool
+    {
+        return self::$heldBackColumn = self::$heldBackColumn
+            || \Illuminate\Support\Facades\Schema::hasColumn('users_digests', 'held_back');
+    }
+
+    protected static bool $heldBackColumn = false;
+
+    /**
      * Update the digest tracker after sending.
      *
      * @param UserDigest $tracker
      * @param Collection $posts
      */
-    /**
-     * Whether users_digests.held_back exists yet, asked once per process.
-     */
-    protected static function heldBackColumnExists(): bool
-    {
-        return self::$heldBackColumn ??= \Illuminate\Support\Facades\Schema::hasColumn('users_digests', 'held_back');
-    }
-
-    protected static ?bool $heldBackColumn = null;
-
     protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null, ?array $heldBack = null): void
     {
         // Posts the digest left out at the post cap: re-offered by getPostsForUser() next
