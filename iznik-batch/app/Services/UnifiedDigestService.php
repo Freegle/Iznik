@@ -3814,6 +3814,16 @@ class UnifiedDigestService
      * @param UserDigest $tracker
      * @param Collection $posts
      */
+    /**
+     * Whether users_digests.held_back exists yet, asked once per process.
+     */
+    protected static function heldBackColumnExists(): bool
+    {
+        return self::$heldBackColumn ??= \Illuminate\Support\Facades\Schema::hasColumn('users_digests', 'held_back');
+    }
+
+    protected static ?bool $heldBackColumn = null;
+
     protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null, ?array $heldBack = null): void
     {
         // Posts the digest left out at the post cap: re-offered by getPostsForUser() next
@@ -3823,8 +3833,12 @@ class UnifiedDigestService
         // Posts the reach gate held back and the cursor is moving past: stored so the next run
         // offers them again. The list is replaced whole, so a post that was sent, has gone or
         // is too old leaves it. Null means the caller did not examine any.
+        //
+        // The column is named only once it exists. This update runs after the mail is spooled
+        // and is what stamps lastsent, so a batch deployed ahead of the schema change would
+        // fail here for every member and send them the digest again on each run.
         $held = [];
-        if ($heldBack !== null) {
+        if ($heldBack !== null && self::heldBackColumnExists()) {
             $held = ['held_back' => $heldBack['ids'] === [] ? null : array_values($heldBack['ids'])];
         }
 

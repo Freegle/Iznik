@@ -31,6 +31,12 @@ class MergeOfferRules
             return 'a TrashNothing account is never merged';
         }
 
+        // Neither is a TrashNothing account, but either can hold a TrashNothing address that is
+        // not its preferred one. MergeUsersTx refuses two different usernames, so this does too.
+        if (count(array_unique(array_merge($u1->tnUsernames(), $u2->tnUsernames()))) > 1) {
+            return 'the accounts hold two different TrashNothing usernames';
+        }
+
         if ($this->optedOutOfMerging($u1) || $this->optedOutOfMerging($u2)) {
             return 'an account has opted out of merging';
         }

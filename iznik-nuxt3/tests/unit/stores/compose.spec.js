@@ -1037,6 +1037,43 @@ describe('compose store', () => {
       logSpy.mockRestore()
     })
 
+    it('resume clears the draft it posted when a prune has moved it to another position', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      // The deferral was captured when the Sofa was at position 1. An older draft ahead of it has
+      // since been pruned, so the Sofa is now at 0 and another draft sits at 1.
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          savedAt: 1000,
+          attachments: [],
+        },
+        {
+          id: 1,
+          type: 'Offer',
+          item: 'Chair',
+          submitted: false,
+          savedAt: 2000,
+          attachments: [],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      store.setPendingSubmit({ ...store.messages[0], id: 1 }, 'a@b.com')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.resumePendingSubmit()
+
+      const remaining = store.messages.filter(Boolean)
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].item).toBe('Chair')
+      logSpy.mockRestore()
+    })
+
     it('resume clears only the draft it posted, not another unsubmitted draft of the same type', async () => {
       const store = useComposeStore()
       store.init({ public: {} })

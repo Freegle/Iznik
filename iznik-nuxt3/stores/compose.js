@@ -458,9 +458,18 @@ export const useComposeStore = defineStore('compose', {
         // then land on My Posts.
         if (pending.message?.id !== undefined) {
           // deferSubmit captured one draft, so only that one is posted and only that one goes.
-          this.messages = this.messages.filter(
-            (m) => m && !m.submitted && m.id !== pending.message.id
-          )
+          // A draft's id is its position, which moves when prune() drops an older draft during
+          // the login reload, so the draft is recognised by when it was saved where both say.
+          const posted = pending.message
+          this.messages = this.messages.filter((m) => {
+            if (!m || m.submitted) {
+              return false
+            }
+            if (posted.savedAt && m.savedAt) {
+              return m.savedAt !== posted.savedAt
+            }
+            return m.id !== posted.id
+          })
         } else {
           this.clearMessagesOfType(pending.message?.type)
         }

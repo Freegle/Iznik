@@ -131,6 +131,24 @@ class RemindMergeOffersCommandTest extends TestCase
         }
     }
 
+    public function test_accounts_holding_two_different_trashnothing_usernames_are_left_alone(): void
+    {
+        // The Go merge refuses this pair, so a reminder would send both members to a link that fails.
+        [$id, $u1, $u2] = $this->offer();
+        foreach ([[$u1, 'remindalpha-g1'], [$u2, 'remindbeta-g2']] as [$user, $local]) {
+            DB::table('users_emails')->insert([
+                'userid' => $user->id,
+                'email' => $local . $id . '@user.trashnothing.com',
+                'preferred' => 0,
+            ]);
+        }
+
+        $this->artisan('merges:remind', ['--since' => '2030-05-01', '--apply' => true])->assertSuccessful();
+
+        $this->assertSame([], $this->spooled);
+        $this->assertNull($this->reminded($id));
+    }
+
     public function test_email_off_and_bouncing_accounts_are_left_alone(): void
     {
         [$off] = $this->offer([], ['settings' => ['simplemail' => 'None']]);

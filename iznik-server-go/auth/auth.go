@@ -36,9 +36,12 @@ type PersistentToken struct {
 func WhoAmI(c *fiber.Ctx) uint64 {
 	id, _, _ := GetJWTFromRequest(c)
 
-	// The auth middleware has found that the session in this JWT is gone, so the JWT is not good.
+	// The auth middleware has found that the session in this JWT is gone, so the JWT is not good. The
+	// request is not then authenticated by its Authorization2 token instead: the web client sends both
+	// headers, the middleware answers 401 for the stale JWT whatever the handler did, and a write that
+	// ran as the Authorization2 member would be committed before that 401.
 	if id > 0 && c.Locals("sessionInvalid") != nil {
-		id = 0
+		return 0
 	}
 
 	// If we don't manage to get a user from the JWT, which is fast, then try the old-style persistent token which

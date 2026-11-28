@@ -121,6 +121,33 @@ func TestStaleSessionJWTDoesNotRunAWrite(t *testing.T) {
 	assert.Equal(t, before, after, "the write must not be committed for a logged-out session")
 }
 
+// The web client sends the JWT and the Authorization2 token together. A stale JWT is not rescued by a
+// persistent token for another live session: the request is answered 401, so the write must not run.
+func TestStaleSessionJWTWithLiveAuthorization2DoesNotRunAWrite(t *testing.T) {
+	prefix := uniquePrefix("stalewrite2")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	staleSession, token := CreateTestSession(t, uid)
+	liveSession, _ := CreateTestSession(t, uid)
+	persistent := CreatePersistentToken(t, uid, liveSession)
+	db := database.DBConn
+
+	var before string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", uid).Scan(&before)
+
+	db.Exec("DELETE FROM sessions WHERE id = ?", staleSession)
+
+	body := strings.NewReader(`{"displayname":"Changed After Logout"}`)
+	req := httptest.NewRequest("PATCH", "/api/user?jwt="+token, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization2", persistent)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+
+	var after string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", uid).Scan(&after)
+	assert.Equal(t, before, after, "the write must not be committed when the answer is 401")
+}
+
 // A client that authenticates with the Authorization2 persistent token keeps its session alive
 // and its last access current, the same as a JWT client does.
 func TestAuthorization2OnlyRefreshesLastaccessAndLastactive(t *testing.T) {
