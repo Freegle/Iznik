@@ -56,6 +56,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
     ];
 
     private const EXEMPT = [
+        \App\Mail\Servers\ServerSizingReportMail::class,
         \App\Mail\Group\AlertNoMessagesMail::class,
         \App\Mail\Group\BoundaryErrorMail::class,
         \App\Mail\Group\ClosedGroupReminderMail::class,
