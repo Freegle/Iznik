@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Services\ChatExpectedService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ChatExpectedServiceTest extends TestCase
@@ -175,6 +176,45 @@ class ChatExpectedServiceTest extends TestCase
         $this->assertEquals(-1, $row->value);
     }
 
+    /**
+     * A reply counts as received only when the other member could see it. One held for review, rejected or not
+     * yet processed is invisible to them, and replyreceived is never reset, so counting it clears the waiting
+     * state for good.
+     *
+     * @return array<string, array{0: array<string, int>}>
+     */
+    public static function invisibleReplies(): array
+    {
+        return [
+            'held for review' => [['reviewrequired' => 1]],
+            'rejected' => [['reviewrejected' => 1]],
+            'not processed' => [['processingsuccessful' => 0]],
+        ];
+    }
+
+    #[DataProvider('invisibleReplies')]
+    public function test_update_expected_does_not_count_a_reply_the_other_member_cannot_see(array $reply): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $this->createTestChatMessage($room, $user2, array_merge(['date' => now()->subDays(1)], $reply));
+
+        $stats = $this->service->updateExpected(full: true);
+
+        $this->assertEquals(1, $stats['waiting']);
+        $this->assertEquals(0, $stats['received']);
+        $this->assertEquals(0, $msg->fresh()->replyreceived, 'an invisible reply is not a reply received');
+        $this->assertEquals(-1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
+    }
+
     // -------------------------------------------------------------------------
     // updateExpected: incremental behaviour
     // -------------------------------------------------------------------------
@@ -276,6 +316,42 @@ class ChatExpectedServiceTest extends TestCase
         $this->assertFalse($stats['full']);
         $this->assertEquals(1, $stats['received'], 'the released reply must be picked up');
         $this->assertEquals(1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
+    }
+
+    /**
+     * A reply is counted only when the other member can see it, and it is processed a minute after it is written, with
+     * no new message and no release to mark the moment. The next incremental run must still pick it up.
+     */
+    public function test_a_reply_processed_after_a_run_is_counted_by_the_next_incremental_run(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        // The reply is written but not yet processed, so it is invisible when the first run looks.
+        $reply = $this->createTestChatMessage($room, $user2, [
+            'date'                 => now()->subMinutes(10),
+            'processingrequired'   => 1,
+            'processingsuccessful' => 0,
+        ]);
+
+        $first = $this->service->updateExpected();
+        $this->assertEquals(1, $first['waiting']);
+
+        // Processing makes it visible. Nothing else changes.
+        DB::table('chat_messages')->where('id', $reply->id)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+
+        $second = $this->service->updateExpected();
+
+        $this->assertFalse($second['full']);
+        $this->assertEquals(1, $second['received'], 'the reply that has since become visible is counted');
+        $this->assertEquals(1, $msg->fresh()->replyreceived);
     }
 
     public function test_full_run_rechecks_everything_regardless_of_activity(): void

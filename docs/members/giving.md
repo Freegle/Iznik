@@ -44,7 +44,8 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 3. **Say where it is.** Enter your postcode. Freegle works out the local community for
    you from the postcode, so there is no group to choose. If no community covers that
    postcode, you will see a note asking you to get in touch. If the community is closed, you
-   will see a note saying so, and the post button stays off.
+   will see a note saying so, and the post button stays off. The same goes if your account is
+   deleted and you have not yet decided whether to restore it.
 4. **Set the options.** Choose whether you could deliver or it is collection only, and
    optionally set a deadline. If you go back to this step later, it shows what you chose.
 5. **Confirm who you are.** If you are logged in this is filled in already. If not, enter

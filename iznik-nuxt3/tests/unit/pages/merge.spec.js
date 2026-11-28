@@ -125,6 +125,7 @@ describe('pages/merge.vue', () => {
     const buttons = wrapper.findAll('button')
     const rejectButton = buttons.find((b) => b.text() === 'No thanks')
     await rejectButton.trigger('click')
+    await flushPromises()
 
     expect(mockReject).toHaveBeenCalledWith({
       id: '99',
@@ -155,5 +156,37 @@ describe('pages/merge.vue', () => {
       user2: 2,
     })
     expect(wrapper.text()).toContain("We've merged your accounts")
+  })
+
+  it('says so, and does not claim success, when the answer is refused', async () => {
+    mockReject.mockRejectedValueOnce(new Error('refused'))
+    const wrapper = await mountMergePage()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'No thanks')
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain("that didn't work")
+    expect(wrapper.text()).not.toContain("we'll keep them separate")
+  })
+
+  it('says so, and does not claim the merge happened, when combining is refused', async () => {
+    mockAccept.mockRejectedValueOnce(new Error('refused'))
+    const wrapper = await mountMergePage()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Yes please')
+      .trigger('click')
+    await wrapper.find('select').setValue('1')
+    await wrapper.find('.spin-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain("that didn't work")
+    expect(wrapper.text()).not.toContain("We've merged your accounts")
   })
 })

@@ -50,6 +50,22 @@ class ChatNotificationService
     public const DEFAULT_SINCE_HOURS = 24;
 
     /**
+     * The ids of the messages this pass selected because a release event admitted them (an approval, a released
+     * hold or an answered reply question), keyed by id. Only these can be mailed late, see getMembersToNotify().
+     *
+     * @var array<int, int>
+     */
+    protected array $releaseAdmitted = [];
+
+    /**
+     * Late mails settled in this process, keyed "message-user": mailed already, or claimed by this or another run.
+     * Spares the evidence query on every pass of the loop while the release is inside the look-back.
+     *
+     * @var array<string, true>
+     */
+    protected array $lateSettled = [];
+
+    /**
      * Optional spooler for deferred email sending.
      */
     protected ?EmailSpoolerService $spooler = null;
@@ -183,6 +199,7 @@ class ChatNotificationService
             ->all();
 
         $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently, $confirmedRecently, $approvedRecently)));
+        $this->releaseAdmitted = array_flip($releasedRecently);
 
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
@@ -324,6 +341,16 @@ class ChatNotificationService
                     continue;
                 }
 
+                // A late mail: the recipient's mark is already past this message, so the ordinary claim below cannot
+                // take it. It is owed only if no notification for it was ever built for this recipient. It is asked
+                // before the lockdown and suppression checks, so that a message already mailed is not counted as
+                // held or owed to a recipient who has it. A recipient who is not mailed at all, or is held, has
+                // nothing claimed and is looked at again on the next pass.
+                $late = (bool) ($roster->lateMail ?? false);
+                if ($late && ! $this->lateMailOwed($message, (int) $sendingTo->id)) {
+                    continue;
+                }
+
                 // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
                 // deliberately AFTER the preference check above, for the same reason as the
                 // suppression check below - a member who has chat notifications off was never
@@ -414,19 +441,24 @@ class ChatNotificationService
                     // notification, which the unread catch-up summary already covers,
                     // against hundreds of duplicates for the same member. Prefer
                     // at-most-once wherever the side effect leaves our control.
-                    $claimed = ChatRoster::where('chatid', $chatRoom->id)
-                        ->where('userid', $sendingTo->id)
-                        ->where(function ($q) use ($message) {
-                            $q->whereNull('lastmsgemailed')
-                                ->orWhere('lastmsgemailed', '<', $message->id);
-                        })
-                        ->update([
-                            // lastmsgnotified is used by V1's push notification cron
-                            // (notification_chaseup.php) to avoid re-notifying users for
-                            // messages already handled by email.
-                            'lastmsgemailed' => $message->id,
-                            'lastmsgnotified' => $message->id,
-                        ]);
+                    //
+                    // A late mail is claimed in chat_late_mails instead, and leaves the mark where it is: moving
+                    // it back to this message would replay everything after it.
+                    $claimed = $late
+                        ? $this->claimLateMail($message, (int) $sendingTo->id)
+                        : ChatRoster::where('chatid', $chatRoom->id)
+                            ->where('userid', $sendingTo->id)
+                            ->where(function ($q) use ($message) {
+                                $q->whereNull('lastmsgemailed')
+                                    ->orWhere('lastmsgemailed', '<', $message->id);
+                            })
+                            ->update([
+                                // lastmsgnotified is used by V1's push notification cron
+                                // (notification_chaseup.php) to avoid re-notifying users for
+                                // messages already handled by email.
+                                'lastmsgemailed' => $message->id,
+                                'lastmsgnotified' => $message->id,
+                            ]);
 
                     if (! $claimed) {
                         continue;
@@ -474,24 +506,31 @@ class ChatNotificationService
     {
         $results = collect();
 
+        // A message a release event admitted (see $releaseAdmitted) may be owed to a recipient whose mark is already
+        // past it, because a later message was mailed while it was held. Those recipients come back flagged lateMail.
+        $lateOk = ! $forceAll && isset($this->releaseAdmitted[(int) $message->id]);
+
         // Mod2Mod: All mods in the group chat are in the roster.
         if ($chatRoom->chattype === ChatRoom::TYPE_MOD2MOD && $chatRoom->groupid) {
             $query = ChatRoster::where('chatid', $chatRoom->id)
                 ->notBlocked()
                 ->with('user');
 
-            if (! $forceAll) {
+            if (! $forceAll && ! $lateOk) {
                 $query->where(function ($q) use ($message) {
                     $q->whereNull('lastmsgemailed')
                         ->orWhere('lastmsgemailed', '<', $message->id);
                 });
             }
 
-            return $query->get()->map(function ($roster) {
-                $roster->isModerator = true;
+            return $query->get()
+                ->filter(fn ($roster) => $this->rosterOwed($roster, $message, $forceAll, $lateOk))
+                ->map(function ($roster) {
+                    $roster->isModerator = true;
 
-                return $roster;
-            });
+                    return $roster;
+                })
+                ->values();
         }
 
         if ($chatRoom->chattype === ChatRoom::TYPE_USER2MOD && $chatRoom->groupid) {
@@ -503,7 +542,7 @@ class ChatNotificationService
                 ->first();
 
             if ($memberRoster) {
-                if ($forceAll || is_null($memberRoster->lastmsgemailed) || $memberRoster->lastmsgemailed < $message->id) {
+                if ($this->rosterOwed($memberRoster, $message, $forceAll, $lateOk)) {
                     $memberRoster->isModerator = false;
                     $results->push($memberRoster);
                 }
@@ -534,7 +573,7 @@ class ChatNotificationService
                     }
 
                     // Check if we need to notify this moderator.
-                    if ($forceAll || is_null($roster->lastmsgemailed) || $roster->lastmsgemailed < $message->id) {
+                    if ($this->rosterOwed($roster, $message, $forceAll, $lateOk)) {
                         $roster->isModerator = true;
                         $results->push($roster);
                     }
@@ -558,7 +597,7 @@ class ChatNotificationService
             $query->where('userid', $askedOnly);
         }
 
-        if (! $forceAll) {
+        if (! $forceAll && ! $lateOk) {
             // Only get members who haven't been mailed this message yet.
             $query->where(function ($q) use ($message) {
                 $q->whereNull('lastmsgemailed')
@@ -566,11 +605,115 @@ class ChatNotificationService
             });
         }
 
-        return $query->get()->map(function ($roster) {
-            $roster->isModerator = false;
+        return $query->get()
+            ->filter(fn ($roster) => $this->rosterOwed($roster, $message, $forceAll, $lateOk))
+            ->map(function ($roster) {
+                $roster->isModerator = false;
 
-            return $roster;
-        });
+                return $roster;
+            })
+            ->values();
+    }
+
+    /**
+     * Whether a roster row is owed this message, and whether it is owed late.
+     *
+     * Ordinary: the recipient's mark is below the message. Late: the message was admitted by a release event, the mark
+     * is above it (a later message was mailed first) and the recipient is not the author. A mark equal to the message
+     * is not late: it is what the ordinary claim leaves, so the message is already taken. The mark is never moved for
+     * a late mail, so later messages are not replayed; processMessage() decides whether the late mail is really owed.
+     * Sets $roster->lateMail.
+     */
+    protected function rosterOwed(ChatRoster $roster, ChatMessage $message, bool $forceAll, bool $lateOk): bool
+    {
+        $roster->lateMail = false;
+        $mark = $roster->lastmsgemailed;
+
+        if ($forceAll || $mark === null || (int) $mark < (int) $message->id) {
+            return true;
+        }
+
+        if ($lateOk && (int) $mark > (int) $message->id && (int) $roster->userid !== (int) $message->userid) {
+            $roster->lateMail = true;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether a late mail of this message to this recipient is still owed: no chat notification for it was ever
+     * generated for them. The evidence is the email_tracking row that building the mail writes, with the chat and
+     * message ids, so it covers mail sent before this check existed. With tracking switched off there is no evidence,
+     * and a late mail is never sent rather than guessed at.
+     */
+    protected function lateMailOwed(ChatMessage $message, int $userId): bool
+    {
+        if (! config('freegle.mail.tracking_enabled', true)) {
+            return false;
+        }
+
+        $key = $message->id.'-'.$userId;
+
+        if (isset($this->lateSettled[$key])) {
+            return false;
+        }
+
+        $mailed = DB::table('email_tracking')
+            ->where('userid', $userId)
+            ->where('email_type', 'ChatNotification')
+            ->where('metadata->chat_id', (int) $message->chatid)
+            ->where('metadata->message_id', (int) $message->id)
+            ->exists();
+
+        if ($mailed) {
+            $this->lateSettled[$key] = true;
+            if (count($this->lateSettled) > 5000) {
+                $this->lateSettled = [$key => true];
+            }
+        }
+
+        return ! $mailed;
+    }
+
+    /**
+     * Whether any recipient is still owed a late mail of a release-admitted message.
+     */
+    protected function lateMailStillOwed(ChatMessage $message): bool
+    {
+        if (! isset($this->releaseAdmitted[(int) $message->id])) {
+            return false;
+        }
+
+        $marked = ChatRoster::where('chatid', $message->chatid)
+            ->where('userid', '<>', $message->userid)
+            ->where('lastmsgemailed', '>', $message->id)
+            ->pluck('userid');
+
+        foreach ($marked as $userId) {
+            if ($this->lateMailOwed($message, (int) $userId)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Claim a late mail. The unique key on (chatmsgid, userid) makes this atomic: only one caller ever gets true.
+     */
+    protected function claimLateMail(ChatMessage $message, int $userId): bool
+    {
+        $claimed = DB::table('chat_late_mails')->insertOrIgnore([
+            'chatmsgid' => $message->id,
+            'userid' => $userId,
+            'created' => now(),
+        ]) === 1;
+
+        $this->lateSettled[$message->id.'-'.$userId] = true;
+
+        return $claimed;
     }
 
     /**
@@ -765,7 +908,9 @@ class ChatNotificationService
             })
             ->count();
 
-        if ($notMailedCount === 0) {
+        // A recipient who is owed a late mail has a mark above the message, so the count above misses them. While one
+        // is still owed the flag stays 0, or the message would not be selected again and their mail would be lost.
+        if ($notMailedCount === 0 && ! $this->lateMailStillOwed($message)) {
             $message->update(['mailedtoall' => 1]);
         }
     }

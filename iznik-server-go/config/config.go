@@ -46,35 +46,16 @@ type CreateConcernKeywordRequest struct {
 	Action    string  `json:"action"`
 }
 
-// RequireSupportOrAdminMiddleware creates middleware that checks for Support/Admin role
+// RequireSupportOrAdminMiddleware creates middleware that checks for Support/Admin role. The member
+// is recognised as on every other route (JWT or Authorization2) and must have a live session.
 func RequireSupportOrAdminMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Extract JWT information including session ID
-		userID, sessionID, _ := user.GetJWTFromRequest(c)
+		userID, systemrole := user.SessionUserRole(c)
 		if userID == 0 {
-			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required")
-		}
-
-		db := database.DBConn
-
-		// Validate that the user and session are still valid in the database
-		var userInfo struct {
-			ID         uint64 `json:"id"`
-			Systemrole string `json:"systemrole"`
-		}
-
-		db.Table("sessions").
-			Select("users.id, users.systemrole").
-			Joins("INNER JOIN users ON users.id = sessions.userid").
-			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
-			Limit(1).
-			Scan(&userInfo)
-
-		if userInfo.ID == 0 {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
 		}
 
-		if userInfo.Systemrole != utils.SYSTEMROLE_SUPPORT && userInfo.Systemrole != utils.SYSTEMROLE_ADMIN {
+		if systemrole != utils.SYSTEMROLE_SUPPORT && systemrole != utils.SYSTEMROLE_ADMIN {
 			return fiber.NewError(fiber.StatusForbidden, "Support or Admin role required")
 		}
 

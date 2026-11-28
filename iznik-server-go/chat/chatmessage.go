@@ -685,8 +685,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	chattype := utils.CHAT_MESSAGE_DEFAULT
 
-	// modnote flag creates a ModMail message (visible as group volunteer message).
+	// modnote flag creates a ModMail message (visible as group volunteer message). It needs
+	// text; who may send one is checked below, once the chat is known.
 	if payload.Modnote {
+		if payload.Message == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
+		}
 		chattype = utils.CHAT_MESSAGE_MODMAIL
 	} else if payload.Refmsgid != nil {
 		chattype = utils.CHAT_MESSAGE_INTERESTED
@@ -751,6 +755,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
 		Where("id = ?", id).Scan(&writeRoom)
+	// A ModMail speaks for the volunteers. A member writing in their own chat is not one, whatever
+	// else they may be elsewhere; the access check above admits anyone else only as a moderator.
+	if payload.Modnote && (writeRoom.User1 == myid || writeRoom.User2 == myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only a volunteer can send a volunteer message")
+	}
 	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
 		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
 			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
@@ -997,6 +1006,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			}
 		}
 
+		// A reply held by rippling is written with its hold, in this transaction: chats:process-incoming takes any
+		// committed reply, so a hold written after the commit leaves a gap in which the reply is delivered first, and a
+		// hold that fails would leave an ordinary reply. A hold that cannot be written fails the send.
+		if holdReply {
+			if err := tx.Table("rippling_held_replies").Create(map[string]interface{}{
+				"chatid":        id,
+				"chatmsgid":     payload.ID,
+				"msgid":         *payload.Refmsgid,
+				"replieruserid": myid,
+				"source":        gorm.Expr("'web'"),
+				"lat":           reach.lat,
+				"lng":           reach.lng,
+				"status":        gorm.Expr("'held'"),
+				"created_at":    gorm.Expr("NOW()"),
+			}).Error; err != nil {
+				return err
+			}
+		}
+
 		if confirm != nil {
 			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
 			// no question, not a reply that failed.
@@ -1028,25 +1056,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
-	// Rippling-out reply HOLD: the replier is outside the post's current reach, so the reply was
-	// created but must not reach the poster yet. Record a rippling_held_replies row (source='web')
-	// — the delivery gate withholds it from the poster until ripple:release-replies releases it
-	// when the post ripples to the replier. Same table and lifecycle as email/TN holds; only the
-	// source differs. Best-effort: an instrumentation failure must not fail the reply, and the
-	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
-	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
+	// A reply held by rippling was written with its rippling_held_replies row above. The delivery gate withholds it
+	// from the poster until ripple:release-replies releases it when the post ripples to the replier. The counter
+	// mirrors RippleReplyService::recordEvent so web holds appear in the sysadmin rippling dashboard beside the
+	// email and TN holds; it is best-effort.
 	if holdReply {
-		db.Table("rippling_held_replies").Create(map[string]interface{}{
-			"chatid":        id,
-			"chatmsgid":     newid,
-			"msgid":         *payload.Refmsgid,
-			"replieruserid": myid,
-			"source":        gorm.Expr("'web'"),
-			"lat":           reach.lat,
-			"lng":           reach.lng,
-			"status":        gorm.Expr("'held'"),
-			"created_at":    gorm.Expr("NOW()"),
-		})
 		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
 		}).Create(map[string]interface{}{
@@ -1227,7 +1241,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		Select("fromuser, groupid").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 		Joins("INNER JOIN users ON users.id = messages.fromuser").
-		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
+		Where("messages.id = ? AND messages.deleted IS NULL AND users.deleted IS NULL", payload.Refmsgid).
 		Scan(&m)
 
 	if m.Fromuser == 0 {
@@ -1336,6 +1350,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if createErr != nil || newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	// A poster who closed the chat sees the reply, as for any other message. Blocked chats are left as they are.
+	if result := db.Table("chat_roster").Where("chatid = ? AND status = ?", chat.ID, utils.CHAT_STATUS_CLOSED).
+		Update("status", utils.CHAT_STATUS_OFFLINE); result.Error != nil {
+		stdlog.Printf("Failed to reopen closed chat roster for chat %d: %v", chat.ID, result.Error)
 	}
 
 	var ret ChatMessageLovejunkResponse

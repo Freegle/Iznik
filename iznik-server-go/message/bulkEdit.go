@@ -180,8 +180,9 @@ func recomputeBulkAvailableNow(db *gorm.DB, msgid uint64) {
 // recordBulkOutcomeIfComplete inserts a Taken outcome row for a bulk offer once
 // its availablenow reaches zero, making the completed offer visible to every
 // legacy stats pipeline (heatmap, happiness, V1 readers). Called after either
-// recompute path. Idempotent: a second call when a Taken or Received row already
-// exists is a no-op.
+// recompute path. Idempotent: a second call when the post already has any outcome
+// (Taken, Received, Withdrawn or Expired; a legacy Partial row does not count) is a no-op, so a
+// closed post keeps its one outcome.
 func recordBulkOutcomeIfComplete(db *gorm.DB, msgid uint64) {
 	var availablenow int
 	db.Table("messages").Select("availablenow").Where("id = ?", msgid).Scan(&availablenow)
@@ -191,9 +192,9 @@ func recordBulkOutcomeIfComplete(db *gorm.DB, msgid uint64) {
 	database.InsertSelect(db, "messages_outcomes",
 		"(msgid, outcome) "+
 			"SELECT ?, ? WHERE NOT EXISTS "+
-			"(SELECT 1 FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?))",
+			"(SELECT 1 FROM messages_outcomes WHERE msgid = ? AND outcome != ?)",
 		msgid, utils.OUTCOME_TAKEN,
-		msgid, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED)
+		msgid, utils.OUTCOME_PARTIAL)
 }
 
 // GetBulkEditOffer returns a bulk offer's catalogue for the logged-out owner

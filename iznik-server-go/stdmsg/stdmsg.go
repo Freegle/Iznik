@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -27,26 +28,6 @@ type StdMsg struct {
 	Edittext     string  `json:"edittext"`
 	Insert       *string `json:"insert"`
 	Replybody    *string `json:"replybody"`
-}
-
-// canModifyConfig checks if user can modify the parent config.
-func canModifyConfig(myid uint64, configid uint64) bool {
-	if auth.IsAdminOrSupport(myid) {
-		return true
-	}
-
-	var createdby *uint64
-	var protected int
-	database.DBConn.Table("mod_configs").Select("createdby").Where("id = ?", configid).Scan(&createdby)
-	database.DBConn.Table("mod_configs").Select("protected").Where("id = ?", configid).Scan(&protected)
-
-	if createdby != nil && *createdby == myid {
-		return true
-	}
-	if protected == 0 {
-		return true
-	}
-	return false
 }
 
 // GetStdMsg handles GET /stdmsg.
@@ -144,6 +125,14 @@ func PostStdMsg(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	exists, allowed := modconfig.CanModifyConfigID(myid, req.Configid)
+	if !exists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid config id"})
+	}
+	if !allowed {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
+	}
 
 	// Plain, isolated, literal single-row
 	// INSERT (subjpref/subjsuff are fixed empty-string literals); id read back via
@@ -254,7 +243,7 @@ func PatchStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
 
-	if !canModifyConfig(myid, configid) {
+	if _, allowed := modconfig.CanModifyConfigID(myid, configid); !allowed {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
@@ -340,7 +329,7 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
 
-	if !canModifyConfig(myid, configid) {
+	if _, allowed := modconfig.CanModifyConfigID(myid, configid); !allowed {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 

@@ -6,6 +6,11 @@
 
     <mj-section padding="30px 20px 10px 20px">
       <mj-column>
+        @if(!empty($intro))
+        <mj-text font-size="16px" line-height="1.6" padding-bottom="10px">
+          <strong>{{ $intro }}</strong>
+        </mj-text>
+        @endif
         <mj-text font-size="16px" line-height="1.6">
           We think you may be using two different accounts on Freegle, perhaps by mistake:
         </mj-text>

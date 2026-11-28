@@ -83,6 +83,18 @@ func canModify(myid uint64, cfg *ModConfig) bool {
 	return false
 }
 
+// CanModifyConfigID reports whether the config exists and whether the user may modify it,
+// with the same rule as PATCH and DELETE /modconfig. The standard messages of a config are
+// modified under that rule too.
+func CanModifyConfigID(myid uint64, configid uint64) (exists bool, allowed bool) {
+	var cfg ModConfig
+	database.DBConn.Table("mod_configs").Select(configColumns).Where("id = ?", configid).Scan(&cfg)
+	if cfg.ID == 0 {
+		return false, false
+	}
+	return true, canModify(myid, &cfg)
+}
+
 // canSee checks if a moderator can see this config.
 func canSee(myid uint64, cfg *ModConfig) bool {
 	// Admin/Support can see any config.

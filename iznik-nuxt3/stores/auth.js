@@ -652,8 +652,15 @@ export const useAuthStore = defineStore('auth', {
         flow.submit()
 
         try {
-          await this.$api.session.save(params)
+          const saved = await this.$api.session.save(params)
           console.log('Saved')
+
+          // A refused validation key comes back as HTTP 200 with a non-zero ret, which the API layer
+          // does not treat as an error.
+          if (params.key && saved?.ret) {
+            throw new Error(saved.status || 'Validation key refused')
+          }
+
           const user = await this.fetchUser()
           console.log('Fetched user', JSON.stringify(user))
           flow.submitResult(true, 200, null)

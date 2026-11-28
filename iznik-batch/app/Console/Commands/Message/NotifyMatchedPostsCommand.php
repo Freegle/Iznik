@@ -171,8 +171,9 @@ class NotifyMatchedPostsCommand extends Command
             $this->notifyUserOfMatches($user, $items, $now, $push);
             $notified++;
 
-            // Email too, when we have an address.
-            if ($email) {
+            // Email too, when we have an address and the member may be emailed (mail not turned off,
+            // address not bouncing, not on holiday). The bell and push above do not depend on these.
+            if ($email && $user->sendOurMails()) {
                 $spooler->spool(new MatchedPosts($user, $email, $items));
                 $emails++;
             }

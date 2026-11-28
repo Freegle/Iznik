@@ -23,6 +23,9 @@ class UserDigest extends Model
         'lastsent' => 'datetime',
         // msgids the last daily digest left out at the post cap - see getPostsForUser().
         'carryover' => 'array',
+        // msgids the reach gate held back from the daily digest that the cursor then passed -
+        // see UnifiedDigestService::loadPostsForUser().
+        'held_back' => 'array',
     ];
 
     /**

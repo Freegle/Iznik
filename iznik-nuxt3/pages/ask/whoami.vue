@@ -92,7 +92,11 @@
               class="next-btn"
               disabled
             >
-              Enter email to continue
+              {{
+                !messageValid || !postcodeValid || closed || noGroups
+                  ? "Can't post yet"
+                  : 'Enter email to continue'
+              }}
             </b-button>
           </div>
         </div>
@@ -150,6 +154,9 @@ const emailBelongsToSomeoneElse = ref(false)
 // Get setup data from composable
 const {
   messageValid,
+  postcodeValid,
+  noGroups,
+  closed,
   loggedIn,
   emailIsntOurs,
   submitting,
@@ -163,6 +170,10 @@ const canSubmit = makeCanSubmit({
   loggedIn,
   emailValid,
   emailBelongsToSomeoneElse,
+  postcodeValid,
+  closed,
+  noGroups,
+  requirePostcode: true,
 })
 
 // Reset email belongs to someone else flag when email changes

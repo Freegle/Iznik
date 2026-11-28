@@ -8,6 +8,10 @@
         won't give other people your postcode.
       </p>
 
+      <NoticeMessage v-if="deleted" variant="danger" class="mb-2">
+        You can't post until you've decided whether to restore your account.
+      </NoticeMessage>
+
       <div class="form-section">
         <PostCode
           :value="initialPostcode"
@@ -21,6 +25,13 @@
         <div class="form-label">Your local community:</div>
         <ComposeGroup />
         <PostPersonalInfoWarning :group="group" :text="postText" />
+      </div>
+
+      <div v-if="postcodeValid && closed" class="no-groups-notice">
+        <NoticeMessage variant="warning">
+          Sorry, the community near there is closed, so you can't post to it.
+          Please check your postcode.
+        </NoticeMessage>
       </div>
 
       <div v-if="postcodeValid && noGroups" class="no-groups-notice">
@@ -96,11 +107,7 @@
         <span v-else>Freegle it! <v-icon icon="angle-double-right" /></span>
       </b-button>
       <b-button v-else variant="secondary" size="lg" class="w-100" disabled>
-        {{
-          !postcodeValid
-            ? 'Enter postcode to continue'
-            : 'Enter email to continue'
-        }}
+        {{ blockedLabel }}
       </b-button>
     </div>
   </div>
@@ -121,6 +128,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { useMe } from '~/composables/useMe'
 import {
   setup,
   postcodeSelect,
@@ -169,7 +177,10 @@ const postText = computed(() => {
   return ((msg.item || '') + ' ' + (msg.description || '')).trim()
 })
 
-const canSubmit = makeCanSubmit({
+const { me } = useMe()
+const deleted = computed(() => !!me.value?.deleted)
+
+const canPost = makeCanSubmit({
   messageValid,
   loggedIn,
   emailValid,
@@ -178,6 +189,19 @@ const canSubmit = makeCanSubmit({
   closed,
   noGroups,
   requirePostcode: true,
+})
+
+// A member with a deleted account cannot post until they restore it.
+const canSubmit = computed(() => !deleted.value && canPost.value)
+
+// What the disabled button says: the actual reason the member cannot continue.
+const blockedLabel = computed(() => {
+  if (deleted.value) return "Can't post yet"
+  if (!messageValid.value) return 'Add your item first'
+  if (!postcodeValid.value) return 'Enter postcode to continue'
+  if (closed.value) return 'Community is closed'
+  if (noGroups.value) return 'No community nearby'
+  return 'Enter email to continue'
 })
 
 // Reset email belongs to someone else flag when email changes

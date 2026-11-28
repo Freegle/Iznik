@@ -270,6 +270,10 @@ so that a failed hold leaves an ordinary message. A hold is released only by the
 text of a later message: what the replier writes meanwhile is held behind it by the batch, not read as a yes. A test can see the gap with a gorm callback that reads
 from the pool, which sees only what is committed, at the moment the hold is written.
 
+The rippling hold on an out-of-reach web reply (`rippling_held_replies`, source `web`) follows the same rule, with one
+difference: it is not in a savepoint. A hold that cannot be written fails the send, because the alternative is an
+ordinary reply that reaches the poster before the post has rippled to the replier.
+
 ## A fixture for an experiment needs its table row, and the API sees it up to a minute late
 
 The `ux_experiments` row in `config` is rebuilt from the `ux_experiments` table by `ux:experiments-tick` (17 past the hour,

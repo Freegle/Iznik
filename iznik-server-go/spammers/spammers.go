@@ -358,7 +358,25 @@ func PatchSpammer(c *fiber.Ctx) error {
 			})
 	}
 
+	// A report that is not confirmed (the member is safelisted) no longer hides their ChitChat.
+	if current.Collection == utils.SPAM_COLLECTION_PENDING_ADD && req.Collection == utils.SPAM_COLLECTION_WHITELISTED {
+		liftPendingSuppression(db, req.ID)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// liftPendingSuppression gives a member their ChitChat back when a PendingAdd report on them
+// ends without being confirmed. The report's member is read from the spam_users row, so call
+// it before a delete.
+func liftPendingSuppression(db *gorm.DB, spamID uint64) {
+	var userid uint64
+	db.Table("spam_users").Select("userid").Where("id = ?", spamID).Scan(&userid)
+	if userid == 0 {
+		return
+	}
+	db.Table("users").Where("id = ? AND newsfeedmodstatus = ?", userid, utils.NEWSFEEDMODSTATUS_SUPPRESSED).
+		Update("newsfeedmodstatus", utils.NEWSFEEDMODSTATUS_UNMODERATED)
 }
 
 // ExportSpammers returns all confirmed spammers with their email addresses.
@@ -462,6 +480,12 @@ func DeleteSpammer(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	var collection string
+	db.Table("spam_users").Select("collection").Where("id = ?", req.ID).Scan(&collection)
+	if collection == utils.SPAM_COLLECTION_PENDING_ADD {
+		liftPendingSuppression(db, req.ID)
+	}
 	db.Table("spam_users").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

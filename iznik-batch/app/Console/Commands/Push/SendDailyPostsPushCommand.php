@@ -258,9 +258,16 @@ class SendDailyPostsPushCommand extends Command
         // passing the push tracker. We call with mode=daily so the frequency
         // filter accepts any positive emailfrequency (not only immediate=-1),
         // matching the scope of the daily email digest.
-        $allPosts = $digestService->getPostsForUser($user, $tracker, UnifiedDigestService::MODE_DAILY);
+        $loaded = $digestService->loadPostsForUser($user, $tracker, UnifiedDigestService::MODE_DAILY);
+        $allPosts = $loaded['posts'];
 
         if ($allPosts->isEmpty()) {
+            // Everything examined was held back by the reach gate. The gate rows count toward the
+            // load cap, so the cursor must move over them or a window of 500 of them never moves.
+            // The push keeps no held-back list: a post the gate held back is not pushed later.
+            if (! $dryRun && $loaded['examined'] !== null) {
+                $this->advanceCursor($tracker, collect([(object) $loaded['examined']]));
+            }
             return 'no_posts';
         }
 

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\Chat\ChaseupModsMail;
 use App\Models\ChatRoom;
+use App\Models\ChatRoster;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -49,10 +50,13 @@ class ChatChaseupModsService
                 continue;
             }
 
-            // Get ALL messages for this room (not filtered by date)
+            // Get ALL messages for this room (not filtered by date), leaving out deleted ones and
+            // ones a moderator rejected on review: they are not part of the conversation.
             $messages = DB::table('chat_messages')
                 ->where('chatid', $room->room_id)
                 ->whereNotNull('message')
+                ->where('deleted', 0)
+                ->where('reviewrejected', 0)
                 ->orderBy('date')
                 ->get(['userid', 'message', 'date']);
 
@@ -109,17 +113,30 @@ class ChatChaseupModsService
             $replyTo = "notify-{$room->room_id}-{$memberId}@{$userDomain}";
             $chatUrl = "{$modSite}/chats/{$room->room_id}";
 
-            // Get all group mods to notify
-            $mods = DB::table('memberships')
-                ->join('users', 'users.id', '=', 'memberships.userid')
-                ->where('memberships.groupid', $room->groupid)
-                ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
-                ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                ->whereNull('users.deleted')
-                ->pluck('memberships.userid')
+            // The group's active moderators (not backup mods), as the live chat notifier does.
+            $mods = Membership::query()
+                ->activeModerators()
+                ->where('groupid', $room->groupid)
+                ->where('collection', Membership::COLLECTION_APPROVED)
+                ->whereExists(fn ($q) => $q->select(DB::raw(1))
+                    ->from('users')
+                    ->whereColumn('users.id', 'memberships.userid')
+                    ->whereNull('users.deleted'))
+                ->pluck('userid')
                 ->toArray();
 
             foreach ($mods as $modId) {
+                // A moderator who closed or blocked this chat has said they do not want it.
+                $closed = DB::table('chat_roster')
+                    ->where('chatid', $room->room_id)
+                    ->where('userid', $modId)
+                    ->whereIn('status', [ChatRoster::STATUS_CLOSED, ChatRoster::STATUS_BLOCKED])
+                    ->exists();
+
+                if ($closed) {
+                    continue;
+                }
+
                 $modEmail = \App\Models\User::find($modId)?->email_preferred;
 
                 if (!$modEmail) {

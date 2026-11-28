@@ -1,6 +1,7 @@
 package user
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/reachqueue"
@@ -9,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/plugin/dbresolver"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +26,12 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		}
 
 		userIdInJWT, sessionIdInJWT, _ := GetJWTFromRequest(c)
+
+		// A client with no JWT may authenticate with the Authorization2 persistent token. Resolve it to
+		// its user and session so that it is checked and kept alive in the same way as a JWT.
+		if userIdInJWT == 0 {
+			userIdInJWT, sessionIdInJWT = persistentTokenSession(c)
+		}
 
 		var wg sync.WaitGroup
 		var dbQueryErr error
@@ -72,6 +80,18 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 					dbQueryErr = result.Error
 				}
 			}()
+		}
+
+		// A write must not run for a session that has gone. The session check runs alongside a read,
+		// and the response is replaced afterwards, but for a write that is too late: the change is
+		// already committed. So for a write wait for the check, and tell WhoAmI the JWT is stale.
+		// Logout is left alone: logging out with a session that has already gone is fine.
+		logout := c.Method() == fiber.MethodDelete && strings.HasSuffix(c.Path(), "/session")
+		if userIdInJWT > 0 && !logout && c.Method() != fiber.MethodGet && c.Method() != fiber.MethodHead && c.Method() != fiber.MethodOptions {
+			wg.Wait()
+			if dbQueryErr == nil && userIdInDB.Id != userIdInJWT {
+				c.Locals("sessionInvalid", true)
+			}
 		}
 
 		ret := c.Next()
@@ -134,4 +154,65 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 
 		return ret
 	}
+}
+
+// persistentTokenSession returns the user and session ids of the Authorization2 persistent token in
+// the request, or zeros if there is none or it does not match a session.
+func persistentTokenSession(c *fiber.Ctx) (uint64, uint64) {
+	persistent := c.Get("Authorization2")
+	if persistent == "" {
+		return 0, 0
+	}
+
+	var pt struct {
+		ID    uint64 `json:"id"`
+		Token string `json:"token"`
+	}
+	if json.Unmarshal([]byte(persistent), &pt) != nil || pt.ID == 0 || pt.Token == "" {
+		return 0, 0
+	}
+
+	var userid uint64
+	database.DBConn.Table("sessions").Select("userid").Where("id = ? AND token = ?", pt.ID, pt.Token).Limit(1).Scan(&userid)
+	if userid == 0 {
+		return 0, 0
+	}
+
+	return userid, pt.ID
+}
+
+// SessionUserRole is for route guards that need the caller's system role. It recognises the caller
+// as every other route does, by JWT or by the Authorization2 persistent token, and returns zero
+// unless that user and session are still in the database. A session not yet on a read replica is
+// looked up again on the write host.
+func SessionUserRole(c *fiber.Ctx) (uint64, string) {
+	userID, sessionID, _ := GetJWTFromRequest(c)
+	if userID == 0 {
+		userID, sessionID = persistentTokenSession(c)
+	}
+	if userID == 0 {
+		return 0, ""
+	}
+
+	var info struct {
+		ID         uint64
+		Systemrole string
+	}
+	query := func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("sessions").
+			Select("users.id, users.systemrole").
+			Joins("INNER JOIN users ON users.id = sessions.userid").
+			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
+			Limit(1)
+	}
+	db := database.DBConn
+	query(db).Scan(&info)
+	if info.ID == 0 {
+		query(db.Clauses(dbresolver.Write)).Scan(&info)
+	}
+	if info.ID == 0 {
+		return 0, ""
+	}
+
+	return info.ID, info.Systemrole
 }

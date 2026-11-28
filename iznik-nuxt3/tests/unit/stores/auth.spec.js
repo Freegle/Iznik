@@ -725,6 +725,21 @@ describe('auth store', () => {
     })
   })
 
+  // The server answers a refused validation key with HTTP 200 and ret 11, so the
+  // confirm-email page only sees a failure if saveAndGet turns that into a rejection.
+  describe('saveAndGet with a validation key the server refuses', () => {
+    it('rejects when PATCH /session answers ret 11', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({
+        ret: 11,
+        status: 'Validation key not found',
+      })
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await expect(store.saveAndGet({ key: 'made-up-key' })).rejects.toThrow()
+    })
+  })
+
   // plans/active/2026-09-27-lockdown-switch.md section 10.5: display name,
   // about me and avatar changes are refused with a short message while the
   // "profile" surface is held; other PATCH /session fields (own settings)

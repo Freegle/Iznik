@@ -476,6 +476,27 @@ describe('useReplyToPost', () => {
 
   // ── null-action payload shape ──────────────────────────────────────────────
 
+  describe('a second send while the first is still in flight', () => {
+    it('does not open the chat and send the text twice', async () => {
+      let release
+      const openChat = vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve
+        })
+      )
+      const chatButtonRef = { openChat }
+      const { replyToPost } = useReplyToPost()
+
+      const first = replyToPost(chatButtonRef)
+      // The member taps Send again once the processing timeout has re-enabled the button.
+      const second = replyToPost(chatButtonRef)
+      release(true)
+      await Promise.all([first, second])
+
+      expect(openChat).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('reply_to_post_null action payload', () => {
     const cases = [
       {

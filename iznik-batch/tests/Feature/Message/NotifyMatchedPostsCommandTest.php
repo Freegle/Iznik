@@ -125,4 +125,49 @@ class NotifyMatchedPostsCommandTest extends TestCase
         // And a device push was fired for that recipient.
         $this->assertContains((int) $recipient->id, $pushed);
     }
+
+    /**
+     * Run matches:notify with the recipient's account changed by $attributes, and assert that the
+     * recipient still gets the in-app notification but is not sent the matched-posts email.
+     */
+    private function assertRecipientNotEmailed(array $attributes): void
+    {
+        [$recipient] = $this->seedFixture();
+        $recipient->forceFill($attributes)->save();
+
+        $emailed = [];
+        $this->mock(EmailSpoolerService::class, function ($m) use (&$emailed) {
+            $m->shouldReceive('spool')->andReturnUsing(function ($mailable) use (&$emailed) {
+                $emailed[] = (int) $mailable->user->id;
+
+                return 'spool-id';
+            });
+        });
+        $this->mock(PushNotificationService::class, function ($m) {
+            $m->shouldReceive('notifyUser');
+        });
+
+        $this->artisan('matches:notify')->assertExitCode(0);
+
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $recipient->id,
+            'type' => 'MatchedPost',
+        ]);
+        $this->assertNotContains((int) $recipient->id, $emailed, 'a member who may not be emailed must not get the matched-posts mail');
+    }
+
+    public function test_does_not_email_a_member_who_turned_all_our_mail_off(): void
+    {
+        $this->assertRecipientNotEmailed(['settings' => ['simplemail' => 'None']]);
+    }
+
+    public function test_does_not_email_a_member_whose_address_is_bouncing(): void
+    {
+        $this->assertRecipientNotEmailed(['bouncing' => 1]);
+    }
+
+    public function test_does_not_email_a_member_who_is_on_holiday(): void
+    {
+        $this->assertRecipientNotEmailed(['onholidaytill' => now()->addDays(10)->toDateString()]);
+    }
 }
