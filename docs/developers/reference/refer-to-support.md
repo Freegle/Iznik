@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-16
+last_reviewed: 2026-11-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/chat/chatroom.go
